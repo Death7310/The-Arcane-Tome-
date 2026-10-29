@@ -311,6 +311,7 @@ class SoundEngine {
     switch (look) {
       case 'sword':
       case 'axe':
+      case 'claw':
         this.n({ at: at * 0.45, dur: at * 0.55 + 0.04, type: 'bandpass', freq: 600, freqEnd: 3200, q: 1.1, gain: 0.32, attack: at * 0.5 });
         this.n({ at, dur: 0.05, type: 'bandpass', freq: 2600, q: 2, gain: 0.35, attack: 0.002 });
         this.t({ at, dur: 0.32, type: 'triangle', freq: look === 'axe' ? 1500 : 2400 + Math.random() * 300, gain: 0.06 });

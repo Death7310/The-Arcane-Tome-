@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { viteSingleFile } from 'vite-plugin-singlefile';
-import pkg from './package.json';
+import pkg from './package.json' with { type: 'json' };
 
 // Build modes:
 //   (default)       dist/       installable offline web app (service worker + manifest)

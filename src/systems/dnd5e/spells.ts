@@ -4,6 +4,7 @@
 // are short paraphrases written for this app; check your rulebook for full text.
 
 import { blankSpell, type Spell } from './model';
+import type { SpellDef } from './srd';
 
 type Entry = Partial<Spell> & Pick<Spell, 'name' | 'level' | 'school'>;
 
@@ -67,4 +68,28 @@ export const SPELL_LIBRARY: Spell[] = E.map((e) =>
 /** A fresh copy (new id) of a library spell, ready to add to a character. */
 export function cloneLibrarySpell(spell: Spell, newId: string): Spell {
   return { ...structuredClone(spell), id: newId };
+}
+
+const TUNED = new Map(E.map((e) => [e.name.toLowerCase(), e]));
+
+/**
+ * The full spell list with this file's hand-tuned mechanics laid over the rules data for
+ * the spells that need them (Magic Missile's darts, Scorching Ray's rays, Eldritch Blast's
+ * beams, Chromatic Orb's damage): the rules text and details stay as published.
+ */
+export function tunedSpells(defs: SpellDef[]): SpellDef[] {
+  return defs.map((d) => {
+    const t = TUNED.get(d.name.toLowerCase());
+    if (!t) return d;
+    const keys = ['resolution', 'saveAbility', 'halfOnSave', 'damage', 'healing', 'upcastDice', 'instances', 'upcastInstances', 'scaling', 'element', 'shape'] as const;
+    const over: Partial<SpellDef> = {};
+    for (const k of keys) if (t[k] !== undefined) (over as Record<string, unknown>)[k] = t[k];
+    return { ...d, ...over };
+  });
+}
+
+/** A character's copy of a spell from the rules. */
+export function spellFromDef(d: SpellDef, id: string): Spell {
+  const { srd: _srd, classes: _classes, source: _source, ...rest } = d;
+  return blankSpell({ ...rest, id });
 }

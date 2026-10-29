@@ -7,10 +7,57 @@ export interface ClassEntry {
   id: string;
   classId: string;
   subclass: string;
+  /** The subclass's id in the rules (SRD or your library), when it came from there. */
+  subclassId?: string;
   level: number;
   /** e.g. 'third' for an Eldritch Knight fighter. */
   casterOverride?: CasterType;
   hitDiceUsed: number;
+  /**
+   * Hit points rolled for each level of this class (index 0 = its 1st level). null, or a
+   * missing entry, means the level uses the fixed average. The very first level of your
+   * first class is always the full die.
+   */
+  hpRolls?: (number | null)[];
+}
+
+/** Where a feature on the sheet came from, so leveling can add, update and remove it. */
+export interface FeatureOrigin {
+  kind: 'class' | 'subclass' | 'feat';
+  /** The class entry it belongs to (class and subclass features). */
+  entryId?: string;
+  /** Rules id, e.g. 'features.fighter.second-wind' or 'feats.alert'. */
+  ref: string;
+  /** Class level it arrives at. */
+  level: number;
+  /** Kept in step with the rules on every level change; false once you edit it yourself. */
+  auto: boolean;
+}
+
+/** One level gained through Level up, remembered so it can be undone exactly. */
+export interface LevelStep {
+  entryId: string;
+  classId: string;
+  /** The class level this step reached. */
+  classLevel: number;
+  newClass: boolean;
+  /** Hit points rolled for this level; null for the average. */
+  hpRoll: number | null;
+  /** Ability score increases applied. */
+  asi?: Partial<Record<Ability, number>>;
+  /** Features added for feats chosen at this level. */
+  featFeatureIds?: string[];
+  /** Subclass chosen at this level, and what it replaced. */
+  subclass?: { id?: string; name: string; previous: { id?: string; name: string } };
+  /** Skill proficiencies gained (multiclassing into a Bard, Ranger or Rogue). */
+  skills?: SkillId[];
+  /** Training gained from multiclassing, as written into your proficiencies. */
+  proficiencyNote?: string;
+  /** Current HP before the level. */
+  hpBefore: number;
+  /** A hand-set HP maximum before this level raised it. */
+  maxOverrideBefore?: number | null;
+  at: number;
 }
 
 export interface DamagePart {
@@ -86,6 +133,58 @@ export interface Feature {
   castingTime: CastingTime;
   element: Element;
   shape: Shape;
+  origin?: FeatureOrigin;
+}
+
+/** Something a companion can do: an attack, a saving-throw effect, or just a rule to read. */
+export interface CompanionAction {
+  id: string;
+  name: string;
+  kind: 'trait' | 'action' | 'bonus' | 'reaction' | 'legendary';
+  attack: 'melee' | 'ranged' | null;
+  /** To-hit bonus: a number or a formula with your tokens, e.g. "{SPELLATK}" or "3 + {PB}". */
+  toHit: string;
+  /** Reach or range, as written: "5 ft." or "30/120 ft." */
+  reach: string;
+  /** Damage dice, tokens allowed: "1d8 + {PB}". */
+  damage: string;
+  damageType: string;
+  save: Ability | null;
+  /** Save DC: a number or a formula, e.g. "{SPELLDC}". */
+  dc: string;
+  text: string;
+}
+
+/**
+ * A companion's micro sheet: a familiar, a steed, a drake, a homunculus, a summoned
+ * spirit or something you made up. Numbers can be formulas over your own stats, so a
+ * companion that scales with you ("AC 13 + {PB}", "HP 5 + 5 × {LEVEL:ranger}") keeps up
+ * as you level.
+ */
+export interface Companion {
+  id: string;
+  name: string;
+  /** What it is: "Drake companion", "Familiar (owl)". */
+  kind: string;
+  size: string;
+  type: string;
+  ac: string;
+  maxHp: string;
+  hp: number;
+  tempHp: number;
+  speed: string;
+  abilities: Record<Ability, number>;
+  /** Its Proficiency Bonus: a number, or "{PB}" for one that uses yours. */
+  pb: string;
+  saves: Ability[];
+  skills: string;
+  senses: string;
+  languages: string;
+  cr: string;
+  actions: CompanionAction[];
+  notes: string;
+  /** Where it came from: "SRD 5.2.1", "Pasted stat block", "Made up". */
+  source: string;
 }
 
 export interface Item {
@@ -191,6 +290,9 @@ export interface Character {
   effects: Effect[];
   /** Small downscaled image as a data URL. */
   portrait: string | null;
+  /** Levels gained with Level up, newest last, so they can be undone. */
+  progression: LevelStep[];
+  companions: Companion[];
   updatedAt: number;
 }
 
@@ -308,7 +410,39 @@ export function blankCharacter(): Character {
     conditions: [],
     effects: [],
     portrait: null,
+    progression: [],
+    companions: [],
     updatedAt: Date.now(),
+  };
+}
+
+export function blankCompanionAction(partial: Partial<CompanionAction> = {}): CompanionAction {
+  return { id: uid(), name: 'New action', kind: 'action', attack: null, toHit: '', reach: '', damage: '', damageType: '', save: null, dc: '', text: '', ...partial };
+}
+
+export function blankCompanion(partial: Partial<Companion> = {}): Companion {
+  return {
+    id: uid(),
+    name: 'New companion',
+    kind: '',
+    size: 'Small',
+    type: 'Beast',
+    ac: '12',
+    maxHp: '10',
+    hp: 10,
+    tempHp: 0,
+    speed: '30 ft.',
+    abilities: allAbilities(10),
+    pb: '2',
+    saves: [],
+    skills: '',
+    senses: '',
+    languages: '',
+    cr: '',
+    notes: '',
+    source: 'Made up',
+    ...partial,
+    actions: (partial.actions ?? []).map((a) => blankCompanionAction(a)),
   };
 }
 
@@ -340,6 +474,8 @@ export function normalizeCharacter(raw: unknown): Character {
     conditions: Array.isArray(c.conditions) ? c.conditions.filter((x): x is ConditionId => CONDITIONS.some((k) => k.id === x)) : [],
     effects: Array.isArray(c.effects) ? c.effects.map((e) => blankEffect(e)) : [],
     portrait: typeof c.portrait === 'string' && c.portrait.startsWith('data:image/') ? c.portrait : null,
+    progression: Array.isArray(c.progression) ? c.progression.filter((p) => p && typeof p.entryId === 'string' && typeof p.classLevel === 'number') : [],
+    companions: Array.isArray(c.companions) ? c.companions.map((k) => blankCompanion({ ...k, abilities: { ...allAbilities(10), ...k.abilities } })) : [],
     inventory: Array.isArray(c.inventory) ? c.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
   };
   while (merged.spellcasting.slotsUsed.length < 9) merged.spellcasting.slotsUsed.push(0);

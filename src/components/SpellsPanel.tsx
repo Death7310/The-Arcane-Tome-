@@ -6,7 +6,11 @@ import { ordinal, useTable, type SlotChoice } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, type Ability, type DamageType } from '../systems/dnd5e/data';
 import { blankSpell, uid, type Spell } from '../systems/dnd5e/model';
 import { defaultSpellAbility, pactSlots, planSpell, signed, spellAttack, spellSaveDc, spellSlots } from '../systems/dnd5e/rules';
-import { SPELL_LIBRARY } from '../systems/dnd5e/spells';
+import { spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
+import type { SpellDef } from '../systems/dnd5e/srd';
+import { useCatalog } from '../state/catalog';
+import { spellCounts } from '../systems/dnd5e/leveling';
+import { RulesText } from './RulesText';
 import { Check, ConfirmButton, Dialog, NumField, Panel, Pips, SelectField, TextField, mathText } from './ui';
 
 const ABILITY_SELECT = [{ id: 'auto' as const, name: 'From class' }, ...ABILITIES.map((a) => ({ id: a, name: ABILITY_NAMES[a] }))];
@@ -71,6 +75,7 @@ export function SpellsPanel() {
         </>
       )}
       <SlotOverride />
+      <SpellCounts />
 
       {c.spellcasting.concentratingOn && (
         <div className="conc" style={{ marginTop: 10 }}>
@@ -344,9 +349,25 @@ function SpellEditor({ spell: s }: { spell: Spell }) {
 function SpellLibrary({ onClose }: { onClose: () => void }) {
   const { char: c, update } = useChar();
   const t = useTable();
+  const cat = useCatalog();
   const [q, setQ] = useState('');
-  const known = new Set(c.spells.map((s) => s.name));
-  const list = useMemo(() => SPELL_LIBRARY.filter((s) => s.name.toLowerCase().includes(q.toLowerCase())), [q]);
+  const [level, setLevel] = useState<'all' | number>('all');
+  const [cls, setCls] = useState<'mine' | 'all' | string>('mine');
+  const [open, setOpen] = useState<string | null>(null);
+  const mine = c.classes.map((k) => k.classId);
+  const known = new Set(c.spells.map((s) => s.name.toLowerCase()));
+  const all = useMemo(() => (cat ? tunedSpells(cat.spells) : []), [cat]);
+  const list = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return all
+      .filter((s) => (!needle || s.name.toLowerCase().includes(needle)) && (level === 'all' || s.level === level))
+      .filter((s) => cls === 'all' || !s.classes?.length || (cls === 'mine' ? s.classes.some((k) => mine.includes(k)) : s.classes.includes(cls)))
+      .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+  }, [all, q, level, cls, mine.join()]);
+  const add = (s: SpellDef, el: HTMLElement) => {
+    update((d) => void d.spells.push(spellFromDef(s, uid())));
+    t.preview(s.element, s.shape, s.level, el);
+  };
   return (
     <Dialog title="Add a spell" onClose={onClose}>
       <div className="row">
@@ -362,28 +383,83 @@ function SpellLibrary({ onClose }: { onClose: () => void }) {
           Write my own
         </button>
       </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <select className="input" style={{ width: 'auto' }} value={String(level)} aria-label="Spell level" onChange={(e) => setLevel(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
+          <option value="all">All levels</option>
+          {Array.from({ length: 10 }, (_, l) => (
+            <option key={l} value={l}>
+              {l === 0 ? 'Cantrips' : `${ordinal(l)} level`}
+            </option>
+          ))}
+        </select>
+        <select className="input" style={{ width: 'auto' }} value={cls} aria-label="Class spell list" onChange={(e) => setCls(e.target.value)}>
+          <option value="mine">My classes’ spells</option>
+          <option value="all">Every spell</option>
+          {(cat?.classes ?? []).map((k) => (
+            <option key={k.id} value={k.id}>
+              {k.name} spells
+            </option>
+          ))}
+        </select>
+        <span className="hint">{cat ? `${list.length} spells` : 'Loading spells…'}</span>
+      </div>
       <div className="lib">
-        {list.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className={`el-${s.element}`}
-            onClick={(e) => {
-              update((d) => void d.spells.push({ ...structuredClone(s), id: uid() }));
-              t.preview(s.element, s.shape, s.level, e.currentTarget);
-            }}
-          >
-            <span>
-              <b>{s.name}</b>
-              <span className="hint"> · {s.level === 0 ? 'Cantrip' : `${ordinal(s.level)} level`} · {s.school}</span>
-            </span>
-            <span className="chip">{known.has(s.name) ? 'Added' : ELEMENTS.find((e) => e.id === s.element)?.name}</span>
-          </button>
-        ))}
+        {list.slice(0, 200).map((s) => {
+          const id = `${s.source}:${s.name}`;
+          return (
+            <div key={id} className={`lib-row el-${s.element}`}>
+              <button type="button" className="lib-main" aria-expanded={open === id} onClick={() => setOpen(open === id ? null : id)}>
+                <span>
+                  <b>{s.name}</b>
+                  <span className="hint">
+                    {' '}
+                    · {s.level === 0 ? 'Cantrip' : `${ordinal(s.level)} level`} · {s.school}
+                    {s.concentration ? ' · Concentration' : ''}
+                    {s.source && s.source !== 'SRD 5.2.1' ? ` · ${s.source}` : ''}
+                  </span>
+                </span>
+                <span className="chip">{ELEMENTS.find((e) => e.id === s.element)?.name}</span>
+              </button>
+              <button type="button" className="btn small" onClick={(e) => add(s, e.currentTarget)} disabled={known.has(s.name.toLowerCase())}>
+                {known.has(s.name.toLowerCase()) ? 'Added' : 'Add'}
+              </button>
+              {open === id && (
+                <div className="lib-detail">
+                  <p className="hint" style={{ margin: 0 }}>
+                    {s.castingTimeText} · {s.range} · {s.components} · {s.duration}
+                    {s.classes?.length ? ` · ${s.classes.map((k) => cat?.classes.find((x) => x.id === k)?.name ?? k).join(', ')}` : ''}
+                  </p>
+                  <RulesText text={s.description} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {list.length > 200 && <p className="hint">Showing the first 200. Search or filter to narrow it down.</p>}
       </div>
       <p className="hint">
-        Mechanics from the D&amp;D System Reference Document 5.2 (CC-BY-4.0). Descriptions are short summaries; check your Player’s Handbook for full rules.
+        Spells from the System Reference Document 5.2.1 by Wizards of the Coast (CC-BY-4.0), plus any from your rules library. Not every published spell is in the SRD; for others, write your own
+        or import them into your rules library.
       </p>
     </Dialog>
+  );
+}
+
+/** How many cantrips and prepared spells each class allows at its level, against what's on the sheet. */
+function SpellCounts() {
+  const { char: c } = useChar();
+  const cat = useCatalog();
+  if (!cat) return null;
+  const allowed = spellCounts(c, cat);
+  if (!allowed.length) return null;
+  const cantrips = c.spells.filter((s) => s.level === 0).length;
+  const prepared = c.spells.filter((s) => s.level > 0 && s.prepared).length;
+  const sum = (k: 'cantrips' | 'prepared') => allowed.reduce((a, x) => a + (x[k] ?? 0), 0);
+  const many = allowed.length > 1;
+  return (
+    <p className="hint spell-counts">
+      Cantrips <b className={cantrips > sum('cantrips') ? 'over' : ''}>{cantrips}</b> of {sum('cantrips')} · Prepared spells <b className={prepared > sum('prepared') ? 'over' : ''}>{prepared}</b> of {sum('prepared')}
+      {many && ` (${allowed.map((x) => `${x.className}: ${x.cantrips ?? 0} + ${x.prepared ?? 0}`).join(', ')})`}
+    </p>
   );
 }

@@ -119,6 +119,25 @@ async function loadPdfJs() {
   return import('pdfjs-dist');
 }
 
+/**
+ * Marks lines set noticeably larger than the body text as Markdown headings (#, ##, ###),
+ * so a rulebook keeps its chapters and sections. Body size is the most common size by
+ * amount of text.
+ */
+export function markHeadings(lines: { text: string; size: number }[]): string[] {
+  const weight = new Map<number, number>();
+  for (const l of lines) if (l.size > 0) weight.set(Math.round(l.size * 2) / 2, (weight.get(Math.round(l.size * 2) / 2) ?? 0) + l.text.length);
+  const body = [...weight].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0;
+  return lines.map((l) => {
+    if (!body || !l.text || l.text.length > 80 || /[.,;:]$/.test(l.text) || !/[A-Za-z]{2}/.test(l.text) || /^#/.test(l.text)) return l.text;
+    const r = l.size / body;
+    if (r >= 1.9) return `# ${l.text}`;
+    if (r >= 1.45) return `## ${l.text}`;
+    if (r >= 1.2) return `### ${l.text}`;
+    return l.text;
+  });
+}
+
 interface TextItemLike {
   str: string;
   hasEOL?: boolean;
@@ -135,29 +154,32 @@ export async function extractPdf(data: Uint8Array): Promise<Extracted> {
     const msg = (e as Error).message ?? '';
     throw new UnsupportedFile(/password/i.test(msg) ? 'That PDF is password-protected. Remove the password and try again.' : 'That PDF couldn’t be opened.');
   }
-  const lines: string[] = [];
+  // Lines with their text size, so headings (set larger than the body text) can be marked.
+  const lines: { text: string; size: number }[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const content = await (await doc.getPage(p)).getTextContent();
     let line = '';
+    let size = 0;
     let lastY: number | null = null;
+    const end = () => {
+      if (line.trim()) lines.push({ text: line.trim(), size });
+      line = '';
+      size = 0;
+    };
     for (const raw of content.items as TextItemLike[]) {
       if (typeof raw.str !== 'string') continue;
       const y = raw.transform ? raw.transform[5] : null;
       // A new baseline means a new line even when the PDF doesn't say so.
-      if (lastY !== null && y !== null && Math.abs(y - lastY) > 3 && line.trim()) {
-        lines.push(line.trim());
-        line = '';
-      }
+      if (lastY !== null && y !== null && Math.abs(y - lastY) > 3 && line.trim()) end();
       line += (line && !line.endsWith(' ') && raw.str && !raw.str.startsWith(' ') ? ' ' : '') + raw.str;
+      if (raw.transform && raw.str.trim()) size = Math.max(size, Math.hypot(raw.transform[2], raw.transform[3]));
       if (y !== null) lastY = y;
-      if (raw.hasEOL) {
-        lines.push(line.trim());
-        line = '';
-      }
+      if (raw.hasEOL) end();
     }
-    if (line.trim()) lines.push(line.trim());
-    lines.push('');
+    end();
+    lines.push({ text: '', size: 0 });
   }
+  const textLines = markHeadings(lines);
   // Filled-in form fields live on each page's widgets (fillable sheets, D&D Beyond exports).
   const fields: Record<string, string> = {};
   for (let p = 1; p <= doc.numPages; p++) {
@@ -170,7 +192,7 @@ export async function extractPdf(data: Uint8Array): Promise<Extracted> {
     }
   }
   await task.destroy();
-  const text = lines.join('\n').replace(/\n{3,}/g, '\n\n');
+  const text = textLines.join('\n').replace(/\n{3,}/g, '\n\n');
   if (!text.trim() && !Object.keys(fields).length)
     throw new UnsupportedFile('That PDF has no text in it: it may be a scan or a photo. Copy the text and paste it instead.');
   return { text, fields, kind: Object.keys(fields).length ? 'fillable PDF' : 'PDF' };

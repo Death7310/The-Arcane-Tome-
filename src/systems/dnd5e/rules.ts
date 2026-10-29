@@ -164,9 +164,16 @@ export function maxHp(c: Character): Breakdown {
   c.classes.forEach((k, idx) => {
     const die = classById(k.classId).hitDie;
     if (k.level <= 0) return;
-    const first = idx === 0 ? die : 0;
-    const rest = (idx === 0 ? k.level - 1 : k.level) * averageHitDie(die);
-    parts.push({ label: `${classById(k.classId).name} hit dice (d${die})`, value: first + rest });
+    // Your first level is the full die; every other level is its roll, or the fixed average.
+    let value = 0;
+    let rolled = 0;
+    for (let lvl = 1; lvl <= k.level; lvl++) {
+      const roll = k.hpRolls?.[lvl - 1];
+      if (idx === 0 && lvl === 1) value += die;
+      else if (typeof roll === 'number') (value += roll), rolled++;
+      else value += averageHitDie(die);
+    }
+    parts.push({ label: `${classById(k.classId).name} hit dice (d${die}${rolled ? `, ${rolled} rolled` : ''})`, value });
   });
   parts.push({ label: `Constitution × ${level}`, value: mod(c, 'con') * level });
   parts.push({ label: `Bonus HP × ${level}`, value: c.bonus.hpPerLevel * level });
@@ -265,13 +272,23 @@ export const isSpellcaster = (c: Character): boolean =>
 /** 2024 cantrips gain a die (or a beam) at character levels 5, 11 and 17. */
 export const cantripTier = (level: number): number => 1 + (level >= 5 ? 1 : 0) + (level >= 11 ? 1 : 0) + (level >= 17 ? 1 : 0);
 
-/** Replaces {PB}, {LEVEL}, {MOD}, {STR}…{CHA} in a dice expression with the character's numbers. */
+/**
+ * Replaces {PB}, {LEVEL}, {LEVEL:ranger} (one class's level), {MOD}, {STR}…{CHA},
+ * {SPELLATK} and {SPELLDC} in a dice expression or formula with the character's numbers.
+ */
 export function resolveTokens(expr: string, c: Character, spell?: Spell): string {
   const spellMod = mod(c, spellAbility(c, spell) ?? 'int');
-  return expr.replace(/\{(\w+)\}/g, (whole, raw: string) => {
+  return expr.replace(/\{(\w+)(?::([\w-]+))?\}/g, (whole, raw: string, arg?: string) => {
     const key = raw.toLowerCase();
     if (key === 'pb') return String(pb(c));
+    if (key === 'level' && arg) {
+      // A library class's id is "<pack>:<class>", so {LEVEL:ashwalker} finds it too.
+      const want = arg.toLowerCase();
+      return String(c.classes.filter((k) => k.classId === want || k.classId.endsWith(`:${want}`)).reduce((a, k) => a + k.level, 0));
+    }
     if (key === 'level') return String(totalLevel(c));
+    if (key === 'spellatk') return String(spellAttack(c, spell).total);
+    if (key === 'spelldc') return String(spellSaveDc(c, spell).total);
     if (key === 'mod') return String(spellMod);
     if ((ABILITIES as readonly string[]).includes(key)) return String(mod(c, key as Ability));
     return whole;

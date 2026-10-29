@@ -11,6 +11,7 @@ export const PANELS = {
   conditions: ['combat'],
   turn: ['combat'],
   attacks: ['combat'],
+  companions: ['combat'],
   skills: ['stats'],
   spells: ['magic'],
   features: ['gear', 'combat'],
@@ -34,7 +35,7 @@ export const MIN_HEIGHT = 120;
 
 const DEFAULT_COLUMNS: PanelId[][] = [
   ['identity', 'abilities', 'glance'],
-  ['vitals', 'conditions', 'turn', 'attacks', 'skills'],
+  ['vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
   ['spells', 'features', 'inventory', 'notes'],
 ];
 

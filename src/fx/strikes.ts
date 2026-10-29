@@ -10,11 +10,13 @@
 import { elementColor } from './engine';
 import type { Element, Point } from './types';
 
-export type StrikeLook = 'sword' | 'axe' | 'rapier' | 'spear' | 'hammer' | 'fist' | 'arrow' | 'stone' | 'orb';
+export type StrikeLook = 'sword' | 'axe' | 'rapier' | 'spear' | 'hammer' | 'fist' | 'arrow' | 'stone' | 'claw' | 'orb';
 
 /** Picks the strike for a weapon from its name, falling back on its damage type. */
 export function weaponLook(name: string, type: string, ranged: boolean): StrikeLook {
   const n = name.toLowerCase();
+  // Natural weapons: three raking marks rather than a held weapon.
+  if (/\b(bite|claws?|talons?|fangs?|tail|gore|horns?|tusks?|hooves|hoof|slam|sting|beak|tentacles?|rend|maul(?!\w))\b/.test(n) && !/warhammer/.test(n)) return 'claw';
   if (/sling/.test(n)) return 'stone';
   if (ranged || /bow|musket|pistol|blowgun|dart/.test(n)) return 'arrow';
   if (/unarmed|fist|punch|kick|gauntlet/.test(n)) return 'fist';
@@ -88,7 +90,7 @@ function pommel(ctx: CanvasRenderingContext2D, L: number, x: number, r: number) 
   ctx.fill();
 }
 
-const WEAPONS: Record<Exclude<StrikeLook, 'orb'>, (ctx: CanvasRenderingContext2D, L: number, side: number) => void> = {
+const WEAPONS: Record<Exclude<StrikeLook, 'orb' | 'claw'>, (ctx: CanvasRenderingContext2D, L: number, side: number) => void> = {
   sword(ctx, L) {
     grip(ctx, L, -0.2, 0, 0.028);
     pommel(ctx, L, -0.22, 0.045);
@@ -260,7 +262,7 @@ const WEAPONS: Record<Exclude<StrikeLook, 'orb'>, (ctx: CanvasRenderingContext2D
 };
 
 /** Weapon length as a multiple of the die's radius. */
-const LENGTH: Record<StrikeLook, number> = { sword: 3.4, axe: 3.0, rapier: 3.6, spear: 4.2, hammer: 3.0, fist: 1.9, arrow: 2.6, stone: 2.2, orb: 0 };
+const LENGTH: Record<StrikeLook, number> = { sword: 3.4, axe: 3.0, rapier: 3.6, spear: 4.2, hammer: 3.0, fist: 1.9, arrow: 2.6, stone: 2.2, claw: 1.6, orb: 0 };
 
 /**
  * One blow. It lands (and calls onImpact) halfway through its life; the rest is the
@@ -305,6 +307,7 @@ export class Strike {
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
     if (this.look === 'sword' || this.look === 'axe') this.swing(ctx, t, alpha);
+    else if (this.look === 'claw') this.claw(ctx, t);
     else if (this.look === 'hammer') this.smash(ctx, t);
     else if (this.look === 'arrow' || this.look === 'stone') this.shot(ctx, t, age);
     else this.thrust(ctx, t, alpha);
@@ -318,7 +321,7 @@ export class Strike {
     ctx.shadowColor = 'rgba(0,0,0,0.45)';
     ctx.shadowBlur = 8;
     ctx.shadowOffsetY = 4;
-    WEAPONS[this.look as Exclude<StrikeLook, 'orb'>](ctx, this.L, bladeSide);
+    WEAPONS[this.look as Exclude<StrikeLook, 'orb' | 'claw'>](ctx, this.L, bladeSide);
     ctx.restore();
   }
 
@@ -365,6 +368,41 @@ export class Strike {
     }
     // An axe's edge leads the swing.
     this.place(ctx, pivot, a, -s);
+  }
+
+  /** Claws and fangs: three raking marks torn across the die, one after another. */
+  private claw(ctx: CanvasRenderingContext2D, t: number) {
+    const s = this.side;
+    const tgt = this.target;
+    const L = this.L;
+    const dir = { x: s * 0.6, y: 0.8 };
+    const perp = { x: -dir.y, y: dir.x };
+    const tint = elementColor(this.element);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let k = 0; k < 3; k++) {
+      const u = clamp01((t - 0.3 - k * 0.05) / 0.22);
+      if (u <= 0) continue;
+      const fade = t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
+      const off = (k - 1) * 0.34 * this.radius;
+      const a = { x: tgt.x - dir.x * L + perp.x * off, y: tgt.y - dir.y * L + perp.y * off };
+      const b = { x: tgt.x + dir.x * L + perp.x * off, y: tgt.y + dir.y * L + perp.y * off };
+      const bend = { x: tgt.x + perp.x * (off + 0.35 * this.radius * s), y: tgt.y + perp.y * (off + 0.35 * this.radius * s) };
+      const end = { x: lerp(a.x, b.x, u), y: lerp(a.y, b.y, u) };
+      for (const [w, op, col] of [
+        [7, 0.25, tint],
+        [2.5, 0.95, '#ffffff'],
+      ] as const) {
+        ctx.globalAlpha = op * fade;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.quadraticCurveTo(lerp(a.x, bend.x, u), lerp(a.y, bend.y, u), end.x, end.y);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   /** Hammer: raised overhead, brought down on the die, with a small bounce. */

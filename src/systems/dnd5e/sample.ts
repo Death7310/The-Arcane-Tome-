@@ -50,7 +50,7 @@ export function sampleCharacter(): Character {
     features: [
       blankFeature({ name: 'Healing Hands', source: 'Aasimar', description: 'Magic action: touch a creature and roll d4s equal to your Proficiency Bonus; it regains that many Hit Points.', usesMax: 1, recharge: 'long', roll: '{PB}d4', rollKind: 'healing', element: 'healing', shape: 'touch' }),
       blankFeature({ name: 'Celestial Revelation: Inner Radiance', source: 'Aasimar', description: 'Bonus Action, 1 minute: once on each of your turns, deal extra Radiant damage equal to your Proficiency Bonus to one target you damage. You also shed light and sear creatures within 10 feet at the end of your turns.', usesMax: 1, recharge: 'long', roll: '{PB}', rollKind: 'damage', castingTime: 'bonus', element: 'radiant', shape: 'aura' }),
-      blankFeature({ name: 'Sorcery Points', source: 'Sorcerer', description: 'Fuel Metamagic or convert to spell slots.', usesMax: 'class:sorcerer', recharge: 'long' }),
+      blankFeature({ name: 'Font of Magic', source: 'Sorcerer 2', description: 'Sorcery Points equal to your Sorcerer level: fuel Metamagic or convert them to spell slots.', usesMax: 'class:sorcerer', recharge: 'long' }),
       blankFeature({ name: 'Innate Sorcery', source: 'Sorcerer', description: 'Bonus Action, 1 minute: +1 to your spell save DC and Advantage on sorcerer spell attack rolls.', usesMax: 2, recharge: 'long', castingTime: 'bonus', element: 'arcane', shape: 'aura' }),
       blankFeature({ name: 'Celestial Resistance', source: 'Aasimar', description: 'Resistance to Necrotic and Radiant damage.', usesMax: null, recharge: 'none' }),
       blankFeature({ name: 'Darkvision', source: 'Aasimar', description: '60 feet.', usesMax: null, recharge: 'none' }),

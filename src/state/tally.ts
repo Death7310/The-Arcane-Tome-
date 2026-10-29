@@ -131,7 +131,7 @@ export function attackVerdict(outcome: Outcome, nat: number | undefined, ac: num
   const note = ac !== null ? `vs AC ${ac}` : undefined;
   if (nat === 20) return { text: 'CRITICAL', tone: 'crit', note };
   if (nat === 1) return { text: 'MISS', tone: 'miss', note: 'natural 1' };
-  if (ac === null) return undefined;
+  if (ac === null) return { text: 'HIT?', tone: 'info', note: 'no target AC set' };
   return outcome === 'miss' ? { text: 'MISS', tone: 'miss', note } : { text: 'HIT', tone: 'hit', note };
 }
 

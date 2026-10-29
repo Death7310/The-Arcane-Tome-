@@ -103,7 +103,7 @@ describe('putting rows together', () => {
     expect(attackVerdict('crit', 20, null)).toEqual({ text: 'CRITICAL', tone: 'crit', note: undefined });
     expect(attackVerdict('miss', 1, 12)).toMatchObject({ text: 'MISS', note: 'natural 1' });
     expect(attackVerdict('hit', 15, 12)).toEqual({ text: 'HIT', tone: 'hit', note: 'vs AC 12' });
-    expect(attackVerdict('hit', 15, null)).toBeUndefined();
+    expect(attackVerdict('none', 15, null)).toEqual({ text: 'HIT?', tone: 'info', note: 'no target AC set' });
     expect(captionOf([roll('1d8+2d6+3', { rng: faces([4, 8], [1, 6], [1, 6]) })])).toBe('1d8 + 2d6');
   });
 });

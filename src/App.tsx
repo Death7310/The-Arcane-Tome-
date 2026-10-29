@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { PanelSlot, useArranger } from './components/Arrange';
 import { AttacksPanel, TurnPanel, VitalsPanel } from './components/CombatPanels';
+import { CompanionsPanel } from './components/CompanionsPanel';
 import { ConditionsPanel, StatusStrip } from './components/ConditionsPanel';
 import { DicePanel } from './components/DicePanel';
 import { FeaturesPanel, InventoryPanel, NotesPanel } from './components/GearPanels';
+import { LibraryDialog } from './components/Library';
 import { CharactersDialog, SettingsDialog } from './components/Menus';
 import { AdvChip, ResultCard } from './components/Results';
 import { SpellsPanel } from './components/SpellsPanel';
@@ -12,6 +14,7 @@ import { fx, setDiceSpeed, setTally, sound } from './fx';
 import { CharacterContext } from './state/character';
 import { isNative, readNativeSave, writeNativeSave } from './state/native';
 import { defaultLayout, gridTracks, isDefault, normalizeLayout, type Layout, type PanelId } from './state/layout';
+import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
 import { addSavePoint, defaultSettings, load, mergeCharacters, parseSaved, save, type Saved, type Settings } from './state/storage';
 import { TableContext, useTableState } from './state/table';
@@ -36,6 +39,7 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   conditions: ConditionsPanel,
   turn: TurnPanel,
   attacks: AttacksPanel,
+  companions: CompanionsPanel,
   skills: SkillsPanel,
   spells: SpellsPanel,
   features: FeaturesPanel,
@@ -57,7 +61,7 @@ export default function App() {
   const [state, setState] = useState<Saved>(initialState);
   // On a phone, open the example on its spells (the showpiece); your own sheets open on stats.
   const [tab, setTab] = useState<Tab>(() => (state.characters.find((c) => c.id === state.currentId)?.isExample ? 'magic' : 'stats'));
-  const [dialog, setDialog] = useState<'characters' | 'import' | 'settings' | null>(null);
+  const [dialog, setDialog] = useState<'characters' | 'import' | 'settings' | 'library' | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   // In the Android app the save file is read asynchronously; don't overwrite it before it has been read.
@@ -142,6 +146,11 @@ export default function App() {
     setTimeout(() => setSavedFlash(false), 1800);
   };
 
+  // Your rules library joins the SRD in the catalog from the start.
+  useEffect(() => {
+    void loadLibrary();
+  }, []);
+
   // Effects engine + settings.
   useEffect(() => {
     if (!canvasRef.current || !flashRef.current || !dimRef.current || !vignetteRef.current || !shakeRef.current) return;
@@ -198,6 +207,9 @@ export default function App() {
                 </button>
                 <button type="button" className="btn small" onClick={() => setDialog('characters')}>
                   Characters
+                </button>
+                <button type="button" className="btn small ghost wide-only" onClick={() => setDialog('library')} title="Your imported rules: classes, spells, creatures and rules text">
+                  Rules
                 </button>
                 <button type="button" className="btn small ghost wide-only" aria-pressed={arranging} onClick={() => setArranging((a) => !a)} title="Move, resize and fold the panels">
                   Arrange
@@ -348,9 +360,12 @@ export default function App() {
               setDialog(null);
               setArranging(true);
             }}
+            onLibrary={() => setDialog('library')}
             onClose={() => setDialog(null)}
           />
         )}
+
+        {dialog === 'library' && <LibraryDialog onClose={() => setDialog(null)} />}
 
         <div className="fx-dim" ref={dimRef} aria-hidden="true" />
         <div className="fx-vignette" ref={vignetteRef} aria-hidden="true" />

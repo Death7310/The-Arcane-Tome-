@@ -59,15 +59,35 @@ const MAX_EXPLOSIONS = 100;
 
 export class DiceSyntaxError extends Error {}
 
-export const cryptoRng: Rng = () => {
-  const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
-  return buf[0] / 2 ** 32;
-};
+// Every roll draws from the device's cryptographic random source (crypto.getRandomValues),
+// the generator browsers provide for security keys: unpredictable, and not seeded by
+// anything the app or the player controls. Values are fetched in batches for speed.
+const pool = new Uint32Array(256);
+let poolAt = pool.length;
 
-/** Uniform integer in [1, sides]. */
-export function rollDie(sides: number, rng: Rng = cryptoRng): number {
-  return Math.floor(rng() * sides) + 1;
+/** A uniform 32-bit integer from the device's cryptographic random source. */
+export function cryptoUint32(): number {
+  if (poolAt >= pool.length) {
+    crypto.getRandomValues(pool);
+    poolAt = 0;
+  }
+  return pool[poolAt++];
+}
+
+export const cryptoRng: Rng = () => cryptoUint32() / 2 ** 32;
+
+/**
+ * Uniform integer in [1, sides]. With the device's generator it is exactly uniform: a
+ * 32-bit draw from the uneven slice at the top of the range (the part that doesn't divide
+ * evenly by `sides`) is thrown away and drawn again, so no face is ever favoured. A
+ * supplied `rng` (tests, replays) is mapped directly.
+ */
+export function rollDie(sides: number, rng?: Rng): number {
+  if (rng) return Math.floor(rng() * sides) + 1;
+  const limit = 2 ** 32 - (2 ** 32 % sides);
+  let x = cryptoUint32();
+  while (x >= limit) x = cryptoUint32();
+  return (x % sides) + 1;
 }
 
 const TERM_RE =
@@ -156,7 +176,7 @@ export interface RollOptions {
 }
 
 export function rollTerms(terms: Term[], opts: RollOptions = {}): RollResult {
-  const rng = opts.rng ?? cryptoRng;
+  const rng = opts.rng;
   const results: TermResult[] = [];
   let total = 0;
   let successes: number | undefined;

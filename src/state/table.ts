@@ -6,11 +6,12 @@
 // HP change and the spell or attack effect are revealed once the dice come to rest.
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
-import { describe, naturalD20, roll, rollDie, withModifier, type RollResult } from '../engine/dice';
+import { describe, isValid, naturalD20, roll, rollDie, withModifier, type RollResult } from '../engine/dice';
 import { centerOf, fx, perform, performAction, sound, throwPhases, weaponLook, type DicePhase, type StrikeLook, type Verdict } from '../fx';
 import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/types';
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type StandardActionId } from '../systems/dnd5e/data';
-import type { CastingTime, Character, CustomDie, Feature, Spell, Weapon } from '../systems/dnd5e/model';
+import { evalFormula } from '../systems/dnd5e/formula';
+import type { CastingTime, Character, Companion, CompanionAction, CustomDie, Feature, Spell, Weapon } from '../systems/dnd5e/model';
 import {
   effectDice,
   incapacitatedBy,
@@ -237,9 +238,19 @@ export function useTableState(char: Character, update: Update) {
     const atk = roll(d20Expr(toHit.total, mode.adv) + mode.extra);
     const nat = naturalD20(atk);
     const ac = acRef.current;
-    let outcome: Outcome = nat === 20 ? 'crit' : nat === 1 ? 'miss' : ac !== null ? (atk.total >= ac ? 'hit' : 'miss') : 'hit';
+    // Without a target AC the app can't know whether it hit ('none'): damage is still rolled,
+    // labelled for the DM to confirm, rather than the attack being assumed to land.
+    let outcome: Outcome = nat === 20 ? 'crit' : nat === 1 ? 'miss' : ac !== null ? (atk.total >= ac ? 'hit' : 'miss') : 'none';
+    const unknown = outcome === 'none';
     const lines: RollLine[] = [
-      { label: 'Attack', total: atk.total, detail: describe(atk) + (ac !== null ? ` vs AC ${ac}` : ''), kind: 'd20', nat: natOf(atk), outcome },
+      {
+        label: 'Attack',
+        total: atk.total,
+        detail: describe(atk) + (ac !== null ? ` vs AC ${ac}` : unknown ? ` · no target AC set: ask your DM whether ${atk.total} hits` : ''),
+        kind: 'd20',
+        nat: natOf(atk),
+        outcome,
+      },
     ];
     const known = toHit.parts.map((p) => ({ label: shortLabel(p.label), value: p.value }));
     const attackRow = counted([{ r: atk, known, element: look.element, test: true, orb: look.orb }], atk.total, 'to hit', attackVerdict(outcome, nat, ac));
@@ -249,7 +260,7 @@ export function useTableState(char: Character, update: Update) {
       damage.forEach((d, i) => {
         const r = roll(i === 0 ? withModifier(d.dice, dmgBonus) : d.dice, { critical: outcome === 'crit' });
         dealt += Math.max(0, r.total);
-        lines.push({ label: `${capital(d.type)} damage`, total: Math.max(0, r.total), detail: describe(r), kind: 'damage', outcome });
+        lines.push({ label: `${capital(d.type)} damage${unknown ? ' (if it hits)' : ''}`, total: Math.max(0, r.total), detail: describe(r), kind: 'damage', outcome });
         hits.push({ r, known: d.known, element: d.type as FxElement, orb: look.orb });
       });
     }
@@ -258,7 +269,7 @@ export function useTableState(char: Character, update: Update) {
   };
 
   const label = (outcome: Outcome, dealt: number, type: string) =>
-    outcome === 'miss' ? 'MISS' : outcome === 'crit' ? `CRIT! ${dealt}` : `${dealt}${type ? ` ${type}` : ''}`;
+    outcome === 'miss' ? 'MISS' : outcome === 'crit' ? `CRIT! ${dealt}` : `${dealt}${type ? ` ${type}` : ''}${outcome === 'none' ? '?' : ''}`;
 
   const attack = useCallback(
     (w: Weapon, originEl?: Element | null) => {
@@ -292,6 +303,81 @@ export function useTableState(char: Character, update: Update) {
       );
     },
     [push, spendTime, modeFor],
+  );
+
+  /** A companion uses only the Advantage you set by hand: your own conditions aren't its conditions. */
+  const manualMode = (): Mode => {
+    const a = takeAdv();
+    return { adv: a, note: a === 'adv' ? 'Advantage: your choice' : a === 'dis' ? 'Disadvantage: your choice' : '', extra: '', autoFail: null };
+  };
+
+  /** One of a companion's actions: an attack, a saving-throw effect, or a rule to read. */
+  const companionAct = useCallback(
+    (comp: Companion, action: CompanionAction, originEl?: Element | null) => {
+      const c = charRef.current;
+      const title = `${comp.name}: ${action.name}`;
+      const from = centerOf(originEl);
+      const type = action.damageType || 'bludgeoning';
+      const element = type as FxElement;
+      const dice = action.damage ? resolveTokens(action.damage, c).replace(/\s+/g, '') : '';
+      const damage = dice && isValid(dice) ? [{ dice, type, known: [] as Part[] }] : [];
+      if (action.attack) {
+        const toHit = evalFormula(action.toHit, c) ?? 0;
+        const mode = manualMode();
+        const res = attackOnce({ total: toHit, parts: [{ label: 'Attack bonus', value: toHit }] }, mode, damage, 0, { orb: false });
+        const to = fx.defaultTarget(from);
+        const phases = [phaseOf([res.attackRow])];
+        if (res.hits.length) phases.push(phaseOf([counted(res.hits, res.dealt, type, undefined, res.outcome === 'crit')]));
+        stage(
+          phases,
+          from,
+          () => {
+            perform({ element, shape: action.attack === 'ranged' ? 'bolt' : 'touch', from: action.attack === 'ranged' ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
+            push({ title, subtitle: [action.reach, mode.note].filter(Boolean).join(' · ') || undefined, lines: res.lines, element });
+          },
+          { element, headline: 'CRITICAL!' },
+          { look: weaponLook(action.name, type, action.attack === 'ranged'), element },
+        );
+        return;
+      }
+      const lines: RollLine[] = [];
+      let verdict: Verdict | undefined;
+      if (action.save) {
+        const dc = evalFormula(action.dc, c);
+        lines.push({ label: `${ABILITY_NAMES[action.save]} save`, total: dc ?? 0, detail: dc === null ? 'Set this action’s DC to see it here.' : `DC ${dc}`, kind: 'info' });
+        if (dc !== null) verdict = { text: `DC ${dc}`, tone: 'info', note: `${ABBR(action.save)} save` };
+      }
+      if (!damage.length) {
+        push({ title, lines: lines.length ? lines : [{ label: action.kind === 'trait' ? 'Trait' : 'Used', total: 0, detail: action.text || action.name, kind: 'info' }] });
+        return;
+      }
+      const r = roll(damage[0].dice);
+      const dealt = Math.max(0, r.total);
+      lines.push({ label: `${capital(type)} damage`, total: dealt, detail: describe(r), kind: 'damage' });
+      stage(
+        [phaseOf([counted([{ r, known: [], element, orb: true }], dealt, type, verdict)])],
+        from,
+        () => {
+          perform({ element, shape: /cone|breath/i.test(action.text) ? 'cone' : 'burst', from, to: fx.defaultTarget(from), power: 1, outcome: 'hit', label: `${dealt} ${type}` });
+          push({ title, lines, element });
+        },
+        {},
+        { look: 'orb', element },
+      );
+    },
+    [push],
+  );
+
+  /** A companion's ability check or saving throw. */
+  const companionTest = useCallback(
+    (comp: Companion, what: string, bonus: number, originEl?: Element | null) => {
+      const mode = manualMode();
+      const r = roll(d20Expr(bonus, mode.adv));
+      const title = `${comp.name}: ${what}`;
+      const entry = { title, subtitle: mode.note || undefined, lines: [{ label: what, total: r.total, detail: describe(r), kind: 'd20' as const, nat: natOf(r) }] };
+      stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () => push(entry), { headline: 'NATURAL 20!' });
+    },
+    [push],
   );
 
   /** Spell slots the spell can be cast with right now, lowest first. */
@@ -634,9 +720,15 @@ export function useTableState(char: Character, update: Update) {
     perform({ element, shape, from, to: shape === 'touch' ? undefined : fx.defaultTarget(from), power, outcome: 'hit', label: 'Preview' });
   }, []);
 
+  /** A line in the roll history for something that isn't a roll (leveling up, say). */
+  const note = useCallback((title: string, detail: string) => push({ title, lines: [{ label: title, total: 0, detail, kind: 'info' }] }), [push]);
+
   return useMemo(
     () => ({
       log,
+      note,
+      companionAct,
+      companionTest,
       latest,
       dismissLatest: () => setLatest(null),
       clearLog: () => setLog([]),
@@ -661,7 +753,7 @@ export function useTableState(char: Character, update: Update) {
       rest,
       preview,
     }),
-    [log, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
+    [log, note, companionAct, companionTest, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
   );
 }
 

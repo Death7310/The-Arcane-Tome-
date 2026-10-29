@@ -1,8 +1,11 @@
 import { useRef, useState } from 'react';
+import { useCatalog } from '../state/catalog';
 import { fileToPortrait } from '../state/images';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
-import { ABILITIES, ABILITY_NAMES, CLASSES, SKILLS, classById, type CasterType } from '../systems/dnd5e/data';
+import { ABILITIES, ABILITY_NAMES, SKILLS, allClasses, classById, type CasterType } from '../systems/dnd5e/data';
+import { levelDown, syncFeatures } from '../systems/dnd5e/leveling';
+import { LevelUpDialog } from './LevelUp';
 import { uid, type ProfLevel } from '../systems/dnd5e/model';
 import {
   abilityCheck,
@@ -82,7 +85,10 @@ function Portrait() {
 
 export function IdentityPanel() {
   const { char: c, update } = useChar();
+  const t = useTable();
+  const cat = useCatalog();
   const [open, setOpen] = useState(false);
+  const [leveling, setLeveling] = useState(false);
   return (
     <Panel
       title="Character"
@@ -112,6 +118,22 @@ export function IdentityPanel() {
             {c.alignment ? ` · ${c.alignment}` : ''}
             {c.xp ? ` · ${c.xp.toLocaleString()} XP` : ''}
           </p>
+          <div className="row" style={{ gridColumn: '1 / -1' }}>
+            <button type="button" className="btn small primary" onClick={() => setLeveling(true)} disabled={totalLevel(c) >= 20}>
+              Level up
+            </button>
+            {cat && totalLevel(c) > 1 && (
+              <ConfirmButton
+                label="Undo last level"
+                confirmLabel="Tap again to undo it"
+                onConfirm={() => {
+                  let message: string | null = null;
+                  update((d) => void (message = levelDown(d, cat)));
+                  if (message) t.note('Level down', message);
+                }}
+              />
+            )}
+          </div>
         </div>
         </div>
       ) : (
@@ -133,7 +155,7 @@ export function IdentityPanel() {
                   label="Class"
                   id={`class-${k.id}`}
                   value={k.classId}
-                  options={CLASSES}
+                  options={allClasses()}
                   onChange={(v) =>
                     update((d) => {
                       d.classes[idx].classId = v;
@@ -145,7 +167,24 @@ export function IdentityPanel() {
                   }
                 />
                 <NumField label="Level" id={`level-${k.id}`} value={k.level} min={1} max={20} onChange={(n) => update((d) => void (d.classes[idx].level = n))} />
-                <TextField label="Subclass" id={`sub-${k.id}`} value={k.subclass} onChange={(v) => update((d) => void (d.classes[idx].subclass = v))} />
+                <label className="field" htmlFor={`sub-${k.id}`}>
+                  <span>Subclass</span>
+                  <input
+                    id={`sub-${k.id}`}
+                    className="input"
+                    list={`subs-${k.id}`}
+                    value={k.subclass}
+                    onChange={(e) =>
+                      update((d) => {
+                        d.classes[idx].subclass = e.target.value;
+                        d.classes[idx].subclassId = cat?.subclasses.find((s) => s.classId === k.classId && s.name === e.target.value)?.id;
+                      })
+                    }
+                  />
+                  <datalist id={`subs-${k.id}`}>
+                    {cat?.subclasses.filter((s) => s.classId === k.classId).map((s) => <option key={s.id} value={s.name} />)}
+                  </datalist>
+                </label>
                 <SelectField
                   label="Spellcasting"
                   id={`caster-${k.id}`}
@@ -165,10 +204,16 @@ export function IdentityPanel() {
             Add a class (multiclass)
           </button>
           <p className="hint" style={{ margin: 0 }}>
-            The first class sets your saving throw proficiencies and level-1 hit points.
+            The first class sets your saving throw proficiencies and level-1 hit points. Changed levels by hand? Bring the class features in line:
           </p>
+          {cat && (
+            <button type="button" className="btn small ghost" onClick={() => update((d) => syncFeatures(d, cat))}>
+              Update class features from the rules
+            </button>
+          )}
         </div>
       )}
+      {leveling && <LevelUpDialog onClose={() => setLeveling(false)} onDone={(m) => t.note('Level up', m)} />}
     </Panel>
   );
 }

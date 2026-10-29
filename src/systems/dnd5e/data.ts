@@ -62,7 +62,26 @@ export const CLASSES: ClassDef[] = [
   { id: 'wizard', name: 'Wizard', hitDie: 6, saves: ['int', 'wis'], caster: 'full', spellAbility: 'int' },
 ];
 
-export const classById = (id: string): ClassDef => CLASSES.find((c) => c.id === id) ?? CLASSES[0];
+const HOMEBREW: ClassDef[] = [];
+
+/**
+ * Makes classes from the rules library known to the sheet's math (hit die, saves, casting).
+ * Their spellcasting is read from their features: a class with a Spellcasting feature and
+ * a prepared-spells table is treated as a full caster.
+ */
+export function registerClasses(defs: { id: string; name: string; hitDie: number; saves: Ability[]; prepared?: unknown; caster?: string; spellAbility?: Ability | null }[]) {
+  HOMEBREW.length = 0;
+  for (const d of defs) {
+    if (CLASSES.some((c) => c.id === d.id)) continue;
+    const saves = (d.saves.length >= 2 ? d.saves.slice(0, 2) : [...d.saves, 'con', 'wis'].slice(0, 2)) as [Ability, Ability];
+    const caster = (['none', 'full', 'half', 'third', 'pact'] as const).find((k) => k === d.caster) ?? (d.prepared ? 'full' : 'none');
+    HOMEBREW.push({ id: d.id, name: d.name, hitDie: d.hitDie || 8, saves, caster, spellAbility: d.spellAbility ?? null });
+  }
+}
+
+export const allClasses = (): ClassDef[] => [...CLASSES, ...HOMEBREW];
+
+export const classById = (id: string): ClassDef => CLASSES.find((c) => c.id === id) ?? HOMEBREW.find((c) => c.id === id) ?? CLASSES[0];
 
 /** Spell slots per slot level (index 0 = 1st level) for a full caster of the given caster level. */
 export const FULL_CASTER_SLOTS: number[][] = [

@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { ELEMENTS, SHAPES } from '../fx/types';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
-import { ABILITIES, ABILITY_NAMES, CLASSES } from '../systems/dnd5e/data';
+import { ABILITIES, ABILITY_NAMES, allClasses } from '../systems/dnd5e/data';
 import { blankFeature, uid, type Feature, type UsesFormula } from '../systems/dnd5e/model';
 import { inventoryWeight, resolveTokens, usesMax } from '../systems/dnd5e/rules';
+import { RulesText } from './RulesText';
 import { ConfirmButton, NumField, Panel, Pips, SelectField, TextField } from './ui';
 
 const USES = [
@@ -13,7 +14,7 @@ const USES = [
   { id: 'pb', name: 'Proficiency Bonus' },
   { id: 'level', name: 'Character level' },
   ...ABILITIES.map((a) => ({ id: `mod:${a}`, name: `${ABILITY_NAMES[a]} modifier` })),
-  ...CLASSES.map((k) => ({ id: `class:${k.id}`, name: `${k.name} level` })),
+  ...allClasses().map((k) => ({ id: `class:${k.id}`, name: `${k.name} level` })),
 ];
 
 const usesKind = (u: UsesFormula | null): string => (u === null ? 'none' : typeof u === 'number' ? 'fixed' : u);
@@ -41,8 +42,8 @@ export function FeaturesPanel() {
       }
     >
       <div className="list">
-        {c.features.length === 0 && <p className="hint">Species traits, class features and feats go here.</p>}
-        {c.features.map((f, idx) => {
+        {c.features.length === 0 && <p className="hint">Species traits, class features and feats go here. Level up adds your class features for you.</p>}
+        {orderFeatures(c).map(({ f, idx }) => {
           const max = usesMax(c, f);
           const usable = max !== null || f.roll.trim() !== '';
           return (
@@ -66,10 +67,22 @@ export function FeaturesPanel() {
               </div>
               {max !== null && max > 0 && (
                 <div style={{ padding: '0 10px 8px' }}>
-                  <Pips total={max} spent={Math.min(max, f.usesSpent)} label={`${f.name} use`} onChange={(v) => update((d) => void (d.features[idx].usesSpent = Math.max(0, Math.min(max, v))))} />
+                  {max > 12 ? (
+                    // Big pools (Lay on Hands, Focus Points) count down rather than show a pip each.
+                    <NumField
+                      label={`${f.name}: left of ${max}`}
+                      id={`pool-${f.id}`}
+                      value={max - Math.min(max, f.usesSpent)}
+                      min={0}
+                      max={max}
+                      onChange={(left) => update((d) => void (d.features[idx].usesSpent = Math.max(0, Math.min(max, max - left))))}
+                    />
+                  ) : (
+                    <Pips total={max} spent={Math.min(max, f.usesSpent)} label={`${f.name} use`} onChange={(v) => update((d) => void (d.features[idx].usesSpent = Math.max(0, Math.min(max, v))))} />
+                  )}
                 </div>
               )}
-              {open === f.id && <FeatureEditor f={f} idx={idx} />}
+              {open === f.id && (f.origin ? <RulesFeature f={f} idx={idx} /> : <FeatureEditor f={f} idx={idx} />)}
             </div>
           );
         })}
@@ -78,10 +91,44 @@ export function FeaturesPanel() {
   );
 }
 
+/** Hand-added features first (species traits and the like), then class features by class and level. */
+function orderFeatures(c: { features: Feature[]; classes: { id: string }[] }) {
+  const rank = (f: Feature) => (f.origin ? 1 + (c.classes.findIndex((k) => k.id === f.origin!.entryId) + 1) * 100 + f.origin.level + (f.origin.kind === 'feat' ? 0.5 : 0) : 0);
+  return c.features.map((f, idx) => ({ f, idx })).sort((a, b) => rank(a.f) - rank(b.f) || a.idx - b.idx);
+}
+
+/** A feature that came from the rules: its text, with editing a step away. */
+function RulesFeature({ f, idx }: { f: Feature; idx: number }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <div className="item-body">
+      <RulesText text={f.description || 'No description.'} />
+      <p className="hint" style={{ margin: 0 }}>
+        {f.origin!.auto ? 'Kept up to date with the rules as you level.' : 'You’ve edited this one, so leveling leaves it as you wrote it.'}
+      </p>
+      {editing ? (
+        <FeatureEditor f={f} idx={idx} />
+      ) : (
+        <div className="row">
+          <button type="button" className="btn small ghost" onClick={() => setEditing(true)}>
+            Edit
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FeatureEditor({ f, idx }: { f: Feature; idx: number }) {
   const { update } = useChar();
   const t = useTable();
-  const set = (fn: (x: Feature) => void) => update((d) => fn(d.features[idx]));
+  // Editing a rules feature makes it yours: leveling stops overwriting it.
+  const set = (fn: (x: Feature) => void) =>
+    update((d) => {
+      const x = d.features[idx];
+      fn(x);
+      if (x.origin) x.origin.auto = false;
+    });
   const kind = usesKind(f.usesMax);
   return (
     <div className="item-body">

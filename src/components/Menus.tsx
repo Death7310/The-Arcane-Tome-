@@ -1,12 +1,15 @@
+import { FairnessCheck } from './Fairness';
 import { useEffect, useRef, useState } from 'react';
 import { fx, perform, sound, centerOf, type DiceSpeed } from '../fx';
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
 import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
 import { isNative, saveFileToDevice, shareFile } from '../state/native';
+import { listPacks, restoreLibrary } from '../state/library';
 import { downloadText, makeBackup, parseImport, type MergeResult, type SavePoint, type Settings } from '../state/storage';
 import { blankCharacter, uid, type Character } from '../systems/dnd5e/model';
 import { classSummary, maxHp, totalLevel } from '../systems/dnd5e/rules';
 import { sampleCharacter } from '../systems/dnd5e/sample';
+import { SRD_CREDIT } from '../systems/dnd5e/srd';
 import { ImportCharacter } from './ImportCharacter';
 import { Check, ConfirmButton, Dialog, SelectField } from './ui';
 
@@ -189,7 +192,8 @@ function ago(t: number): string {
 }
 
 const backupName = () => `arcane-tome-backup-${new Date().toISOString().slice(0, 10)}.json`;
-const backupJson = (characters: Character[]) => JSON.stringify(makeBackup(characters), null, 2);
+/** Characters plus the rules library, so moving to a new device brings your homebrew along. */
+const backupJson = async (characters: Character[]) => JSON.stringify({ ...makeBackup(characters), library: await listPacks().catch(() => []) }, null, 2);
 
 /** Offered in the browser when the site has an Android build to download. */
 function AndroidAppLink() {
@@ -271,7 +275,7 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
           type="button"
           className="btn"
           onClick={async () => {
-            const r = await saveFileToDevice(backupName(), backupJson(props.characters));
+            const r = await saveFileToDevice(backupName(), await backupJson(props.characters));
             if (r.ok) props.onChange({ ...props.settings, lastBackupAt: Date.now() });
             setMsg(r.message);
           }}
@@ -282,7 +286,7 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
           type="button"
           className="btn"
           onClick={async () => {
-            const r = await shareFile(backupName(), backupJson(props.characters));
+            const r = await shareFile(backupName(), await backupJson(props.characters));
             if (r.ok && r.message === 'Shared.') props.onChange({ ...props.settings, lastBackupAt: Date.now() });
             setMsg(r.message);
           }}
@@ -303,7 +307,10 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
             e.target.value = '';
             if (!f) return;
             try {
-              setMsg(`Restored: ${restoreSummary(props.onRestore(parseImport(await f.text())))}.`);
+              const text = await f.text();
+              const summary = restoreSummary(props.onRestore(parseImport(text)));
+              const packs = await restoreLibrary(text).catch(() => 0);
+              setMsg(`Restored: ${summary}${packs ? `, and ${packs} rules ${packs === 1 ? 'pack' : 'packs'}` : ''}.`);
             } catch (err) {
               setMsg((err as Error).message);
             }
@@ -321,6 +328,7 @@ export function SettingsDialog(props: {
   onChange: (s: Settings) => void;
   onRestore: (c: Character[]) => MergeResult;
   onArrange: () => void;
+  onLibrary: () => void;
   onClose: () => void;
 }) {
   const s = props.settings;
@@ -329,6 +337,18 @@ export function SettingsDialog(props: {
     <Dialog title="Settings" onClose={props.onClose}>
       <div style={{ display: 'grid', gap: 12 }}>
         <OfflineSection characters={props.characters} settings={s} onChange={props.onChange} onRestore={props.onRestore} />
+        <h3 style={{ margin: '8px 0 0' }}>Are the dice fair?</h3>
+        <FairnessCheck />
+        <h3 style={{ margin: '8px 0 0' }}>Rules library</h3>
+        <p className="hint" style={{ margin: 0 }}>
+          Import rulebooks, supplements or your own game’s rules (PDF, Word, text). Their classes, subclasses, feats, spells and creatures join the official ones in Level up, the spell
+          list and companions, and the text is searchable.
+        </p>
+        <span className="row">
+          <button type="button" className="btn small" onClick={props.onLibrary}>
+            Open the rules library
+          </button>
+        </span>
         <h3 style={{ margin: '8px 0 0' }}>Layout</h3>
         <p className="hint" style={{ margin: 0 }}>
           Move, resize and fold the panels the way you like them. The layout is kept on this device, so a phone and a laptop can each have their own.
@@ -414,6 +434,9 @@ export function SettingsDialog(props: {
         </button>
         <p className="hint" style={{ margin: 0 }} id="app-version">
           Arcane Tome {__APP_VERSION__} · built {__BUILD_TIME__.slice(0, 16).replace('T', ' ')} UTC
+        </p>
+        <p className="hint" style={{ margin: 0 }} id="srd-credit">
+          {SRD_CREDIT}
         </p>
       </div>
     </Dialog>
