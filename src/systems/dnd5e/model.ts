@@ -1,5 +1,5 @@
 import type { Element, Shape } from '../../fx/types';
-import { ABILITIES, SKILLS, type Ability, type CasterType, type DamageType, type SkillId, type UnarmoredDefense } from './data';
+import { ABILITIES, CONDITIONS, SKILLS, type Ability, type CasterType, type ConditionId, type DamageType, type SkillId, type UnarmoredDefense } from './data';
 
 export type ProfLevel = 0 | 0.5 | 1 | 2; // none, half (Jack of All Trades), proficient, expertise
 
@@ -111,6 +111,24 @@ export function blankCustomDie(partial: Partial<CustomDie> = {}): CustomDie {
   return { id: uid(), name: 'New die', kind: 'formula', formula: '1d6', faces: [], count: 1, element: 'arcane', ...partial };
 }
 
+/** A temporary effect such as Bless or Shield of Faith. Rounds count down each New turn; null lasts until removed. */
+export interface Effect {
+  id: string;
+  name: string;
+  rounds: number | null;
+  /** Dice or number added to the rolls below, e.g. "1d4" or "-1d4" or "2". */
+  bonus: string;
+  attacks: boolean;
+  saves: boolean;
+  checks: boolean;
+  ac: number;
+  note: string;
+}
+
+export function blankEffect(partial: Partial<Effect> = {}): Effect {
+  return { id: uid(), name: 'Effect', rounds: null, bonus: '', attacks: false, saves: false, checks: false, ac: 0, note: '', ...partial };
+}
+
 export interface Turn {
   action: boolean;
   bonus: boolean;
@@ -169,6 +187,10 @@ export interface Character {
   notes: string;
   turn: Turn;
   customDice: CustomDie[];
+  conditions: ConditionId[];
+  effects: Effect[];
+  /** Small downscaled image as a data URL. */
+  portrait: string | null;
   updatedAt: number;
 }
 
@@ -283,6 +305,9 @@ export function blankCharacter(): Character {
     notes: '',
     turn: emptyTurn(),
     customDice: [],
+    conditions: [],
+    effects: [],
+    portrait: null,
     updatedAt: Date.now(),
   };
 }
@@ -312,6 +337,9 @@ export function normalizeCharacter(raw: unknown): Character {
     weapons: Array.isArray(c.weapons) ? c.weapons.map((w) => blankWeapon(w)) : [],
     features: Array.isArray(c.features) ? c.features.map((f) => blankFeature(f)) : [],
     customDice: Array.isArray(c.customDice) ? c.customDice.map((d) => blankCustomDie(d)) : [],
+    conditions: Array.isArray(c.conditions) ? c.conditions.filter((x): x is ConditionId => CONDITIONS.some((k) => k.id === x)) : [],
+    effects: Array.isArray(c.effects) ? c.effects.map((e) => blankEffect(e)) : [],
+    portrait: typeof c.portrait === 'string' && c.portrait.startsWith('data:image/') ? c.portrait : null,
     inventory: Array.isArray(c.inventory) ? c.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
   };
   while (merged.spellcasting.slotsUsed.length < 9) merged.spellcasting.slotsUsed.push(0);

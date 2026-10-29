@@ -7,6 +7,7 @@ import { downloadText, makeBackup, parseImport, type MergeResult, type SavePoint
 import { blankCharacter, uid, type Character } from '../systems/dnd5e/model';
 import { classSummary, maxHp, totalLevel } from '../systems/dnd5e/rules';
 import { sampleCharacter } from '../systems/dnd5e/sample';
+import { ImportCharacter } from './ImportCharacter';
 import { Check, ConfirmButton, Dialog, SelectField } from './ui';
 
 export function CharactersDialog(props: {
@@ -21,34 +22,20 @@ export function CharactersDialog(props: {
   onLoadSavePoint: (id: string) => void;
   onDeleteSavePoint: (id: string) => void;
   onClose: () => void;
+  initialMode?: 'list' | 'saves' | 'import' | 'export';
 }) {
-  const [mode, setMode] = useState<'list' | 'saves' | 'import' | 'export'>('list');
+  const [mode, setMode] = useState<'list' | 'saves' | 'import' | 'export'>(props.initialMode ?? 'list');
   const [pointName, setPointName] = useState('');
-  const [text, setText] = useState('');
-  const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
   const current = props.characters.find((c) => c.id === props.currentId)!;
   const exportJson = JSON.stringify(current, null, 2);
-
-  const importText = (raw: string) => {
-    try {
-      const r = props.onRestore(parseImport(raw));
-      setNotice(restoreSummary(r));
-      setText('');
-      setError('');
-      setMode('list');
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
 
   return (
     <Dialog title="Characters" onClose={props.onClose}>
       <div className="seg" role="group" aria-label="Character tools" style={{ marginBottom: 12 }}>
         {(['list', 'saves', 'import', 'export'] as const).map((m) => (
-          <button key={m} type="button" aria-pressed={mode === m} onClick={() => (setMode(m), setError(''), setNotice(''))}>
+          <button key={m} type="button" aria-pressed={mode === m} onClick={() => (setMode(m), setNotice(''))}>
             {m === 'list' ? 'Characters' : m === 'saves' ? 'Save points' : m === 'import' ? 'Import' : 'Export'}
           </button>
         ))}
@@ -123,7 +110,10 @@ export function CharactersDialog(props: {
             <button type="button" className="btn primary" onClick={() => (props.onAdd(blankCharacter()), props.onClose())}>
               New character
             </button>
-            <button type="button" className="btn" onClick={() => (props.onAdd(sampleCharacter()), props.onClose())}>
+            <button type="button" className="btn" onClick={() => setMode('import')}>
+              Import from a document
+            </button>
+            <button type="button" className="btn ghost" onClick={() => (props.onAdd(sampleCharacter()), props.onClose())}>
               New from the example
             </button>
           </div>
@@ -132,27 +122,14 @@ export function CharactersDialog(props: {
       )}
 
       {mode === 'import' && (
-        <>
-          <p className="hint">Choose a backup or an exported character (.json), or paste its contents. If a character is already here, whichever copy was edited most recently is kept.</p>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="application/json,.json"
-            id="import-file"
-            onChange={async (e) => {
-              const f = e.target.files?.[0];
-              e.target.value = '';
-              if (f) importText(await f.text());
-            }}
-          />
-          <textarea className="input" style={{ marginTop: 10 }} id="import-text" aria-label="Character JSON" value={text} placeholder='{"name": "…"}' onChange={(e) => setText(e.target.value)} />
-          {error && <p className="hint" style={{ color: 'var(--bad)' }}>{error}</p>}
-          <div className="row" style={{ marginTop: 10 }}>
-            <button type="button" className="btn primary" disabled={!text.trim()} onClick={() => importText(text)}>
-              Import
-            </button>
-          </div>
-        </>
+        <ImportCharacter
+          onCreate={(c) => props.onAdd({ ...c, isExample: false })}
+          onRestore={props.onRestore}
+          onDone={(message) => {
+            setNotice(message);
+            setMode('list');
+          }}
+        />
       )}
 
       {mode === 'export' && (
@@ -338,13 +315,32 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
   );
 }
 
-export function SettingsDialog(props: { settings: Settings; characters: Character[]; onChange: (s: Settings) => void; onRestore: (c: Character[]) => MergeResult; onClose: () => void }) {
+export function SettingsDialog(props: {
+  settings: Settings;
+  characters: Character[];
+  onChange: (s: Settings) => void;
+  onRestore: (c: Character[]) => MergeResult;
+  onArrange: () => void;
+  onClose: () => void;
+}) {
   const s = props.settings;
   const set = (patch: Partial<Settings>) => props.onChange({ ...s, ...patch });
   return (
     <Dialog title="Settings" onClose={props.onClose}>
       <div style={{ display: 'grid', gap: 12 }}>
         <OfflineSection characters={props.characters} settings={s} onChange={props.onChange} onRestore={props.onRestore} />
+        <h3 style={{ margin: '8px 0 0' }}>Layout</h3>
+        <p className="hint" style={{ margin: 0 }}>
+          Move, resize and fold the panels the way you like them. The layout is kept on this device, so a phone and a laptop can each have their own.
+        </p>
+        <span className="row">
+          <button type="button" className="btn small" onClick={props.onArrange}>
+            Arrange panels
+          </button>
+          <button type="button" className="btn small ghost" disabled={!s.layout} onClick={() => set({ layout: null })}>
+            Reset layout
+          </button>
+        </span>
         <h3 style={{ margin: '8px 0 0' }}>Effects &amp; sound</h3>
         <SelectField<FxLevel>
           label="Animations"
@@ -368,6 +364,15 @@ export function SettingsDialog(props: { settings: Settings; characters: Characte
           ]}
           onChange={(v) => set({ diceSpeed: v })}
         />
+        <Check
+          label="Count attacks and spells up hit by hit (a weapon strikes each die; a spell's dice burst one by one)"
+          id="set-tally"
+          checked={s.tally}
+          onChange={(b) => set({ tally: b })}
+        />
+        <p className="hint" style={{ margin: 0 }}>
+          Tap anywhere, or press Escape, to skip straight to a roll’s result.
+        </p>
         <Check label="Allow screen flashes (lightning, big explosions)" id="set-flash" checked={s.flashes} onChange={(b) => set({ flashes: b })} />
         <p className="hint" style={{ margin: 0 }}>
           Flashes are limited to two per effect and kept dim, below the WCAG three-flashes-per-second threshold. Turn them off if bright flashes bother you.

@@ -1,3 +1,4 @@
+import type { Layout } from './layout';
 import type { DiceSpeed } from '../fx';
 import type { FxLevel } from '../fx/types';
 import { normalizeCharacter, uid, type Character } from '../systems/dnd5e/model';
@@ -10,6 +11,10 @@ export interface Settings {
   theme: 'system' | 'light' | 'dark';
   lastBackupAt: number | null;
   diceSpeed: DiceSpeed;
+  /** Attacks and spells count up hit by hit on the dice tray. */
+  tally: boolean;
+  /** Where the panels sit on this device; null for the built-in arrangement. */
+  layout: Layout | null;
 }
 
 /** A manual save: a copy of one character you can go back to. */
@@ -51,6 +56,8 @@ export function defaultSettings(): Settings {
     theme: 'system',
     lastBackupAt: null,
     diceSpeed: reduce ? 'quick' : 'full',
+    tally: true,
+    layout: null,
   };
 }
 
@@ -181,7 +188,8 @@ export function downloadText(filename: string, text: string): boolean {
 
 /** Adds a save point for a character, keeping its newest SAVE_POINTS_PER_CHARACTER. */
 export function addSavePoint(points: SavePoint[], c: Character, name: string): SavePoint[] {
-  const point: SavePoint = { id: uid(), characterId: c.id, name, createdAt: Date.now(), data: structuredClone(c) };
+  // The portrait is left out: it rarely changes, and copying it into every save point would fill storage.
+  const point: SavePoint = { id: uid(), characterId: c.id, name, createdAt: Date.now(), data: { ...structuredClone(c), portrait: null } };
   const mine = [point, ...points.filter((p) => p.characterId === c.id)].slice(0, SAVE_POINTS_PER_CHARACTER);
   return [...mine, ...points.filter((p) => p.characterId !== c.id)];
 }

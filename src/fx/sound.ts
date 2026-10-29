@@ -3,6 +3,7 @@
 // spell level. Browsers only allow audio after a user gesture; every call here is
 // made from a click, and the context is created lazily on the first one.
 
+import type { StrikeLook } from './strikes';
 import type { ActionMotion, Element, Outcome, Shape } from './types';
 
 type Ctx = AudioContext;
@@ -301,6 +302,108 @@ class SoundEngine {
     const big = Math.min(2, 1 + amount / 30);
     this.t({ dur: 0.3 * big, freq: 110, freqEnd: 50, gain: 0.7 });
     this.n({ dur: 0.2, type: 'lowpass', freq: 700, q: 0.7, gain: 0.5, attack: 0.002 });
+  }
+
+  /** One blow of a tally: the swish of the wind-up, then the hit landing `impact` seconds later. */
+  strike(look: StrikeLook, el: Element, impact: number) {
+    if (!this.ensure()) return;
+    const at = Math.max(0, impact);
+    switch (look) {
+      case 'sword':
+      case 'axe':
+        this.n({ at: at * 0.45, dur: at * 0.55 + 0.04, type: 'bandpass', freq: 600, freqEnd: 3200, q: 1.1, gain: 0.32, attack: at * 0.5 });
+        this.n({ at, dur: 0.05, type: 'bandpass', freq: 2600, q: 2, gain: 0.35, attack: 0.002 });
+        this.t({ at, dur: 0.32, type: 'triangle', freq: look === 'axe' ? 1500 : 2400 + Math.random() * 300, gain: 0.06 });
+        this.t({ at, dur: 0.12, freq: 160, freqEnd: 70, gain: 0.3 });
+        break;
+      case 'rapier':
+      case 'spear':
+      case 'fist':
+        this.n({ at: at * 0.6, dur: at * 0.4 + 0.03, type: 'bandpass', freq: 1200, freqEnd: 3600, q: 1.4, gain: 0.25, attack: at * 0.35 });
+        this.t({ at, dur: 0.14, freq: look === 'fist' ? 140 : 230, freqEnd: 70, gain: 0.45 });
+        this.n({ at, dur: 0.06, type: 'lowpass', freq: 900, q: 0.7, gain: 0.3, attack: 0.002 });
+        break;
+      case 'hammer':
+        this.n({ at: at * 0.4, dur: at * 0.6, type: 'lowpass', freq: 500, freqEnd: 1200, q: 0.8, gain: 0.25, attack: at * 0.5 });
+        this.t({ at, dur: 0.3, freq: 120, freqEnd: 42, gain: 0.8 });
+        this.n({ at, dur: 0.16, type: 'lowpass', freq: 600, q: 0.7, gain: 0.55, attack: 0.002 });
+        break;
+      case 'arrow':
+      case 'stone':
+        this.t({ dur: at + 0.02, type: 'sine', freq: 1900, freqEnd: 900, gain: 0.05, attack: 0.03 });
+        this.n({ dur: at, type: 'bandpass', freq: 2500, q: 2, gain: 0.08, attack: at * 0.8 });
+        this.t({ at, dur: 0.1, freq: look === 'stone' ? 300 : 210, freqEnd: 90, gain: 0.45 });
+        this.n({ at, dur: 0.04, type: 'bandpass', freq: 1400, q: 1.5, gain: 0.3, attack: 0.002 });
+        break;
+      case 'orb':
+        this.orbBurst(el, at);
+        break;
+    }
+  }
+
+  /** A spell's die bursting: a short, quiet version of its element's sound. */
+  private orbBurst(el: Element, at: number) {
+    this.t({ at: Math.max(0, at - 0.25), dur: 0.28, freq: 180, freqEnd: 520, gain: 0.06, attack: 0.2 });
+    switch (el) {
+      case 'fire':
+        this.n({ at, dur: 0.35, type: 'lowpass', freq: 1100, freqEnd: 250, q: 0.5, gain: 0.45, attack: 0.01 });
+        this.crackle(at, 0.3, 30, 0.2, 3000);
+        break;
+      case 'cold':
+        this.chimes(at, [2637 + Math.random() * 400, 3136], 0.04, 0.05, 0.35);
+        this.n({ at, dur: 0.1, type: 'bandpass', freq: 3200, q: 2, gain: 0.25, attack: 0.002 });
+        break;
+      case 'lightning':
+        this.n({ at, dur: 0.08, type: 'highpass', freq: 1800, q: 0.5, gain: 0.5, attack: 0.001 });
+        this.crackle(at, 0.18, 70, 0.3, 4000);
+        break;
+      case 'thunder':
+      case 'bludgeoning':
+        this.t({ at, dur: 0.35, freq: 90, freqEnd: 40, gain: 0.6 });
+        this.n({ at, dur: 0.2, type: 'lowpass', freq: 400, q: 0.6, gain: 0.45, attack: 0.003 });
+        break;
+      case 'acid':
+      case 'poison':
+        for (let i = 0; i < 4; i++) this.t({ at: at + Math.random() * 0.15, dur: 0.06, freq: 300 + Math.random() * 500, freqEnd: 900, gain: 0.12, attack: 0.004 });
+        break;
+      case 'necrotic':
+      case 'shadow':
+        this.t({ at, dur: 0.4, type: 'sawtooth', freq: 75, freqEnd: 50, gain: 0.12, attack: 0.03 });
+        this.n({ at, dur: 0.3, type: 'lowpass', freq: 500, freqEnd: 150, q: 1, gain: 0.3, attack: 0.02 });
+        break;
+      case 'radiant':
+      case 'healing':
+        this.chimes(at, [1318.5 + Math.random() * 200, 1975.5], 0.035, 0.06, 0.45);
+        break;
+      default:
+        this.t({ at, dur: 0.18, freq: 220, freqEnd: 880, gain: 0.25, attack: 0.008 });
+        this.t({ at: at + 0.03, dur: 0.15, freq: 110, freqEnd: 60, gain: 0.3 });
+    }
+  }
+
+  /** The tally's beats: a bonus landing, the total ringing up, and the verdict. */
+  tally(kind: 'bonus' | 'total' | 'hit' | 'miss' | 'crit' | 'info') {
+    if (!this.ensure()) return;
+    switch (kind) {
+      case 'bonus':
+        this.t({ dur: 0.12, freq: 1046.5, gain: 0.08, attack: 0.004 });
+        break;
+      case 'total':
+        this.chimes(0, [1568, 2093], 0.05, 0.08, 0.5);
+        break;
+      case 'hit':
+        this.t({ dur: 0.18, freq: 150, freqEnd: 70, gain: 0.5 });
+        this.chimes(0.04, [784, 1175], 0.06, 0.07, 0.5);
+        break;
+      case 'crit':
+        this.chimes(0, [1046.5, 1318.5, 1568, 2093], 0.05, 0.09, 0.7);
+        break;
+      case 'miss':
+        this.t({ dur: 0.4, type: 'triangle', freq: 330, freqEnd: 196, gain: 0.16 });
+        break;
+      case 'info':
+        this.t({ dur: 0.2, freq: 660, gain: 0.07 });
+    }
   }
 
   click() {

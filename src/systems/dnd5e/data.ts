@@ -232,3 +232,38 @@ export const STANDARD_ACTIONS = [
   { id: 'utilize', name: 'Utilize', summary: 'Use a nonmagical object.' },
 ] as const;
 export type StandardActionId = (typeof STANDARD_ACTIONS)[number]['id'];
+
+/**
+ * The 2024 conditions (SRD 5.2), summarised. `rolls` lists the effects the sheet applies to
+ * your own rolls automatically; everything else is shown as a reminder.
+ */
+export const CONDITIONS = [
+  { id: 'blinded', name: 'Blinded', summary: "You can't see and fail checks that need sight. Your attack rolls have Disadvantage; attacks against you have Advantage." },
+  { id: 'charmed', name: 'Charmed', summary: "You can't attack the charmer or target it with harmful effects. It has Advantage on social checks against you." },
+  { id: 'deafened', name: 'Deafened', summary: "You can't hear and fail checks that need hearing." },
+  { id: 'frightened', name: 'Frightened', summary: "Disadvantage on ability checks and attack rolls while the source of your fear is in sight. You can't willingly move closer to it." },
+  { id: 'grappled', name: 'Grappled', summary: 'Your Speed is 0. Disadvantage on attacks against anyone but the grappler, who can drag you along.' },
+  { id: 'incapacitated', name: 'Incapacitated', summary: "You can't take actions, Bonus Actions or Reactions, and you can't speak. Your Concentration ends." },
+  { id: 'invisible', name: 'Invisible', summary: 'Advantage on Initiative. Your attack rolls have Advantage; attacks against you have Disadvantage, unless the attacker can see you.' },
+  { id: 'paralyzed', name: 'Paralyzed', summary: 'Incapacitated and Speed 0. You automatically fail Strength and Dexterity saves. Attacks against you have Advantage, and hits from within 5 feet are critical hits.' },
+  { id: 'petrified', name: 'Petrified', summary: 'Turned to stone: Incapacitated, Speed 0, automatically fail Strength and Dexterity saves, Resistance to all damage. Attacks against you have Advantage.' },
+  { id: 'poisoned', name: 'Poisoned', summary: 'Disadvantage on attack rolls and ability checks.' },
+  { id: 'prone', name: 'Prone', summary: 'You crawl, or spend half your Speed to stand up. Your attack rolls have Disadvantage. Attacks against you have Advantage within 5 feet, Disadvantage from farther away.' },
+  { id: 'restrained', name: 'Restrained', summary: 'Speed 0. Your attack rolls and Dexterity saves have Disadvantage; attacks against you have Advantage.' },
+  { id: 'stunned', name: 'Stunned', summary: 'Incapacitated. You automatically fail Strength and Dexterity saves; attacks against you have Advantage.' },
+  { id: 'unconscious', name: 'Unconscious', summary: "Incapacitated, Prone and Speed 0; you drop what you're holding. You automatically fail Strength and Dexterity saves. Attacks against you have Advantage, and hits from within 5 feet are critical hits." },
+] as const;
+export type ConditionId = (typeof CONDITIONS)[number]['id'];
+
+/** Conditions that also count as Incapacitated. */
+export const INCAPACITATING: readonly ConditionId[] = ['incapacitated', 'paralyzed', 'petrified', 'stunned', 'unconscious'];
+
+/** Common timed effects people add mid-fight. Rounds: 10 = 1 minute. */
+export const EFFECT_PRESETS = [
+  { name: 'Bless', bonus: '1d4', attacks: true, saves: true, checks: false, ac: 0, rounds: 10, note: 'Concentration.' },
+  { name: 'Bane', bonus: '-1d4', attacks: true, saves: true, checks: false, ac: 0, rounds: 10, note: 'Concentration (the caster’s).' },
+  { name: 'Guidance', bonus: '1d4', attacks: false, saves: false, checks: true, ac: 0, rounds: 10, note: 'Concentration. One ability check of your choice.' },
+  { name: 'Shield of Faith', bonus: '', attacks: false, saves: false, checks: false, ac: 2, rounds: 100, note: 'Concentration, up to 10 minutes.' },
+  { name: 'Haste', bonus: '', attacks: false, saves: false, checks: false, ac: 2, rounds: 10, note: 'Concentration. Speed doubled, Advantage on Dex saves, one extra limited action.' },
+  { name: 'Shield', bonus: '', attacks: false, saves: false, checks: false, ac: 5, rounds: 1, note: 'Until the start of your next turn.' },
+] as const;

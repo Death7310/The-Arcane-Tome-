@@ -1,15 +1,40 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Breakdown } from '../systems/dnd5e/rules';
+import { ArrangeTools, useSlot } from './Arrange';
 import { signed } from '../systems/dnd5e/rules';
 
 export function Panel(props: { title: string; tab: string; actions?: ReactNode; children: ReactNode; id?: string }) {
+  const slot = useSlot();
+  const folded = !!slot?.collapsed;
+  const sized = slot?.height !== undefined;
   return (
-    <section className="panel" data-tab={props.tab} id={props.id} aria-label={props.title}>
+    <section
+      className={['panel', folded && 'collapsed', slot?.dragging && 'dragging'].filter(Boolean).join(' ')}
+      data-tab={props.tab}
+      data-panel={slot?.id}
+      data-h={sized ? '' : undefined}
+      style={sized ? ({ '--panel-h': `${slot!.height}px` } as CSSProperties) : undefined}
+      id={props.id}
+      aria-label={props.title}
+    >
       <header>
+        {slot?.arranging && (
+          <button type="button" className="grip" aria-label={`Drag to move ${props.title}`} title="Drag to move" onPointerDown={(e) => slot.beginDrag(e, props.title)}>
+            ⠿
+          </button>
+        )}
         <h2>{props.title}</h2>
-        {props.actions}
+        {!folded && props.actions}
+        {slot && (
+          <button type="button" className="fold" aria-expanded={!folded} aria-label={`${folded ? 'Show' : 'Fold away'} ${props.title}`} title={folded ? 'Show' : 'Fold away'} onClick={slot.toggle}>
+            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+              <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
       </header>
       {props.children}
+      {slot?.arranging && <ArrangeTools slot={slot} title={props.title} />}
     </section>
   );
 }

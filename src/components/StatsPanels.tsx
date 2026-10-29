@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { fileToPortrait } from '../state/images';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, CLASSES, SKILLS, classById, type CasterType } from '../systems/dnd5e/data';
@@ -35,6 +36,50 @@ const CASTER_OPTIONS: { id: CasterType | 'class'; name: string }[] = [
   { id: 'pact', name: 'Pact Magic' },
 ];
 
+function Portrait() {
+  const { char: c, update } = useChar();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState('');
+  return (
+    <div className="portrait-box">
+      <button
+        type="button"
+        className="portrait"
+        onClick={() => fileRef.current?.click()}
+        aria-label={c.portrait ? 'Change portrait' : 'Add a portrait'}
+        title={c.portrait ? 'Change portrait' : 'Add a portrait'}
+      >
+        {c.portrait ? <img src={c.portrait} alt={`${c.name || 'Character'} portrait`} /> : <span>Add a portrait</span>}
+      </button>
+      {c.portrait && (
+        <button type="button" className="btn small ghost" onClick={() => update((d) => void (d.portrait = null))}>
+          Remove
+        </button>
+      )}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        id="portrait-file"
+        hidden
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f) return;
+          try {
+            const url = await fileToPortrait(f);
+            setError('');
+            update((d) => void (d.portrait = url));
+          } catch (err) {
+            setError((err as Error).message);
+          }
+        }}
+      />
+      {error && <p className="hint" style={{ color: 'var(--bad)', margin: 0 }}>{error}</p>}
+    </div>
+  );
+}
+
 export function IdentityPanel() {
   const { char: c, update } = useChar();
   const [open, setOpen] = useState(false);
@@ -49,6 +94,8 @@ export function IdentityPanel() {
       }
     >
       {!open ? (
+        <div className="identity">
+        <Portrait />
         <div className="grid-2">
           <div className="stat">
             <span className="v">{totalLevel(c)}</span>
@@ -65,6 +112,7 @@ export function IdentityPanel() {
             {c.alignment ? ` · ${c.alignment}` : ''}
             {c.xp ? ` · ${c.xp.toLocaleString()} XP` : ''}
           </p>
+        </div>
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 10 }}>
@@ -141,7 +189,7 @@ export function AbilitiesPanel() {
                 type="button"
                 className="mod"
                 title={`Roll a ${ABILITY_NAMES[a]} check: ${mathText(abilityCheck(c, a))}`}
-                onClick={(e) => t.test(`${ABILITY_NAMES[a]} check`, abilityCheck(c, a), e.currentTarget)}
+                onClick={(e) => t.test(`${ABILITY_NAMES[a]} check`, abilityCheck(c, a), e.currentTarget, undefined, { type: 'check', ability: a })}
               >
                 {signed(m)}
               </button>
@@ -156,7 +204,7 @@ export function AbilitiesPanel() {
                   onClick={() => update((d) => void (d.saveProfs[a] = !d.saveProfs[a]))}
                 />
                 Save
-                <button type="button" className="roll" title={mathText(save)} onClick={(e) => t.test(`${ABILITY_NAMES[a]} save`, save, e.currentTarget)}>
+                <button type="button" className="roll" title={mathText(save)} onClick={(e) => t.test(`${ABILITY_NAMES[a]} save`, save, e.currentTarget, undefined, { type: 'save', ability: a })}>
                   {signed(save.total)}
                 </button>
               </span>
@@ -192,14 +240,14 @@ export function GlancePanel() {
       <div className="glance">
         <Stat label="Proficiency" b={{ total: pb(c), parts: [{ label: `Level ${totalLevel(c)}`, value: pb(c) }] }} bonus showMath={showMath} />
         <Stat label="Armor Class" b={armorClass(c)} showMath={showMath} />
-        <Stat label="Initiative" b={initiative(c)} bonus showMath={showMath} onRoll={(el) => t.test('Initiative', initiative(c), el)} />
+        <Stat label="Initiative" b={initiative(c)} bonus showMath={showMath} onRoll={(el) => t.test('Initiative', initiative(c), el, undefined, { type: 'initiative' })} />
         <Stat label="Speed" b={speed(c)} suffix=" ft" showMath={showMath} />
         <Stat label="Max HP" b={maxHp(c)} showMath={showMath} />
         <Stat label="Passive Perception" b={passive(c, 'perception')} showMath={showMath} />
         <Stat label="Passive Insight" b={passive(c, 'insight')} showMath={showMath} />
         <Stat label="Passive Investigation" b={passive(c, 'investigation')} showMath={showMath} />
         {caster && <Stat label="Spell save DC" b={spellSaveDc(c)} showMath={showMath} />}
-        {caster && <Stat label="Spell attack" b={spellAttack(c)} bonus showMath={showMath} onRoll={(el) => t.test('Spell attack', spellAttack(c), el)} />}
+        {caster && <Stat label="Spell attack" b={spellAttack(c)} bonus showMath={showMath} onRoll={(el) => t.test('Spell attack', spellAttack(c), el, undefined, { type: 'attack' })} />}
         <Stat label="Carry (lb)" b={{ total: cap.carry, parts: [{ label: `STR ${c.abilities.str} × 15`, value: cap.carry }] }} showMath={showMath} />
         <Stat label="Long / high jump" b={{ total: j.long, parts: [{ label: `Long = STR score; high = 3 + STR mod = ${j.high} ft`, value: j.long }] }} suffix={` / ${j.high} ft`} showMath={showMath} />
       </div>
@@ -252,7 +300,7 @@ export function SkillsPanel() {
               />
               <span className="name">{s.name}</span>
               <span className="ab">{s.ability.toUpperCase()}</span>
-              <button type="button" className="roll" title={mathText(b)} onClick={(e) => t.test(s.name, b, e.currentTarget, `${ABILITY_NAMES[s.ability]} check`)}>
+              <button type="button" className="roll" title={mathText(b)} onClick={(e) => t.test(s.name, b, e.currentTarget, `${ABILITY_NAMES[s.ability]} check`, { type: 'check', ability: s.ability })}>
                 {signed(b.total)}
               </button>
             </div>

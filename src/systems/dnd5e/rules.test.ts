@@ -163,3 +163,40 @@ describe('backups', async () => {
     expect(r.characters[0].name).toBe('Renamed');
   });
 });
+
+describe('conditions and effects', async () => {
+  const { rollMode, effectDice } = await import('./rules');
+  const { blankEffect } = await import('./model');
+
+  it('impose Disadvantage, Advantage and automatic failures on your own rolls', () => {
+    const c = sampleCharacter();
+    c.conditions = ['poisoned'];
+    expect(rollMode(c, { type: 'attack' }).dis).toEqual(['Poisoned']);
+    expect(rollMode(c, { type: 'check', ability: 'wis' }).dis).toEqual(['Poisoned']);
+    expect(rollMode(c, { type: 'save', ability: 'dex' }).dis).toEqual([]);
+    c.conditions = ['invisible'];
+    expect(rollMode(c, { type: 'attack' }).adv).toEqual(['Invisible']);
+    c.conditions = ['stunned'];
+    expect(rollMode(c, { type: 'save', ability: 'dex' }).autoFail).toBe('Stunned');
+    expect(rollMode(c, { type: 'save', ability: 'wis' }).autoFail).toBeNull();
+    c.conditions = ['restrained'];
+    expect(rollMode(c, { type: 'save', ability: 'dex' }).dis).toEqual(['Restrained']);
+  });
+
+  it('stop you moving and change AC', () => {
+    const c = sampleCharacter();
+    c.conditions = ['grappled'];
+    expect(speed(c).total).toBe(0);
+    c.conditions = [];
+    c.effects = [blankEffect({ name: 'Shield of Faith', ac: 2 })];
+    expect(armorClass(c).total).toBe(18);
+  });
+
+  it('add effect dice to the right rolls', () => {
+    const c = sampleCharacter();
+    c.effects = [blankEffect({ name: 'Bless', bonus: '1d4', attacks: true, saves: true }), blankEffect({ name: 'Bane', bonus: '-1d4', attacks: true })];
+    expect(effectDice(c, { type: 'attack' })).toEqual({ expr: '+1d4-1d4', names: ['Bless', 'Bane'] });
+    expect(effectDice(c, { type: 'save', ability: 'con' }).expr).toBe('+1d4');
+    expect(effectDice(c, { type: 'check', ability: 'str' }).expr).toBe('');
+  });
+});

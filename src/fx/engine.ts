@@ -48,6 +48,7 @@ const STYLE: Record<Element, Style> = {
 };
 
 export const elementColor = (el: Element): string => STYLE[el].text;
+export const elementPalette = (el: Element): string[] => STYLE[el].colors;
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
@@ -1355,6 +1356,58 @@ export class FxEngine {
     if (this.level === 'off' || !this.ctx) return;
     this.spray(at, 16, { speed: [10, 70], life: [1, 1.7], size: [12, 20], sizeEnd: 40, sprite: 'soft', colors: ['#6b6875', '#4a4756'], alpha: 0.55, gravity: -25 });
     this.add(new FloatText(headline, at.x, at.y - 60, '#b9b4c4', 30, 1.6));
+  }
+
+  /** Where a tally's strike lands on a die: a small pop in the die's element, with no screen effects. */
+  pop(at: Point, el: Element, scale = 1) {
+    if (this.level === 'off' || !this.ctx) return;
+    const S = STYLE[el];
+    const physical = el === 'slashing' || el === 'piercing' || el === 'bludgeoning';
+    this.particle({ x: at.x, y: at.y, life: 0.25, size: 34 * scale, sizeEnd: 6, color: S.colors[1] });
+    this.add(new Ring(at.x, at.y, 6, 52 * scale, 3, S.colors[2], 0.35));
+    if (physical) {
+      this.spray(at, 16 * scale, { speed: [180, 520], life: [0.25, 0.55], size: [2, 3.5], sprite: 'spark', colors: ['#ffffff', '#ffe2a8', '#ffd08a'], drag: 3, gravity: 420 });
+      if (el === 'bludgeoning') this.spray(at, 8, { speed: [30, 110], life: [0.5, 0.9], size: [8, 14], sizeEnd: 26, sprite: 'soft', colors: [S.smoke!], alpha: 0.4, drag: 2 });
+      return;
+    }
+    switch (el) {
+      case 'fire':
+        this.spray(at, 18 * scale, { speed: [60, 220], life: [0.35, 0.7], size: [8, 16], colors: S.colors, gravity: -240, drag: 2.2 });
+        this.spray(at, 10, { speed: [120, 360], life: [0.5, 1], size: [1.5, 2.5], sprite: 'spark', colors: ['#ffd27a', '#ffb347'], gravity: -30, drag: 1.4 });
+        break;
+      case 'cold':
+        this.spray(at, 12 * scale, { speed: [140, 380], life: [0.4, 0.8], size: [5, 10], sprite: 'shard', colors: S.colors, drag: 2.6, gravity: 160 });
+        break;
+      case 'lightning':
+        for (let i = 0; i < 3; i++) {
+          const a = rand(0, Math.PI * 2);
+          const r = rand(30, 70) * scale;
+          this.add(new Bolt(at, { x: at.x + Math.cos(a) * r, y: at.y + Math.sin(a) * r }, 1.4, S.colors[3], rand(0.15, 0.25), 0, rand(0, 0.06)));
+        }
+        break;
+      case 'acid':
+      case 'poison':
+        this.spray(at, 14 * scale, { speed: [80, 260], life: [0.4, 0.8], size: [2, 4], sprite: 'drop', colors: S.colors, gravity: 500 });
+        break;
+      case 'necrotic':
+      case 'shadow':
+        this.spray(at, 10 * scale, { speed: [30, 120], life: [0.5, 0.9], size: [10, 16], sizeEnd: 26, sprite: 'soft', colors: [S.smoke ?? S.colors[3]], alpha: 0.6, drag: 1.6 });
+        this.spray(at, 10, { speed: [60, 200], life: [0.3, 0.6], size: [3, 6], colors: S.colors, drag: 2 });
+        break;
+      default:
+        this.spray(at, 16 * scale, { speed: [80, 260], life: [0.35, 0.7], size: [3, 6], colors: S.colors, twinkle: true, drag: 2 });
+    }
+  }
+
+  /** A puff of a spell's element left behind a moving orb die. */
+  trailAt(el: Element, x: number, y: number, vx: number, vy: number) {
+    if (this.level === 'off' || !this.ctx) return;
+    this.trail(el, x, y, vx, vy, 0);
+  }
+
+  /** A small jolt of the page, for a hammer blow. */
+  jolt(px: number) {
+    this.shake(px, 200);
   }
 
   /** Small celebratory sparkle for natural 20s (and a wilt for natural 1s) next to the roll. */

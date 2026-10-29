@@ -6,12 +6,15 @@ import {
   ABILITIES,
   ABILITY_NAMES,
   ARMOR,
+  CONDITIONS,
   FULL_CASTER_SLOTS,
+  INCAPACITATING,
   PACT_SLOTS,
   SKILLS,
   classById,
   type Ability,
   type CasterType,
+  type ConditionId,
   type SkillId,
 } from './data';
 import type { Character, Feature, Spell, UsesFormula, Weapon } from './model';
@@ -124,6 +127,7 @@ export function armorClass(c: Character): Breakdown {
   parts.push({ label: 'Armor enchantment', value: c.armor.magicBonus });
   if (c.armor.shield) parts.push({ label: 'Shield', value: 2 });
   parts.push({ label: 'Other AC bonus', value: c.bonus.ac });
+  for (const e of c.effects) if (e.ac) parts.push({ label: e.name, value: e.ac });
   return sum(parts);
 }
 
@@ -136,8 +140,12 @@ export function armorWarnings(c: Character): string[] {
   return out;
 }
 
+const SPEED_ZERO: readonly ConditionId[] = ['grappled', 'restrained', 'paralyzed', 'petrified', 'unconscious'];
+
 export function speed(c: Character): Breakdown {
   const armor = ARMOR.find((a) => a.id === c.armor.armorId) ?? ARMOR[0];
+  const stuck = c.conditions.find((k) => SPEED_ZERO.includes(k));
+  if (stuck) return { total: 0, parts: [{ label: `${conditionName(stuck)} (Speed 0)`, value: 0 }] };
   return sum([
     { label: 'Base speed', value: c.speed },
     { label: 'Speed bonus', value: c.bonus.speed },
@@ -356,4 +364,74 @@ export function classSummary(c: Character): string {
   return c.classes
     .map((k) => `${classById(k.classId).name}${k.subclass ? ` (${k.subclass})` : ''} ${k.level}`)
     .join(' / ');
+}
+
+export const conditionName = (id: ConditionId): string => CONDITIONS.find((k) => k.id === id)?.name ?? id;
+
+export const has = (c: Character, id: ConditionId): boolean => c.conditions.includes(id);
+
+/** Which incapacitating condition stops you taking actions, if any. */
+export function incapacitatedBy(c: Character): string | null {
+  const k = c.conditions.find((x) => INCAPACITATING.includes(x));
+  return k ? conditionName(k) : null;
+}
+
+export type TestKind =
+  | { type: 'attack' }
+  | { type: 'check'; ability: Ability }
+  | { type: 'save'; ability: Ability }
+  | { type: 'initiative' };
+
+export interface RollMode {
+  adv: string[];
+  dis: string[];
+  /** A save you fail without rolling, and why. */
+  autoFail: string | null;
+}
+
+/**
+ * Advantage, Disadvantage and automatic failures your conditions impose on a d20 test.
+ * Only effects the rules apply unconditionally to your own rolls are automated; anything
+ * that depends on the attacker or the situation stays a reminder.
+ */
+export function rollMode(c: Character, kind: TestKind): RollMode {
+  const adv: string[] = [];
+  const dis: string[] = [];
+  let autoFail: string | null = null;
+  const on = (id: ConditionId) => has(c, id);
+  if (kind.type === 'attack') {
+    for (const id of ['blinded', 'poisoned', 'prone', 'restrained'] as const) if (on(id)) dis.push(conditionName(id));
+    if (on('frightened')) dis.push('Frightened (source in sight)');
+    if (on('invisible')) adv.push('Invisible');
+  } else if (kind.type === 'check') {
+    if (on('poisoned')) dis.push('Poisoned');
+    if (on('frightened')) dis.push('Frightened (source in sight)');
+  } else if (kind.type === 'save') {
+    if (kind.ability === 'str' || kind.ability === 'dex') {
+      const k = c.conditions.find((x) => ['paralyzed', 'petrified', 'stunned', 'unconscious'].includes(x));
+      if (k) autoFail = conditionName(k);
+    }
+    if (kind.ability === 'dex' && on('restrained')) dis.push('Restrained');
+  } else {
+    if (on('invisible')) adv.push('Invisible');
+    if (incapacitatedBy(c)) dis.push(incapacitatedBy(c)!);
+    if (on('poisoned')) dis.push('Poisoned');
+    if (on('frightened')) dis.push('Frightened (source in sight)');
+  }
+  return { adv, dis, autoFail };
+}
+
+/** Dice or flat bonuses from effects like Bless, appended to a d20 roll ("+1d4-1d4"). */
+export function effectDice(c: Character, kind: TestKind): { expr: string; names: string[] } {
+  const applies = (e: Character['effects'][number]) =>
+    kind.type === 'attack' ? e.attacks : kind.type === 'save' ? e.saves : e.checks; // initiative is a Dexterity check
+  const parts: string[] = [];
+  const names: string[] = [];
+  for (const e of c.effects) {
+    const b = e.bonus.trim().replace(/\s+/g, '');
+    if (!b || !applies(e)) continue;
+    parts.push(/^[+-]/.test(b) ? b : `+${b}`);
+    names.push(e.name);
+  }
+  return { expr: parts.join(''), names };
 }

@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { PanelSlot, useArranger } from './components/Arrange';
 import { AttacksPanel, TurnPanel, VitalsPanel } from './components/CombatPanels';
+import { ConditionsPanel, StatusStrip } from './components/ConditionsPanel';
 import { DicePanel } from './components/DicePanel';
 import { FeaturesPanel, InventoryPanel, NotesPanel } from './components/GearPanels';
 import { CharactersDialog, SettingsDialog } from './components/Menus';
 import { AdvChip, ResultCard } from './components/Results';
 import { SpellsPanel } from './components/SpellsPanel';
 import { AbilitiesPanel, GlancePanel, IdentityPanel, SkillsPanel } from './components/StatsPanels';
-import { fx, setDiceSpeed, sound } from './fx';
+import { fx, setDiceSpeed, setTally, sound } from './fx';
 import { CharacterContext } from './state/character';
 import { isNative, readNativeSave, writeNativeSave } from './state/native';
+import { defaultLayout, gridTracks, isDefault, normalizeLayout, type Layout, type PanelId } from './state/layout';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
 import { addSavePoint, defaultSettings, load, mergeCharacters, parseSaved, save, type Saved, type Settings } from './state/storage';
 import { TableContext, useTableState } from './state/table';
@@ -25,6 +28,21 @@ const TABS = [
 ] as const;
 type Tab = (typeof TABS)[number]['id'];
 
+const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
+  identity: IdentityPanel,
+  abilities: AbilitiesPanel,
+  glance: GlancePanel,
+  vitals: VitalsPanel,
+  conditions: ConditionsPanel,
+  turn: TurnPanel,
+  attacks: AttacksPanel,
+  skills: SkillsPanel,
+  spells: SpellsPanel,
+  features: FeaturesPanel,
+  inventory: InventoryPanel,
+  notes: NotesPanel,
+};
+
 function initialState(): Saved {
   const saved = load();
   if (saved) return saved;
@@ -39,7 +57,7 @@ export default function App() {
   const [state, setState] = useState<Saved>(initialState);
   // On a phone, open the example on its spells (the showpiece); your own sheets open on stats.
   const [tab, setTab] = useState<Tab>(() => (state.characters.find((c) => c.id === state.currentId)?.isExample ? 'magic' : 'stats'));
-  const [dialog, setDialog] = useState<'characters' | 'settings' | null>(null);
+  const [dialog, setDialog] = useState<'characters' | 'import' | 'settings' | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   // In the Android app the save file is read asynchronously; don't overwrite it before it has been read.
@@ -49,9 +67,15 @@ export default function App() {
   const flashRef = useRef<HTMLDivElement>(null);
   const dimRef = useRef<HTMLDivElement>(null);
   const vignetteRef = useRef<HTMLDivElement>(null);
+  const folioRef = useRef<HTMLElement>(null);
+  const [arranging, setArranging] = useState(false);
 
   const char = state.characters.find((c) => c.id === state.currentId) ?? state.characters[0];
   const pwa = usePwa();
+  const layout = useMemo(() => normalizeLayout(state.settings.layout), [state.settings.layout]);
+  const setLayout = useCallback((l: Layout) => setState((s) => ({ ...s, settings: { ...s.settings, layout: isDefault(l) ? null : l } })), []);
+  const arranger = useArranger(layout, setLayout, folioRef, arranging);
+  const tracks = layout.widths ? gridTracks(layout.widths) : null;
 
   const update = useCallback((fn: (c: Character) => void) => {
     setState((s) => ({
@@ -84,11 +108,30 @@ export default function App() {
   }, []);
 
   // Autosave, debounced. Every change is kept; Save adds a point you can go back to.
+  const unsaved = useRef<Saved | null>(null);
   useEffect(() => {
     if (!hydrated) return;
-    const id = setTimeout(() => persist(state), 400);
+    unsaved.current = state;
+    const id = setTimeout(() => {
+      unsaved.current = null;
+      persist(state);
+    }, 400);
     return () => clearTimeout(id);
   }, [state, hydrated, persist]);
+  // Closing, reloading or switching away straight after a change still keeps it.
+  useEffect(() => {
+    const flush = () => {
+      if (!unsaved.current || document.visibilityState === 'visible') return;
+      persist(unsaved.current);
+      unsaved.current = null;
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+    };
+  }, [persist]);
 
   const saveNow = () => {
     const next = { ...state, savePoints: addSavePoint(state.savePoints, char, `Saved ${stamp(Date.now())}`) };
@@ -111,6 +154,7 @@ export default function App() {
     sound.enabled = state.settings.sound;
     sound.setVolume(state.settings.volume);
     setDiceSpeed(state.settings.diceSpeed);
+    setTally(state.settings.tally);
     const root = document.documentElement;
     if (state.settings.theme === 'system') {
       if (hostTheme) root.setAttribute('data-theme', hostTheme);
@@ -143,6 +187,7 @@ export default function App() {
               <span className="brand" aria-hidden="true">
                 ARCANE TOME
               </span>
+              {char.portrait && <img className="avatar" src={char.portrait} alt="" />}
               <h1 className="who">
                 {char.name || 'Unnamed'}
                 <small>{[char.species, classSummary(char)].filter(Boolean).join(' · ')}</small>
@@ -153,6 +198,9 @@ export default function App() {
                 </button>
                 <button type="button" className="btn small" onClick={() => setDialog('characters')}>
                   Characters
+                </button>
+                <button type="button" className="btn small ghost wide-only" aria-pressed={arranging} onClick={() => setArranging((a) => !a)} title="Move, resize and fold the panels">
+                  Arrange
                 </button>
                 <button type="button" className="btn small ghost" onClick={() => setDialog('settings')} aria-label="Settings">
                   Settings
@@ -169,6 +217,7 @@ export default function App() {
                 Character sheet
               </button>
             </nav>
+            <StatusStrip onOpen={() => setTab('combat')} />
           </div>
 
           {char.isExample && (
@@ -179,6 +228,9 @@ export default function App() {
               <span className="row">
                 <button type="button" className="btn small primary" onClick={() => addCharacter(blankCharacter())}>
                   Start my own character
+                </button>
+                <button type="button" className="btn small" onClick={() => setDialog('import')}>
+                  Import from a document
                 </button>
                 <button type="button" className="btn small ghost" onClick={() => update((d) => void (d.isExample = false))}>
                   Keep editing this one
@@ -205,37 +257,59 @@ export default function App() {
               </button>
             </div>
           )}
-          {saveFailed && <div className="banner">This browser is blocking storage, so changes won't be kept after you close the page. Export your character to keep it.</div>}
+          {saveFailed && (
+            <div className="banner">
+              Changes aren't being saved: this browser's storage is blocked or full. Delete old save points or remove a large portrait, and back up your characters from Settings.
+            </div>
+          )}
 
-          <main className="folio" data-active={tab}>
-            <div className="col col-a">
-              <IdentityPanel />
-              <AbilitiesPanel />
-              <GlancePanel />
-            </div>
-            <div className="col col-b">
-              <VitalsPanel />
-              <TurnPanel />
-              <AttacksPanel />
-              <SkillsPanel />
-            </div>
-            <div className="col col-c">
-              <SpellsPanel />
-              <FeaturesPanel />
-              <InventoryPanel />
-              <NotesPanel />
-            </div>
+          <main
+            className={['folio', tracks && 'custom-widths', arranging && 'arranging'].filter(Boolean).join(' ')}
+            data-active={tab}
+            ref={folioRef}
+            style={tracks ? ({ '--grid3': tracks.three, '--grid2': tracks.two } as CSSProperties) : undefined}
+          >
+            {layout.columns.map((ids, i) => (
+              <div key={i} className={`col col-${'abc'[i]}`}>
+                {ids.map((id) => {
+                  const View = PANEL_VIEWS[id];
+                  return (
+                    <PanelSlot key={id} api={arranger.slot(id)}>
+                      <View />
+                    </PanelSlot>
+                  );
+                })}
+              </div>
+            ))}
+            {arranger.dividerEls}
             <div className="dice-view">
               <DicePanel />
             </div>
           </main>
         </div>
 
-        {tab !== 'dice' && <AdvChip />}
+        {arranging && (
+          <div className="arrange-bar" role="region" aria-label="Arranging panels">
+            <span>
+              Drag a panel by <b>⠿</b> or use its arrows.<span className="wide-only"> Drag the gap between columns, or a panel’s bottom edge, to resize.</span> The ⌄ on each panel folds it away.
+            </span>
+            <span className="row">
+              <button type="button" className="btn small ghost" disabled={isDefault(layout)} onClick={() => setLayout(defaultLayout())}>
+                Reset layout
+              </button>
+              <button type="button" className="btn small primary" onClick={() => setArranging(false)}>
+                Done
+              </button>
+            </span>
+          </div>
+        )}
+        {arranger.overlay}
+        {tab !== 'dice' && !arranging && <AdvChip />}
         <ResultCard />
 
-        {dialog === 'characters' && (
+        {(dialog === 'characters' || dialog === 'import') && (
           <CharactersDialog
+            initialMode={dialog === 'import' ? 'import' : 'list'}
             characters={state.characters}
             currentId={state.currentId}
             savePoints={state.savePoints}
@@ -256,7 +330,7 @@ export default function App() {
                 const current = s.characters.find((c) => c.id === point.characterId);
                 // Keep a way back: the state you're leaving becomes a save point too.
                 const points = current ? addSavePoint(s.savePoints, current, `Before loading “${point.name}”`) : s.savePoints;
-                const loaded = { ...structuredClone(point.data), id: point.characterId, updatedAt: Date.now() };
+                const loaded = { ...structuredClone(point.data), id: point.characterId, portrait: current?.portrait ?? null, updatedAt: Date.now() };
                 return { ...s, savePoints: points, characters: s.characters.map((c) => (c.id === point.characterId ? loaded : c)) };
               })
             }
@@ -264,7 +338,19 @@ export default function App() {
             onClose={() => setDialog(null)}
           />
         )}
-        {dialog === 'settings' && <SettingsDialog settings={state.settings} characters={state.characters} onRestore={restore} onChange={(settings: Settings) => setState((s) => ({ ...s, settings }))} onClose={() => setDialog(null)} />}
+        {dialog === 'settings' && (
+          <SettingsDialog
+            settings={state.settings}
+            characters={state.characters}
+            onRestore={restore}
+            onChange={(settings: Settings) => setState((s) => ({ ...s, settings }))}
+            onArrange={() => {
+              setDialog(null);
+              setArranging(true);
+            }}
+            onClose={() => setDialog(null)}
+          />
+        )}
 
         <div className="fx-dim" ref={dimRef} aria-hidden="true" />
         <div className="fx-vignette" ref={vignetteRef} aria-hidden="true" />

@@ -113,16 +113,9 @@ export function VitalsPanel() {
         ))}
       </div>
 
-      <h3>Condition</h3>
-      <div className="row">
-        <NumField label="Exhaustion (0–6)" id="exhaustion" value={c.exhaustion} min={0} max={6} onChange={(n) => update((d) => void (d.exhaustion = n))} />
+      <div className="row" style={{ marginTop: 12 }}>
         <Check label="Heroic Inspiration" id="inspiration" checked={c.heroicInspiration} onChange={(b) => update((d) => void (d.heroicInspiration = b))} />
       </div>
-      {c.exhaustion > 0 && (
-        <p className="hint" style={{ color: c.exhaustion >= 6 ? 'var(--bad)' : 'var(--warn)' }}>
-          {c.exhaustion >= 6 ? 'Exhaustion 6: you die.' : `−${c.exhaustion * 2} to every d20 Test and −${c.exhaustion * 5} ft Speed, already applied above.`}
-        </p>
-      )}
       <div className="row" style={{ marginTop: 12 }}>
         <button type="button" className="btn" onClick={() => t.rest('short')}>
           Short Rest
