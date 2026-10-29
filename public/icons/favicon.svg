@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#15131b"/>
+  <polygon points="256.0,66.0 420.5,161.0 420.5,351.0 256.0,446.0 91.5,351.0 91.5,161.0" fill="#221e2d" stroke="#dcae55" stroke-width="14.0" stroke-linejoin="round"/>
+  <polygon points="256.0,158.0 353.0,322.0 159.0,322.0" fill="#dcae55" fill-opacity="0.22" stroke="#dcae55" stroke-width="14.0" stroke-linejoin="round"/>
+  <line x1="256.0" y1="158.0" x2="256.0" y2="66.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="256.0" y1="158.0" x2="420.5" y2="161.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="256.0" y1="158.0" x2="91.5" y2="161.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="353.0" y1="322.0" x2="420.5" y2="161.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="353.0" y1="322.0" x2="420.5" y2="351.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="353.0" y1="322.0" x2="256.0" y2="446.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="159.0" y1="322.0" x2="256.0" y2="446.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="159.0" y1="322.0" x2="91.5" y2="351.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+  <line x1="159.0" y1="322.0" x2="91.5" y2="161.0" stroke="#dcae55" stroke-width="10.0" stroke-linecap="round" stroke-opacity="0.75"/>
+</svg>

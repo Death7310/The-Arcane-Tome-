@@ -1,0 +1,38 @@
+/* Fonts ship inside the app (Latin subset, woff2 only) so the sheet looks the same offline.
+   Alegreya SC, Alegreya Sans and IBM Plex Mono are licensed under the SIL Open Font License 1.1. */
+@font-face {
+  font-family: 'Alegreya SC';
+  font-weight: 700;
+  font-display: swap;
+  src: url('@fontsource/alegreya-sc/files/alegreya-sc-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya SC';
+  font-weight: 800;
+  font-display: swap;
+  src: url('@fontsource/alegreya-sc/files/alegreya-sc-latin-800-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya Sans';
+  font-weight: 400;
+  font-display: swap;
+  src: url('@fontsource/alegreya-sans/files/alegreya-sans-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya Sans';
+  font-weight: 500 600;
+  font-display: swap;
+  src: url('@fontsource/alegreya-sans/files/alegreya-sans-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Alegreya Sans';
+  font-weight: 700;
+  font-display: swap;
+  src: url('@fontsource/alegreya-sans/files/alegreya-sans-latin-700-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-weight: 500;
+  font-display: swap;
+  src: url('@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2') format('woff2');
+}
