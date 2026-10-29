@@ -1,7 +1,7 @@
 {
   "name": "arcane-tome",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Arcane Tome: animated, auto-calculating tabletop RPG character sheet (D&D 5e 2024 first). Works offline.",
   "type": "module",
   "scripts": {
@@ -10,9 +10,14 @@
     "build:single": "tsc --noEmit && vite build --mode single",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:native": "tsc --noEmit && vite build --mode native",
+    "android:sync": "npm run build:native && cap sync android"
   },
   "dependencies": {
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/share": "^8.0.3",
     "@fontsource/alegreya-sans": "^5.3.0",
     "@fontsource/alegreya-sc": "^5.3.0",
     "@fontsource/ibm-plex-mono": "^5.3.0",
@@ -20,6 +25,8 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",

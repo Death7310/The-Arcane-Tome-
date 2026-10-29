@@ -1,0 +1,14 @@
+{
+  "appId": "io.github.death7310.arcanetome",
+  "appName": "Arcane Tome",
+  "webDir": "dist-native",
+  "android": {
+    "backgroundColor": "#15131b"
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "initialViewportFitValueHint": "cover"
+    }
+  }
+}

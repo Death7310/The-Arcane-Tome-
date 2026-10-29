@@ -14,7 +14,7 @@ import type { ActionMotion, EffectRequest, Element, FxLevel, Outcome, Point } fr
 
 type Sprite = 'glow' | 'soft' | 'shard' | 'spark' | 'plus' | 'leaf' | 'drop' | 'foot';
 
-interface Drawable {
+export interface Drawable {
   additive: boolean;
   update(dt: number): boolean;
   draw(ctx: CanvasRenderingContext2D): void;
@@ -528,6 +528,57 @@ class Slash implements Drawable {
   }
 }
 
+/** A rotating arcane circle: two rings, rune ticks and orbiting glyphs. Used for critical hits. */
+class Sigil implements Drawable {
+  additive = true;
+  private age = 0;
+  constructor(
+    private x: number,
+    private y: number,
+    private radius: number,
+    private color: string,
+    private life: number,
+  ) {}
+  update(dt: number) {
+    this.age += dt;
+    return this.age < this.life;
+  }
+  draw(ctx: CanvasRenderingContext2D) {
+    const t = this.age / this.life;
+    const r = this.radius * easeOut(Math.min(1, t / 0.3));
+    const rot = this.age * 0.9;
+    ctx.globalAlpha = t < 0.7 ? 0.95 : 0.95 * (1 - (t - 0.7) / 0.3);
+    ctx.strokeStyle = this.color;
+    ctx.fillStyle = this.color;
+    ctx.lineWidth = 2;
+    for (const k of [1, 0.78]) {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r * k, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 + rot;
+      const inner = r * (i % 2 ? 0.86 : 0.8);
+      ctx.beginPath();
+      ctx.moveTo(this.x + Math.cos(a) * inner, this.y + Math.sin(a) * inner);
+      ctx.lineTo(this.x + Math.cos(a) * r * 0.97, this.y + Math.sin(a) * r * 0.97);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 - rot * 1.6;
+      const gx = this.x + Math.cos(a) * r * 0.62;
+      const gy = this.y + Math.sin(a) * r * 0.62;
+      ctx.beginPath();
+      ctx.moveTo(gx, gy - 6);
+      ctx.lineTo(gx + 4, gy);
+      ctx.lineTo(gx, gy + 6);
+      ctx.lineTo(gx - 4, gy);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
 class FloatText implements Drawable {
   additive = false;
   private age = 0;
@@ -693,6 +744,15 @@ export class FxEngine {
 
   private get q(): number {
     return this.level === 'reduced' ? 0.35 : 1;
+  }
+
+  /** Adds an outside drawable (e.g. a rolling die) to the frame loop. */
+  spawn(d: Drawable) {
+    this.add(d);
+  }
+
+  get viewport(): { w: number; h: number } {
+    return { w: this.w, h: this.h };
   }
 
   private add(d: Drawable) {
@@ -1272,6 +1332,29 @@ export class FxEngine {
     if (this.level === 'off' || !this.ctx) return;
     this.impact('healing', at, 1, 'none', 0.8);
     this.text(`+${amount}`, at, '#8ff5b0', 30);
+  }
+
+  /**
+   * Critical hit moment on a die that landed on 20: an arcane circle, the action's own
+   * element erupting from the die, gold rays and a headline. Checks use the arcane gilt theme.
+   */
+  critical(at: Point, el: Element, headline: string) {
+    if (this.level === 'off' || !this.ctx) return;
+    const themed = el === 'arcane' || el === 'radiant' ? 'radiant' : el;
+    this.add(new Sigil(at.x, at.y, 120, '#ffd970', 1.8));
+    this.add(new Rays(at.x, at.y, 170, '#ffe9a0', 1.2, 16));
+    this.impact(themed, at, 3, 'none', 0.9);
+    this.spray(at, 40, { speed: [120, 420], life: [0.7, 1.4], size: [2, 5], colors: ['#ffe27a', '#fff6d8', '#ffffff'], twinkle: true, drag: 2 });
+    this.flash('#fff1c4', 0.18);
+    this.shake(5, 380);
+    this.add(new FloatText(headline, at.x, at.y - 70, '#ffe27a', 38, 1.9, 0.05));
+  }
+
+  /** A natural 1: the die goes grey, a puff of smoke, a muted headline. */
+  fumble(at: Point, headline: string) {
+    if (this.level === 'off' || !this.ctx) return;
+    this.spray(at, 16, { speed: [10, 70], life: [1, 1.7], size: [12, 20], sizeEnd: 40, sprite: 'soft', colors: ['#6b6875', '#4a4756'], alpha: 0.55, gravity: -25 });
+    this.add(new FloatText(headline, at.x, at.y - 60, '#b9b4c4', 30, 1.6));
   }
 
   /** Small celebratory sparkle for natural 20s (and a wilt for natural 1s) next to the roll. */

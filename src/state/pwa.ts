@@ -10,8 +10,8 @@ interface InstallPromptEvent extends Event {
 }
 
 export interface PwaSnapshot {
-  /** 'pwa': served over http(s) with a service worker; 'file': the single-file build opened from disk or another viewer. */
-  mode: 'pwa' | 'file';
+  /** 'pwa': served over http(s) with a service worker; 'file': the single-file build; 'native': the Android app. */
+  mode: 'pwa' | 'file' | 'native';
   offlineReady: boolean;
   justBecameReady: boolean;
   needRefresh: boolean;
@@ -31,12 +31,13 @@ const isStandalone = (): boolean => {
 
 const swSupported =
   import.meta.env.MODE !== 'single' &&
+  import.meta.env.MODE !== 'native' &&
   typeof navigator !== 'undefined' &&
   'serviceWorker' in navigator &&
   (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 
 let snap: PwaSnapshot = {
-  mode: swSupported ? 'pwa' : 'file',
+  mode: import.meta.env.MODE === 'native' ? 'native' : swSupported ? 'pwa' : 'file',
   offlineReady: swSupported && !!navigator.serviceWorker.controller,
   justBecameReady: false,
   needRefresh: false,

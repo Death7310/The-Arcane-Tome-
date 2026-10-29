@@ -164,6 +164,23 @@ export function TurnPanel() {
           </button>
         ))}
       </div>
+      <div className="row" style={{ marginTop: 10 }}>
+        <label className="row" style={{ gap: 6, flexWrap: 'nowrap' }} htmlFor="target-ac">
+          <span className="hint">Target AC</span>
+          <input
+            id="target-ac"
+            className="input ac"
+            inputMode="numeric"
+            placeholder="—"
+            value={t.targetAc ?? ''}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              t.setTargetAc(Number.isFinite(n) && n > 0 ? n : null);
+            }}
+          />
+        </label>
+        <span className="hint">Optional. With an AC set, attacks show hit or miss and roll damage only on a hit.</span>
+      </div>
       <h3>
         Movement · {left} of {budget} ft left
       </h3>

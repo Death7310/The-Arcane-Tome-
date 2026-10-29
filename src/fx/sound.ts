@@ -238,6 +238,26 @@ class SoundEngine {
     }
   }
 
+  private lastHit = 0;
+
+  /** A die striking the table or another die; louder for harder hits. Throttled so a handful of dice stays crisp. */
+  diceHit(strength: number) {
+    if (!this.ensure()) return;
+    const now = this.ctx!.currentTime;
+    if (now - this.lastHit < 0.035) return;
+    this.lastHit = now;
+    const s = Math.max(0.05, Math.min(1, strength));
+    this.n({ dur: 0.03 + s * 0.02, type: 'bandpass', freq: 1800 + Math.random() * 2200, q: 3.5, gain: 0.12 + s * 0.4, attack: 0.001 });
+    this.t({ dur: 0.05, freq: 180 + Math.random() * 120, freqEnd: 90, gain: 0.05 + s * 0.15, attack: 0.002 });
+  }
+
+  /** Fanfare for a critical: rising chimes over a warm swell. */
+  critical() {
+    if (!this.ensure()) return;
+    this.chimes(0, [784, 1046.5, 1318.5, 1568, 2093], 0.07, 0.11, 1.1);
+    [392, 493.88, 587.33].forEach((f) => this.t({ dur: 1.4, type: 'triangle', freq: f, gain: 0.07, attack: 0.12 }));
+  }
+
   natural(kind: 'nat20' | 'nat1') {
     if (!this.ensure()) return;
     if (kind === 'nat20') this.chimes(0.45, [1046.5, 1318.5, 1568, 2093], 0.06, 0.1, 0.9);

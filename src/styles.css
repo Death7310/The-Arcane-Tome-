@@ -1,4 +1,4 @@
-/* Layout: a three-column folio (abilities spine · combat · magic) that folds into tabbed pages on a phone, with the dice tray docked at the foot like a bookmark ribbon. */
+/* Layout: a three-column folio (abilities spine · combat · magic) that folds into tabbed pages on a phone, plus a Dice page with a velvet tray the dice roll across. */
 :root {
   --bg: #15131b;
   --surface: #1e1b27;
@@ -19,7 +19,7 @@
   --font-body: 'Alegreya Sans', 'Segoe UI', system-ui, sans-serif;
   --font-data: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius: 10px;
-  --tray-h: 64px;
+  --chip-h: 56px;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
@@ -107,7 +107,7 @@ button { cursor: pointer; }
   min-height: 100%;
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 0 calc(var(--tray-h) + 24px + env(safe-area-inset-bottom, 0px));
+  padding-block: 0 calc(var(--chip-h) + 24px + env(safe-area-inset-bottom, 0px));
 }
 
 /* ── Masthead ── */
@@ -140,15 +140,23 @@ button { cursor: pointer; }
 }
 .banner strong { color: var(--gilt); }
 
-/* ── Tabs (phones and small tablets only) ── */
-.tabs { display: none; }
+/* ── Tabs: five pages on phones; "Character sheet | Dice" on wider screens ── */
+.tabs { display: flex; gap: 4px; padding-block: 10px 2px; }
+.tabs button {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 8px;
+  padding: 8px 4px; font: 700 14px/1 var(--font-display); letter-spacing: 0.04em; color: var(--muted);
+}
+.tabs button[aria-selected='true'] { background: var(--gilt); color: var(--gilt-ink); border-color: var(--gilt); }
+.tabs .tab-wide { order: -1; }
+@media (min-width: 900px) {
+  .tabs { padding-block: 0; margin-top: -4px; }
+  .tabs button { padding: 8px 16px; }
+  .tabs .tab-narrow { display: none; }
+}
 @media (max-width: 899px) {
-  .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding-block: 10px 2px; }
-  .tabs button {
-    border: 1px solid var(--line); background: var(--surface); border-radius: 8px;
-    padding: 8px 4px; font: 700 14px/1 var(--font-display); letter-spacing: 0.04em; color: var(--muted);
-  }
-  .tabs button[aria-selected='true'] { background: var(--gilt); color: var(--gilt-ink); border-color: var(--gilt); }
+  .tabs { display: grid; grid-template-columns: repeat(5, 1fr); }
+  .tabs button { font-size: 13px; letter-spacing: 0.02em; }
+  .tabs .tab-wide { display: none; }
   .folio[data-active='stats'] .panel:not([data-tab~='stats']),
   .folio[data-active='combat'] .panel:not([data-tab~='combat']),
   .folio[data-active='magic'] .panel:not([data-tab~='magic']),
@@ -157,6 +165,13 @@ button { cursor: pointer; }
 
 /* ── Folio grid ── */
 .folio { display: grid; gap: 16px; align-items: start; }
+.folio:not([data-active='dice']) .dice-view { display: none; }
+.folio[data-active='dice'] > .col { display: none; }
+.dice-view { grid-column: 1 / -1; display: grid; gap: 16px; min-width: 0; }
+.dice-side { display: grid; gap: 16px; min-width: 0; align-content: start; }
+@media (min-width: 900px) {
+  .dice-view { grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr); align-items: start; }
+}
 .col { display: grid; gap: 16px; min-width: 0; }
 @media (min-width: 900px) {
   .folio { grid-template-columns: minmax(280px, 330px) minmax(0, 1fr); }
@@ -352,46 +367,70 @@ button.stat:hover { border-color: var(--gilt); }
 .lib button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); }
 .lib button:hover { border-color: var(--gilt); }
 
-/* ── Dice tray ── */
-.tray {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-  padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  backdrop-filter: blur(8px);
-  border-top: 1px solid var(--line);
-  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-}
-.tray .dice { display: flex; gap: 4px; flex-wrap: wrap; }
-.die {
-  min-width: 44px; min-height: 36px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2);
-  font: 700 13px/1 var(--font-data);
-}
-.die:hover { border-color: var(--gilt); color: var(--gilt); }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-width: 100%; }
 .seg button { border: 0; background: var(--surface-2); padding: 0 10px; min-height: 34px; font: 600 13px/1 var(--font-body); color: var(--muted); }
 .seg button[aria-pressed='true'] { background: var(--gilt); color: var(--gilt-ink); }
-.tray .expr { width: 120px; font-family: var(--font-data); font-size: 14px; }
-.tray .ac { width: 64px; }
-.tray .spacer { flex: 1; }
-@media (max-width: 720px) {
-  :root { --tray-h: 112px; }
-  .tray .spacer { display: none; }
-  .tray .expr { flex: 1; width: auto; }
-}
+.input.ac { width: 64px; }
 
-.log {
-  position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(var(--tray-h) + 16px + env(safe-area-inset-bottom, 0px)); z-index: 41;
-  width: min(420px, calc(100vw - 32px)); max-height: min(60vh, 560px); overflow: auto;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow);
-  padding: 12px;
+/* ── Save button and advantage chip ── */
+.save-btn { min-width: 64px; }
+@media (max-width: 420px) {
+  .mast-actions .btn.small { padding: 4px 8px; font-size: 12.5px; }
 }
-.log header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.log h2 { margin: 0; font: 700 16px/1 var(--font-display); color: var(--gilt); letter-spacing: 0.05em; }
+.adv-chip {
+  position: fixed; z-index: 39;
+  left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  min-height: 40px; padding: 8px 14px; border-radius: 99px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(8px);
+  font: 700 13px/1 var(--font-body); color: var(--muted); box-shadow: var(--shadow);
+}
+.adv-chip[data-adv='adv'] { background: var(--good); color: #06180e; border-color: var(--good); }
+.adv-chip[data-adv='dis'] { background: var(--bad); color: #1c0606; border-color: var(--bad); }
+
+/* ── Dice page ── */
+.felt {
+  position: relative; height: clamp(220px, 36vh, 360px); border-radius: 16px; overflow: hidden;
+  display: grid; place-items: center; text-align: center; padding: 16px;
+  /* Velvet dice tray: dark in both themes so the dice read clearly. */
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(255,255,255,0.07), transparent 65%),
+    repeating-radial-gradient(circle at 30% 30%, rgba(255,255,255,0.018) 0 2px, transparent 2px 4px),
+    linear-gradient(160deg, #3a2f55, #1c1630);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--gilt) 45%, transparent), inset 0 10px 40px rgba(0,0,0,0.55);
+  color: #ece5d6;
+}
+.felt-hint { margin: 0; max-width: 32ch; color: rgba(236,229,214,0.7); font-size: 14px; }
+.felt-last { position: absolute; right: 16px; bottom: 12px; display: grid; justify-items: end; gap: 2px; pointer-events: none; }
+.felt-total { font: 800 40px/1 var(--font-display); color: #f2cf72; text-shadow: 0 2px 10px rgba(0,0,0,0.6); }
+.felt-label { font-size: 12px; color: rgba(236,229,214,0.7); max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dice-picker { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-top: 12px; }
+.die-pick {
+  position: relative; display: grid; justify-items: center; gap: 2px; padding: 8px 2px 6px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2);
+  font: 700 12.5px/1 var(--font-data); color: var(--fg);
+}
+.die-pick:hover { border-color: var(--gilt); }
+.die-pick:active { transform: translateY(1px); }
+.die-icon { fill: color-mix(in srgb, var(--gilt) 22%, transparent); stroke: var(--gilt); stroke-width: 1.4; stroke-linejoin: round; }
+.die-pick .count {
+  position: absolute; top: -6px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 99px;
+  background: var(--gilt); color: var(--gilt-ink); font: 800 12px/20px var(--font-body);
+}
+.pool { display: grid; gap: 10px; margin-top: 12px; }
+.pool-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
+.pool-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--gilt) 50%, var(--line)); font: 700 13px/1 var(--font-data);
+}
+.pool-chip button { border: 0; background: var(--surface-2); border-radius: 99px; width: 24px; height: 24px; }
+.mod-value { min-width: 36px; text-align: center; font-weight: 700; }
+.roll-big { min-height: 48px; font-size: 16px; }
+.history { display: grid; gap: 0; max-height: 520px; overflow: auto; }
 
 /* ── Result card ── */
 .result {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(var(--tray-h) + 16px + env(safe-area-inset-bottom, 0px)); z-index: 42;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 42;
   width: min(440px, calc(100vw - 32px));
   background: var(--surface); border: 1px solid color-mix(in srgb, var(--el, var(--gilt)) 70%, var(--line)); border-radius: 14px;
   box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--el, var(--gilt)) 25%, transparent);
@@ -409,6 +448,7 @@ button.stat:hover { border-color: var(--gilt); }
 .line .tot { font: 800 24px/1 var(--font-display); font-variant-numeric: lining-nums tabular-nums; text-align: right; }
 .line .det { grid-column: 1 / -1; font-family: var(--font-data); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .line[data-kind='info'] .tot { display: none; }
+.line .tot[data-text] { font-size: 18px; font-family: var(--font-body); }
 .line[data-kind='info'] .det { font-family: var(--font-body); font-size: 13.5px; }
 .line[data-kind='damage'] .tot { color: var(--bad); }
 .line[data-kind='healing'] .tot { color: var(--good); }

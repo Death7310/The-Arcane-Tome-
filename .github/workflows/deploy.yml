@@ -1,24 +1,28 @@
-# Tests every push and publishes main to GitHub Pages.
-# One-time setup: repository Settings → Pages → Build and deployment → Source: "GitHub Actions".
-name: Test and publish
+# Tests and builds every push. Pushes to main also publish the site to GitHub Pages,
+# with the signed Android app at arcane-tome.apk next to it.
+#
+# One-time setup:
+#   Settings → Pages → Source: "GitHub Actions"
+#   Settings → Secrets and variables → Actions → secret ANDROID_SIGNING_KEY
+#     ("password:base64-of-the-.p12"). Without it the Android job still builds a test APK
+#     (kept as a workflow artifact) but nothing is published, because every release must be
+#     signed with the same key for updates to install over the previous version.
+name: Test, build and publish
 
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  build:
+  web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,18 +33,83 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
-        if: github.event_name != 'pull_request'
+      - uses: actions/upload-artifact@v4
         with:
+          name: web
           path: dist
+          retention-days: 3
 
-  deploy:
-    if: github.event_name != 'pull_request'
-    needs: build
+  android:
     runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.build.outputs.signed }}
+    env:
+      SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:native
+      - run: npx cap sync android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - name: Unpack the signing key
+        if: env.SIGNING_KEY != ''
+        run: |
+          password="${SIGNING_KEY%%:*}"
+          echo "::add-mask::$password"
+          printf '%s' "${SIGNING_KEY#*:}" | base64 -d > "$RUNNER_TEMP/release.p12"
+          {
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.p12"
+            echo "ANDROID_KEYSTORE_PASSWORD=$password"
+            echo "ANDROID_KEY_ALIAS=arcanetome"
+          } >> "$GITHUB_ENV"
+      - name: Build the APK
+        id: build
+        working-directory: android
+        run: |
+          version=$(node -p "require('../package.json').version")
+          if [ -n "${ANDROID_KEYSTORE_PATH:-}" ]; then task=assembleRelease; kind=release; signed=yes; else task=assembleDebug; kind=debug; signed=no; fi
+          ./gradlew --no-daemon "$task" -PversionCode=${{ github.run_number }} -PversionName="$version"
+          mkdir -p ../apk
+          cp "app/build/outputs/apk/$kind/app-$kind.apk" ../apk/arcane-tome.apk
+          echo "signed=$signed" >> "$GITHUB_OUTPUT"
+          echo "Built $kind APK $version (build ${{ github.run_number }})" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: apk/arcane-tome.apk
+          retention-days: 14
+
+  pages:
+    if: always() && needs.web.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [web, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web
+          path: site
+      - if: needs.android.outputs.signed == 'yes'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4

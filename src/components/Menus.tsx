@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
-import { fx, perform, sound, centerOf } from '../fx';
+import { useEffect, useRef, useState } from 'react';
+import { fx, perform, sound, centerOf, type DiceSpeed } from '../fx';
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
 import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
-import { downloadText, makeBackup, parseImport, type MergeResult, type Settings } from '../state/storage';
+import { isNative, saveFileToDevice, shareFile } from '../state/native';
+import { downloadText, makeBackup, parseImport, type MergeResult, type SavePoint, type Settings } from '../state/storage';
 import { blankCharacter, uid, type Character } from '../systems/dnd5e/model';
-import { classSummary } from '../systems/dnd5e/rules';
+import { classSummary, maxHp, totalLevel } from '../systems/dnd5e/rules';
 import { sampleCharacter } from '../systems/dnd5e/sample';
 import { Check, ConfirmButton, Dialog, SelectField } from './ui';
 
@@ -15,9 +16,14 @@ export function CharactersDialog(props: {
   onAdd: (c: Character) => void;
   onDelete: (id: string) => void;
   onRestore: (characters: Character[]) => MergeResult;
+  savePoints: SavePoint[];
+  onMakeSavePoint: (name: string) => void;
+  onLoadSavePoint: (id: string) => void;
+  onDeleteSavePoint: (id: string) => void;
   onClose: () => void;
 }) {
-  const [mode, setMode] = useState<'list' | 'import' | 'export'>('list');
+  const [mode, setMode] = useState<'list' | 'saves' | 'import' | 'export'>('list');
+  const [pointName, setPointName] = useState('');
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -41,12 +47,52 @@ export function CharactersDialog(props: {
   return (
     <Dialog title="Characters" onClose={props.onClose}>
       <div className="seg" role="group" aria-label="Character tools" style={{ marginBottom: 12 }}>
-        {(['list', 'import', 'export'] as const).map((m) => (
+        {(['list', 'saves', 'import', 'export'] as const).map((m) => (
           <button key={m} type="button" aria-pressed={mode === m} onClick={() => (setMode(m), setError(''), setNotice(''))}>
-            {m === 'list' ? 'My characters' : m === 'import' ? 'Import' : 'Export'}
+            {m === 'list' ? 'Characters' : m === 'saves' ? 'Save points' : m === 'import' ? 'Import' : 'Export'}
           </button>
         ))}
       </div>
+
+      {mode === 'saves' && (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>
+            Your sheet saves itself as you go. A save point is a copy of <b>{current.name || 'this character'}</b> you can come back to, like a save slot in a game. The Save button at the top makes one; loading one first saves where you are now, so you can always undo it.
+          </p>
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              props.onMakeSavePoint(pointName.trim() || `Saved ${new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`);
+              setPointName('');
+            }}
+          >
+            <input className="input" style={{ flex: 1, minWidth: 0 }} id="save-point-name" value={pointName} placeholder="Name it, e.g. Before the dragon" onChange={(e) => setPointName(e.target.value)} aria-label="Save point name" />
+            <button type="submit" className="btn primary">
+              Make a save point
+            </button>
+          </form>
+          <div className="lib">
+            {props.savePoints
+              .filter((p) => p.characterId === current.id)
+              .map((p) => (
+                <div key={p.id} className="item" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 8, padding: '8px 10px', alignItems: 'center' }}>
+                  <span className="item-title">
+                    <b>{p.name}</b>
+                    <small>
+                      {new Date(p.createdAt).toLocaleString()} · Level {totalLevel(p.data)} · {p.data.hp.current}/{maxHp(p.data).total} HP
+                    </small>
+                  </span>
+                  <span className="row" style={{ flexWrap: 'nowrap' }}>
+                    <ConfirmButton label="Load" confirmLabel="Load it?" onConfirm={() => (props.onLoadSavePoint(p.id), setNotice(`Loaded “${p.name}”.`), setMode('list'))} />
+                    <ConfirmButton label="Delete" confirmLabel="Delete?" onConfirm={() => props.onDeleteSavePoint(p.id)} />
+                  </span>
+                </div>
+              ))}
+            {!props.savePoints.some((p) => p.characterId === current.id) && <p className="hint">No save points yet.</p>}
+          </div>
+        </>
+      )}
 
       {mode === 'list' && (
         <>
@@ -165,6 +211,32 @@ function ago(t: number): string {
   return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
 }
 
+const backupName = () => `arcane-tome-backup-${new Date().toISOString().slice(0, 10)}.json`;
+const backupJson = (characters: Character[]) => JSON.stringify(makeBackup(characters), null, 2);
+
+/** Offered in the browser when the site has an Android build to download. */
+function AndroidAppLink() {
+  const [available, setAvailable] = useState(false);
+  const pwa = usePwa();
+  useEffect(() => {
+    // Only the website carries the APK; the single file and the app itself don't.
+    if (pwa.ios || pwa.mode !== 'pwa') return;
+    fetch('arcane-tome.apk', { method: 'HEAD' })
+      .then((r) => setAvailable(r.ok))
+      .catch(() => setAvailable(false));
+  }, [pwa.ios, pwa.mode]);
+  if (!available) return null;
+  return (
+    <p className="hint" style={{ margin: 0 }}>
+      On Android you can also get it as a regular app:{' '}
+      <a href="arcane-tome.apk" download>
+        Download the Android app (APK)
+      </a>
+      . Android will ask you to allow installing apps from your browser the first time.
+    </p>
+  );
+}
+
 function OfflineSection(props: { characters: Character[]; settings: Settings; onChange: (s: Settings) => void; onRestore: (c: Character[]) => MergeResult }) {
   const pwa = usePwa();
   const [msg, setMsg] = useState('');
@@ -173,7 +245,11 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
   return (
     <>
       <h3 style={{ margin: 0 }}>Offline &amp; backups</h3>
-      {pwa.mode === 'pwa' ? (
+      {pwa.mode === 'native' ? (
+        <p className="hint" style={{ margin: 0, color: 'var(--good)' }}>
+          You're using the Android app. It works fully offline and saves to a file in its own storage on your phone.
+        </p>
+      ) : pwa.mode === 'pwa' ? (
         <p className="hint" style={{ margin: 0, color: pwa.offlineReady ? 'var(--good)' : undefined }}>
           {pwa.offlineReady ? 'Ready to work offline on this device. No internet needed after this.' : 'Saving the app for offline use…'}
         </p>
@@ -201,14 +277,15 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
           Update to the new version
         </button>
       )}
-      {pwa.persisted === false && (
+      {pwa.mode !== 'native' && <AndroidAppLink />}
+      {pwa.mode !== 'native' && pwa.persisted === false && (
         <div className="row">
           <button type="button" className="btn small" onClick={() => void requestPersist().then((ok) => setMsg(ok ? 'Your browser will keep this data.' : 'Your browser decided for itself; installing the app usually makes it agree.'))}>
             Ask the browser to keep my data
           </button>
         </div>
       )}
-      {pwa.persisted && <p className="hint" style={{ margin: 0 }}>Storage is protected: the browser won't clear it to free space.</p>}
+      {pwa.mode !== 'native' && pwa.persisted && <p className="hint" style={{ margin: 0 }}>Storage is protected: the browser won't clear it to free space.</p>}
       <p className="hint" style={{ margin: 0 }}>
         Characters live only on this device. Last backup: <b>{last ? ago(last) : 'never'}</b>.
       </p>
@@ -216,15 +293,24 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
         <button
           type="button"
           className="btn"
-          onClick={() => {
-            const stamp = new Date().toISOString().slice(0, 10);
-            if (downloadText(`arcane-tome-backup-${stamp}.json`, JSON.stringify(makeBackup(props.characters), null, 2))) {
-              props.onChange({ ...props.settings, lastBackupAt: Date.now() });
-              setMsg(`Backed up ${props.characters.length} character${props.characters.length === 1 ? '' : 's'}.`);
-            } else setMsg('This viewer blocks downloads. Use Characters → Export → Copy instead.');
+          onClick={async () => {
+            const r = await saveFileToDevice(backupName(), backupJson(props.characters));
+            if (r.ok) props.onChange({ ...props.settings, lastBackupAt: Date.now() });
+            setMsg(r.message);
           }}
         >
-          Back up all characters
+          {isNative() ? 'Save a backup to my phone' : 'Save a backup file'}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={async () => {
+            const r = await shareFile(backupName(), backupJson(props.characters));
+            if (r.ok && r.message === 'Shared.') props.onChange({ ...props.settings, lastBackupAt: Date.now() });
+            setMsg(r.message);
+          }}
+        >
+          Share a backup…
         </button>
         <button type="button" className="btn ghost" onClick={() => fileRef.current?.click()}>
           Restore from a backup
@@ -270,6 +356,17 @@ export function SettingsDialog(props: { settings: Settings; characters: Characte
             { id: 'off', name: 'Off' },
           ]}
           onChange={(v) => set({ fx: v })}
+        />
+        <SelectField<DiceSpeed>
+          label="Rolling dice"
+          id="set-dice"
+          value={s.diceSpeed}
+          options={[
+            { id: 'full', name: 'Full roll (about 1½ seconds)' },
+            { id: 'quick', name: 'Quick roll' },
+            { id: 'off', name: 'Off: show results at once' },
+          ]}
+          onChange={(v) => set({ diceSpeed: v })}
         />
         <Check label="Allow screen flashes (lightning, big explosions)" id="set-flash" checked={s.flashes} onChange={(b) => set({ flashes: b })} />
         <p className="hint" style={{ margin: 0 }}>

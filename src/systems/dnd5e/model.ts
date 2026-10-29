@@ -96,6 +96,21 @@ export interface Item {
   notes: string;
 }
 
+/** A die or roll the player saved on the Dice page: a formula like "3d6+{DEX}", or a die with its own labelled faces. */
+export interface CustomDie {
+  id: string;
+  name: string;
+  kind: 'formula' | 'faces';
+  formula: string;
+  faces: string[];
+  count: number;
+  element: Element;
+}
+
+export function blankCustomDie(partial: Partial<CustomDie> = {}): CustomDie {
+  return { id: uid(), name: 'New die', kind: 'formula', formula: '1d6', faces: [], count: 1, element: 'arcane', ...partial };
+}
+
 export interface Turn {
   action: boolean;
   bonus: boolean;
@@ -153,6 +168,7 @@ export interface Character {
   languages: string;
   notes: string;
   turn: Turn;
+  customDice: CustomDie[];
   updatedAt: number;
 }
 
@@ -266,6 +282,7 @@ export function blankCharacter(): Character {
     languages: 'Common',
     notes: '',
     turn: emptyTurn(),
+    customDice: [],
     updatedAt: Date.now(),
   };
 }
@@ -294,6 +311,7 @@ export function normalizeCharacter(raw: unknown): Character {
     spells: Array.isArray(c.spells) ? c.spells.map((s) => blankSpell(s)) : [],
     weapons: Array.isArray(c.weapons) ? c.weapons.map((w) => blankWeapon(w)) : [],
     features: Array.isArray(c.features) ? c.features.map((f) => blankFeature(f)) : [],
+    customDice: Array.isArray(c.customDice) ? c.customDice.map((d) => blankCustomDie(d)) : [],
     inventory: Array.isArray(c.inventory) ? c.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
   };
   while (merged.spellcasting.slotsUsed.length < 9) merged.spellcasting.slotsUsed.push(0);

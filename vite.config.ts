@@ -7,6 +7,7 @@ import pkg from './package.json';
 // Build modes:
 //   (default)       dist/       installable offline web app (service worker + manifest)
 //   --mode single   dist-single/ one self-contained index.html that runs from disk, no server
+//   --mode native   dist-native/ the files packed into the Android app (see capacitor.config.json)
 const theme = '#15131b';
 const define = { __APP_VERSION__: JSON.stringify(pkg.version), __BUILD_TIME__: JSON.stringify(new Date().toISOString()) };
 
@@ -21,14 +22,15 @@ const homeScreenTags = (): Plugin => ({
 });
 
 export default defineConfig(({ mode }) => {
-  if (mode === 'single') {
+  if (mode === 'single' || mode === 'native') {
+    // No service worker: the single file runs from disk, and the Android app ships its files inside the APK.
     return {
       base: './',
       define,
       publicDir: false,
-      plugins: [react(), viteSingleFile()],
+      plugins: mode === 'single' ? [react(), viteSingleFile()] : [react()],
       resolve: { alias: { 'virtual:pwa-register': '/src/state/pwa-stub.ts' } },
-      build: { outDir: 'dist-single' },
+      build: { outDir: mode === 'single' ? 'dist-single' : 'dist-native' },
     };
   }
   return {

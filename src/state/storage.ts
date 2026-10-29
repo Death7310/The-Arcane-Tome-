@@ -1,5 +1,6 @@
+import type { DiceSpeed } from '../fx';
 import type { FxLevel } from '../fx/types';
-import { normalizeCharacter, type Character } from '../systems/dnd5e/model';
+import { normalizeCharacter, uid, type Character } from '../systems/dnd5e/model';
 
 export interface Settings {
   sound: boolean;
@@ -8,13 +9,28 @@ export interface Settings {
   flashes: boolean;
   theme: 'system' | 'light' | 'dark';
   lastBackupAt: number | null;
+  diceSpeed: DiceSpeed;
+}
+
+/** A manual save: a copy of one character you can go back to. */
+export interface SavePoint {
+  id: string;
+  characterId: string;
+  name: string;
+  createdAt: number;
+  data: Character;
 }
 
 export interface Saved {
   characters: Character[];
   currentId: string;
   settings: Settings;
+  savePoints: SavePoint[];
+  /** When this state was last written, used to pick the newer of two copies (browser vs. phone storage). */
+  savedAt: number;
 }
+
+export const SAVE_POINTS_PER_CHARACTER = 25;
 
 const KEY = 'arcane-tome:v1';
 /** Saves from before the app was renamed; read if nothing is stored under the current key yet. */
@@ -27,14 +43,30 @@ export function defaultSettings(): Settings {
   } catch {
     /* no matchMedia */
   }
-  return { sound: true, volume: 0.7, fx: reduce ? 'reduced' : 'full', flashes: !reduce, theme: 'system', lastBackupAt: null };
+  return {
+    sound: true,
+    volume: 0.7,
+    fx: reduce ? 'reduced' : 'full',
+    flashes: !reduce,
+    theme: 'system',
+    lastBackupAt: null,
+    diceSpeed: reduce ? 'quick' : 'full',
+  };
 }
 
 /** Everything lives in this browser only. Storage can be blocked (private windows), so every access is guarded. */
 export function load(): Saved | null {
   try {
     const raw = [KEY, ...LEGACY_KEYS].map((k) => localStorage.getItem(k)).find((v) => v !== null);
-    if (!raw) return null;
+    return raw ? parseSaved(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Reads a stored state, repairing anything missing or malformed. */
+export function parseSaved(raw: string): Saved | null {
+  try {
     const data = JSON.parse(raw) as Partial<Saved>;
     const characters = (data.characters ?? []).flatMap((c) => {
       try {
@@ -48,6 +80,14 @@ export function load(): Saved | null {
       characters,
       currentId: characters.some((c) => c.id === data.currentId) ? data.currentId! : characters[0].id,
       settings: { ...defaultSettings(), ...data.settings },
+      savePoints: (Array.isArray(data.savePoints) ? data.savePoints : []).flatMap((p) => {
+        try {
+          return [{ id: String(p.id), characterId: String(p.characterId), name: String(p.name ?? 'Save'), createdAt: Number(p.createdAt) || 0, data: normalizeCharacter(p.data) }];
+        } catch {
+          return [];
+        }
+      }),
+      savedAt: Number(data.savedAt) || 0,
     };
   } catch {
     return null;
@@ -137,4 +177,11 @@ export function downloadText(filename: string, text: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Adds a save point for a character, keeping its newest SAVE_POINTS_PER_CHARACTER. */
+export function addSavePoint(points: SavePoint[], c: Character, name: string): SavePoint[] {
+  const point: SavePoint = { id: uid(), characterId: c.id, name, createdAt: Date.now(), data: structuredClone(c) };
+  const mine = [point, ...points.filter((p) => p.characterId === c.id)].slice(0, SAVE_POINTS_PER_CHARACTER);
+  return [...mine, ...points.filter((p) => p.characterId !== c.id)];
 }
