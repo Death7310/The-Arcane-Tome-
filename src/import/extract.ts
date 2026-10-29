@@ -13,7 +13,17 @@ export interface Extracted {
   text: string;
   /** Form field name → value, from fillable PDFs. */
   fields: Record<string, string>;
+  /** Where each filled-in field sits: page, and its lower-left corner in PDF points. */
+  positions?: Record<string, FieldPosition>;
+  /** How many pages were read. */
+  pages?: number;
   kind: string;
+}
+
+export interface FieldPosition {
+  page: number;
+  x: number;
+  y: number;
 }
 
 export class UnsupportedFile extends Error {}
@@ -181,19 +191,23 @@ export async function extractPdf(data: Uint8Array): Promise<Extracted> {
   }
   const textLines = markHeadings(lines);
   // Filled-in form fields live on each page's widgets (fillable sheets, D&D Beyond exports).
+  // Their positions let the importer tell which spell-level heading a spell row sits under.
   const fields: Record<string, string> = {};
+  const positions: Record<string, FieldPosition> = {};
   for (let p = 1; p <= doc.numPages; p++) {
-    const annots = (await (await doc.getPage(p)).getAnnotations()) as { subtype?: string; fieldName?: string; fieldValue?: unknown; checkBox?: boolean }[];
+    const annots = (await (await doc.getPage(p)).getAnnotations()) as { subtype?: string; fieldName?: string; fieldValue?: unknown; checkBox?: boolean; rect?: number[] }[];
     for (const a of annots) {
       if (a.subtype !== 'Widget' || !a.fieldName || a.fieldName in fields) continue;
       const v = a.fieldValue;
       if (v === undefined || v === null || v === '' || v === 'Off' || v === false) continue;
       fields[a.fieldName] = Array.isArray(v) ? v.join(', ') : typeof v === 'string' ? v : 'Yes';
+      if (a.rect) positions[a.fieldName] = { page: p, x: Math.min(a.rect[0], a.rect[2]), y: Math.min(a.rect[1], a.rect[3]) };
     }
   }
+  const pages = doc.numPages;
   await task.destroy();
   const text = textLines.join('\n').replace(/\n{3,}/g, '\n\n');
   if (!text.trim() && !Object.keys(fields).length)
     throw new UnsupportedFile('That PDF has no text in it: it may be a scan or a photo. Copy the text and paste it instead.');
-  return { text, fields, kind: Object.keys(fields).length ? 'fillable PDF' : 'PDF' };
+  return { text, fields, positions, pages, kind: Object.keys(fields).length ? 'fillable PDF' : 'PDF' };
 }

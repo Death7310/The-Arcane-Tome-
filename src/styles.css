@@ -668,3 +668,19 @@ button.stat:hover { border-color: var(--gilt); }
 .toc .toc-2 { padding-left: 18px; }
 .toc .toc-3 { padding-left: 32px; font-size: 13px; color: var(--muted); }
 .rules-reader { display: grid; gap: 8px; }
+
+/* Inventory items with a description and notes */
+.inv-item { display: grid; gap: 4px; }
+.inv-item .item-body { padding: 4px 0 8px 34px; display: grid; gap: 6px; }
+.inv-more { width: 28px; min-width: 28px; padding: 0; opacity: 0.55; }
+.inv-more.has { opacity: 1; color: var(--gilt); }
+
+/* Languages */
+.lang-picks summary { cursor: pointer; font-size: 0.85em; color: var(--muted); margin-top: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip { font: inherit; font-size: 0.85em; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+.chip[aria-pressed='true'] { background: var(--gilt); color: var(--gilt-ink); border-color: var(--gilt); }
+
+/* Item list rows: the name and its stats wrap instead of being cut off on a phone. */
+.lib button.item-pick { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 0; border: 0; background: none; border-radius: 0; }
+.lib button.item-pick b, .lib button.item-pick small { white-space: normal; }

@@ -5,6 +5,7 @@ import { contentCounts, looksLikeRulesJson, readRulesDocument, readRulesJson, sp
 import type { Catalog } from './srd';
 import { companionFromCreature } from './statblock';
 import { evalFormula } from './formula';
+import { resolveItem, weaponFromResolved } from './items';
 
 // A homebrew rules document as the PDF reader hands it over: headings marked with #.
 const DOC = `# Shards of the Veil
@@ -67,13 +68,21 @@ Prism Keeper (Shardcaller Subclass)
 Keepers bend light into shields.
 Level 3: Prism Ward
 You gain a ward of light.
+
+## Treasures
+Veilglass Rapier
+Weapon (rapier), uncommon (requires attunement)
+You gain a +1 bonus to attack and damage rolls made with this magic weapon. It deals an extra 1d4 radiant damage on a hit.
+Skyshard Amulet
+Wondrous Item, rare
+While you wear this amulet, you can't be knocked Prone by wind.
 `;
 
 describe('reading a homebrew rules document', () => {
   const r = readRulesDocument(DOC, 'Shards of the Veil');
 
   it('splits it into searchable sections', () => {
-    expect(splitSections(DOC).map((s) => s.title)).toEqual(['Shards of the Veil', 'Resting', 'Spells', 'Feats', 'Creatures', 'Classes']);
+    expect(splitSections(DOC).map((s) => s.title)).toEqual(['Shards of the Veil', 'Resting', 'Spells', 'Feats', 'Creatures', 'Classes', 'Treasures']);
     expect(r.sections.find((s) => s.title === 'Resting')!.text).toMatch(/8 hours/);
   });
 
@@ -104,11 +113,11 @@ describe('reading a homebrew rules document', () => {
     ]);
     expect(cls.features[1]).toMatchObject({ uses: 'mod:wis', recharge: 'long', castingTime: 'bonus' });
     expect(r.subclasses).toMatchObject([{ name: 'Prism Keeper', classId: cls.id, features: [{ name: 'Prism Ward', level: 3 }] }]);
-    expect(contentCounts(r)).toEqual({ classes: 1, subclasses: 1, feats: 1, spells: 2, creatures: 1 });
+    expect(contentCounts(r)).toEqual({ classes: 1, subclasses: 1, feats: 1, spells: 2, creatures: 1, items: 2 });
   });
 
   it('levels a character in the homebrew class', () => {
-    const cat: Catalog = { classes: r.classes, subclasses: r.subclasses, feats: r.feats, spells: r.spells, creatures: r.creatures };
+    const cat: Catalog = { classes: r.classes, subclasses: r.subclasses, feats: r.feats, spells: r.spells, creatures: r.creatures, items: r.items };
     const c = blankCharacter();
     c.abilities.wis = 14;
     c.classes[0] = { ...c.classes[0], classId: r.classes[0].id, level: 2 };
@@ -116,6 +125,13 @@ describe('reading a homebrew rules document', () => {
     expect(plan.subclassOptions!.map((s) => s.name)).toEqual(['Prism Keeper']);
     applyLevelUp(c, cat, plan, { hpRoll: null, subclass: { id: r.subclasses[0].id, name: 'Prism Keeper' } });
     expect(c.features.map((f) => f.name)).toEqual(expect.arrayContaining(['Shard Sense', 'Splinter', 'Skyward Step', 'Prism Ward']));
+  });
+
+  it('finds magic items, and they work as weapons on the sheet', () => {
+    expect(r.items.map((i) => i.name)).toEqual(['Veilglass Rapier', 'Skyshard Amulet']);
+    const w = weaponFromResolved(resolveItem('Veilglass Rapier', r.items))!;
+    expect(w).toMatchObject({ magicBonus: 1, finesse: true, damage: [{ dice: '1d8', type: 'piercing' }, { dice: '1d4', type: 'radiant' }] });
+    expect(r.items[1]).toMatchObject({ kind: 'magic', rarity: 'Rare', text: expect.stringMatching(/knocked Prone/) });
   });
 
   it('says when nothing structured was found', () => {
@@ -144,6 +160,10 @@ describe('importing an AI’s JSON conversion', () => {
     ],
     subclasses: [{ name: 'Path of Embers', class: 'Ashwalker', features: [{ level: 3, name: 'Ember Heart', text: 'Your heart burns.' }] }],
     spells: [{ name: 'Lava Lash', level: 1, school: 'Evocation', castingTime: 'Bonus Action', range: '30 feet', attack: 'melee', damage: [{ dice: '2d8', type: 'fire' }], upcast: '1d8', text: 'A whip of lava.' }],
+    items: [
+      { name: 'Emberbrand', type: 'weapon', base: 'Scimitar', rarity: 'rare', attunement: true, bonus: 1, extraDamage: [{ dice: '1d6', type: 'fire' }], text: 'Glows like coals.' },
+      { name: 'Ash Cloak', type: 'wondrous item', rarity: 'uncommon', text: 'Resistance to Fire damage.' },
+    ],
     creatures: [{ name: 'Cinder Drake', size: 'Small', type: 'Dragon', ac: '14 + {PB}', hp: '5 + 5 * {LEVEL:ashwalker}', pb: '{PB}', abilities: { str: 12, dex: 14, con: 14, int: 6, wis: 12, cha: 8 }, actions: [{ kind: 'action', name: 'Bite', attack: 'melee', toHit: '{SPELLATK}', reach: '5 ft.', damage: '1d6 + {PB}', damageType: 'fire', text: 'A burning bite.' }] }],
     unknownField: 'ignored',
   };
@@ -158,6 +178,9 @@ describe('importing an AI’s JSON conversion', () => {
     expect(r.classes[0].features[1]).toMatchObject({ uses: 'pb', recharge: 'long', roll: [[1, '2d6+{CON}']] });
     expect(r.subclasses[0].classId).toBe(r.classes[0].id);
     expect(r.spells[0]).toMatchObject({ name: 'Lava Lash', castingTime: 'bonus', resolution: 'attack', damage: [{ dice: '2d8', type: 'fire' }], upcastDice: '1d8', element: 'fire' });
+    const brand = weaponFromResolved(resolveItem('Emberbrand', r.items))!;
+    expect(brand).toMatchObject({ name: 'Emberbrand', magicBonus: 1, finesse: true, damage: [{ dice: '1d6', type: 'slashing' }, { dice: '1d6', type: 'fire' }] });
+    expect(r.items[1]).toMatchObject({ kind: 'magic', category: 'Wondrous item', rarity: 'Uncommon' });
   });
 
   it('keeps a companion’s scaling formulas', () => {

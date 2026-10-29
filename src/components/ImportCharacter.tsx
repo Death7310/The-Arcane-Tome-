@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { extractFromFile, UnsupportedFile } from '../import/extract';
+import { loadCatalog } from '../state/catalog';
 import { parseImport, type MergeResult } from '../state/storage';
 import { ABILITIES, ABILITY_NAMES, classById } from '../systems/dnd5e/data';
 import { AI_PROMPT, buildCharacter, importFromText, looksLikeAiJson, readAiJson, type ImportResult } from '../systems/dnd5e/importer';
@@ -21,13 +22,17 @@ export function ImportCharacter(props: { onCreate: (c: Character) => void; onRes
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  /** The rules (SRD + library), so spells and items are matched against all of them. Reading still works without. */
+  const rules = () => loadCatalog().catch(() => undefined);
+
   /** JSON is either an Arcane Tome backup/export (restored directly) or the AI prompt's format (reviewed). */
-  const fromRaw = (raw: string, source: string) => {
+  const fromRaw = async (raw: string, source: string) => {
     const trimmed = raw.trim();
+    const catalog = await rules();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
         const data = JSON.parse(trimmed.replace(/^```(?:json)?|```$/g, ''));
-        if (looksLikeAiJson(data)) return setReview({ ...buildCharacter(readAiJson(data)), source: 'AI conversion' });
+        if (looksLikeAiJson(data)) return setReview({ ...buildCharacter(readAiJson(data), catalog), source: 'AI conversion' });
         const r = props.onRestore(parseImport(trimmed));
         return props.onDone(`Imported: ${[r.added && `${r.added} added`, r.updated && `${r.updated} updated`, r.kept && `${r.kept} already up to date`].filter(Boolean).join(', ')}.`);
       } catch (e) {
@@ -35,7 +40,7 @@ export function ImportCharacter(props: { onCreate: (c: Character) => void; onRes
         // Not JSON after all; read it as text.
       }
     }
-    const result = importFromText(raw);
+    const result = importFromText(raw, {}, { catalog });
     setReview({ ...result, source });
   };
 
@@ -43,10 +48,12 @@ export function ImportCharacter(props: { onCreate: (c: Character) => void; onRes
     setError('');
     setBusy(`Reading ${f.name}…`);
     try {
-      if (/\.json$/i.test(f.name)) fromRaw(await f.text(), f.name);
+      if (/\.json$/i.test(f.name)) await fromRaw(await f.text(), f.name);
       else {
-        const ex = await extractFromFile(f);
-        setReview({ ...importFromText(ex.text, ex.fields), source: `${f.name} (${ex.kind})` });
+        const [ex, catalog] = await Promise.all([extractFromFile(f), rules()]);
+        const fieldCount = Object.keys(ex.fields).length;
+        const what = [ex.kind, ex.pages ? `${ex.pages} page${ex.pages === 1 ? '' : 's'}` : '', fieldCount ? `${fieldCount} filled-in fields` : ''].filter(Boolean).join(', ');
+        setReview({ ...importFromText(ex.text, ex.fields, { positions: ex.positions, catalog }), source: `${f.name} (${what})` });
       }
     } catch (e) {
       setError(e instanceof UnsupportedFile ? e.message : `Couldn’t read that file: ${(e as Error).message}`);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blankCharacter, normalizeCharacter, uid, type Character } from './model';
+import { blankCharacter, blankFeature, blankWeapon, normalizeCharacter, uid, type Character } from './model';
 import {
   abilityMod,
   armorClass,
@@ -198,5 +198,32 @@ describe('conditions and effects', async () => {
     expect(effectDice(c, { type: 'attack' })).toEqual({ expr: '+1d4-1d4', names: ['Bless', 'Bane'] });
     expect(effectDice(c, { type: 'save', ability: 'con' }).expr).toBe('+1d4');
     expect(effectDice(c, { type: 'check', ability: 'str' }).expr).toBe('');
+  });
+});
+
+describe('fighting styles', () => {
+  const ranger = () => {
+    const c = blankCharacter();
+    c.abilities.dex = 16;
+    c.classes[0] = { ...c.classes[0], classId: 'ranger', level: 2 };
+    return c;
+  };
+  it('Archery adds +2 to ranged weapon attacks only', () => {
+    const c = ranger();
+    const bow = blankWeapon({ name: 'Longbow', ranged: true, damage: [{ dice: '1d8', type: 'piercing' }] });
+    const dagger = blankWeapon({ name: 'Dagger', finesse: true, damage: [{ dice: '1d4', type: 'piercing' }] });
+    const before = weaponAttack(c, bow).total;
+    c.features.push(blankFeature({ name: 'Archery' }));
+    expect(weaponAttack(c, bow).total).toBe(before + 2);
+    expect(weaponAttack(c, dagger).total).toBe(before);
+    expect(weaponAttack(c, bow).parts.map((p) => p.label)).toContain('Archery');
+  });
+  it('Defense adds +1 AC while wearing armor', () => {
+    const c = ranger();
+    c.features.push(blankFeature({ name: 'Fighting Style: Defense' }));
+    const unarmored = armorClass(c).total;
+    c.armor.armorId = 'leather';
+    expect(armorClass(c).total).toBe(11 + 3 + 1);
+    expect(unarmored).toBe(10 + 3);
   });
 });

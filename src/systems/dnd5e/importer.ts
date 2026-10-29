@@ -4,10 +4,13 @@
 // "Skills: Arcana +5", spell lists by level…) and reports what it found and what to check.
 // The person reviews the result before a character is created.
 
-import { ABILITIES, ARMOR, CLASSES, SKILLS, WEAPONS, classById, type Ability, type SkillId } from './data';
-import { blankCharacter, blankFeature, blankSpell, blankWeapon, uid, type Character, type ProfLevel } from './model';
-import { abilityMod, armorClass, maxHp, proficiencyBonus } from './rules';
-import { SPELL_LIBRARY } from './spells';
+import type { FieldPosition } from '../../import/extract';
+import { ABILITIES, ARMOR, CLASSES, DAMAGE_TYPES, SKILLS, WEAPONS, classById, type Ability, type DamageType, type SkillId } from './data';
+import { inventoryFromResolved, parseItemText, resolveItem, weaponFromResolved } from './items';
+import { blankCharacter, blankFeature, blankSpell, blankWeapon, uid, type CastingTime, type Character, type ProfLevel, type Spell } from './model';
+import { abilityMod, armorClass, maxHp, proficiencyBonus, weaponAttack } from './rules';
+import { SPELL_LIBRARY, spellFromDef, tunedSpells } from './spells';
+import type { Catalog } from './srd';
 
 export interface ImportResult {
   character: Character;
@@ -41,14 +44,28 @@ export interface Draft {
   speed?: number;
   armorHints: string[];
   shield?: boolean;
-  spells: { name: string; level?: number }[];
-  weapons: { name: string; magic: number }[];
-  features: { name: string; description: string }[];
-  items: { name: string; qty: number }[];
+  spells: { name: string; level?: number; prepared?: boolean; info?: SpellInfo }[];
+  /** As the sheet wrote them: the name, and the attack bonus and damage if it gave them. */
+  weapons: { name: string; magic?: number; attack?: number; damage?: string; notes?: string }[];
+  features: { name: string; description: string; source?: string; uses?: number; recharge?: 'short' | 'long' }[];
+  items: { name: string; qty: number; weight?: number }[];
   currency: Partial<Record<Coin, number>>;
   languages?: string;
   proficiencies?: string;
   notes: string[];
+}
+
+/** A spell row's columns, for spells the rules don't know. */
+export interface SpellInfo {
+  castingTime?: string;
+  range?: string;
+  components?: string;
+  duration?: string;
+  /** "DEX 15" for a save, "+7" for an attack. */
+  saveHit?: string;
+  /** Damage or effect notes ("8d6 Fire", "D: 2d6 Fire"). */
+  notes?: string;
+  school?: string;
 }
 
 const emptyDraft = (): Draft => ({
@@ -289,14 +306,67 @@ function cleanSpellName(raw: string): string {
     .trim();
 }
 
-function readSpells(lines: string[], fields: Record<string, string>): Draft['spells'] {
-  const out: Draft['spells'] = [];
+/** What a spell-level heading means: "=== CANTRIPS ===" → 0, "1st Level (4 slots)" → 1. */
+function levelOfHeading(v: string): number | undefined {
+  if (/cantrip/i.test(v)) return 0;
+  const m = /(\d)(?:st|nd|rd|th)?[\s-]*level|level\s*(\d)/i.exec(v);
+  return m ? Number(m[1] ?? m[2]) : undefined;
+}
+
+/** Spells from numbered form fields (spellName0, spellCastingTime0…, with spellHeader fields between levels). */
+function spellRows(fields: Record<string, string>, positions: Record<string, FieldPosition> | undefined): Draft['spells'] {
+  const rows = new Map<string, { key: string; f: Record<string, string> }>();
+  const headers: { key: string; level: number | undefined }[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    const m = /^spell(name|level|savehit|save|hit|castingtime|time|range|components?|comp|duration|notes|source|prepared|page|school|header)(\d+)$/.exec(norm(k));
+    if (!m || !v.trim()) continue;
+    if (m[1] === 'header') {
+      headers.push({ key: k, level: levelOfHeading(v) });
+      continue;
+    }
+    const row = rows.get(m[2]) ?? { key: '', f: {} };
+    row.f[m[1].replace(/^components$/, 'comp').replace(/^time$/, 'castingtime')] = v.trim();
+    if (m[1] === 'name') row.key = k;
+    rows.set(m[2], row);
+  }
+  const named = [...rows.values()].filter((r) => r.key && cleanSpellName(r.f.name).length >= 2 && !/^[-–—]+$/.test(r.f.name));
+  const level = new Map<string, number>();
+  // Which heading each spell sits under, by reading the page top to bottom (column by column).
+  if (positions && headers.length) {
+    const marks = [...headers.map((h) => ({ key: h.key, level: h.level })), ...named.map((r) => ({ key: r.key, level: undefined as number | undefined, row: r }))].filter((m) => positions[m.key]);
+    const pages = new Map<number, number[]>();
+    for (const m of marks) pages.set(positions[m.key].page, [...(pages.get(positions[m.key].page) ?? []), positions[m.key].x]);
+    const column = (key: string) => {
+      const p = positions[key];
+      const xs = pages.get(p.page)!;
+      const lo = Math.min(...xs);
+      const hi = Math.max(...xs);
+      return hi - lo > 250 && p.x > (lo + hi) / 2 ? 1 : 0;
+    };
+    marks.sort((a, b) => positions[a.key].page - positions[b.key].page || column(a.key) - column(b.key) || positions[b.key].y - positions[a.key].y || positions[a.key].x - positions[b.key].x);
+    let current: number | undefined;
+    for (const m of marks) {
+      if (!('row' in m)) current = m.level;
+      else if (current !== undefined) level.set(m.key, current);
+    }
+  }
+  return named.map((r) => ({
+    name: cleanSpellName(r.f.name),
+    level: firstInt(r.f.level) ?? level.get(r.key),
+    prepared: r.f.prepared ? /^(p|o|x|y|yes|✓|•|●|always|prepared|true)/i.test(r.f.prepared) : undefined,
+    info: { castingTime: r.f.castingtime, range: r.f.range, components: r.f.comp, duration: r.f.duration, saveHit: r.f.savehit ?? r.f.save ?? r.f.hit, notes: r.f.notes, school: r.f.school },
+  }));
+}
+
+function readSpells(lines: string[], fields: Record<string, string>, opts: ReadOptions): Draft['spells'] {
+  const out: Draft['spells'] = spellRows(fields, opts.positions);
   const add = (raw: string, level?: number) => {
     const name = cleanSpellName(raw);
     if (name.length < 3 || name.length > 40 || /^\d+$/.test(name) || /slot|level|save dc|attack|ability/i.test(name)) return;
-    if (!out.some((s) => norm(s.name) === norm(name))) out.push({ name, level });
+    out.push({ name, level });
   };
-  for (const [k, v] of Object.entries(fields)) if (/^spells?\s*\d/i.test(k) || /^spellname/i.test(norm(k))) add(v);
+  // The official sheet's numbered spell lines ("Spells 1014") and other apps' "spell3" fields.
+  for (const [k, v] of Object.entries(fields)) if (/^spells?\s*\d/i.test(k) || /^spell\d+$/.test(norm(k))) add(v);
   for (let i = 0; i < lines.length; i++) {
     const m = SPELL_HEAD.exec(lines[i]);
     if (!m) continue;
@@ -311,61 +381,133 @@ function readSpells(lines: string[], fields: Record<string, string>): Draft['spe
       } else break;
     }
   }
-  return out;
+  // Spells the rules know, wherever a line starts with one: a printed (flattened) sheet's spell
+  // table has no headings the reader can rely on. One-word names (Light, Shield, Command) are
+  // also ordinary words, so they only count on a line that looks like a spell row.
+  const known = opts.spellNames;
+  if (known?.size && /spell\s*(?:save|attack|casting)|cantrips?\b|spell slots?/i.test(lines.join('\n'))) {
+    for (const l of lines) {
+      if (l.length > 200 || headingOf(l)) continue;
+      const words = stripBullet(l).replace(/[*†‡]/g, '').split(/\s+/);
+      for (let n = Math.min(6, words.length); n >= 1; n--) {
+        const name = words.slice(0, n).join(' ').replace(/[.,;:]+$/, '');
+        if (!known.has(norm(name))) continue;
+        const rest = words.slice(n).join(' ');
+        const rowLike = /\b(?:1\s?(?:A|BA|R)|action|bonus|reaction|minute|hour)\b|\d+\s*ft|\bself\b|\btouch\b|\bV,?\s*S\b|\bconc/i.test(rest);
+        if (n > 1 || rowLike) out.push({ name: cleanSpellName(name) });
+        break;
+      }
+    }
+  }
+  // The same spell from two places (a field and the page text, two pages) is kept once, with the most detail.
+  const merged = new Map<string, Draft['spells'][number]>();
+  for (const sp of out) {
+    const k = norm(sp.name);
+    const had = merged.get(k);
+    if (!had) merged.set(k, sp);
+    else merged.set(k, { ...sp, ...had, level: had.level ?? sp.level, info: had.info ?? sp.info, prepared: had.prepared ?? sp.prepared });
+  }
+  return [...merged.values()];
 }
 
-function readWeapons(sections: Section[], fields: Record<string, string>, text: string): Draft['weapons'] {
+/** A sheet's attack row as text: "Shortbow 80/320 +7 1d6+4 Piercing". */
+const ATTACK_ROW = /^([A-Z][A-Za-z0-9' ,+()-]{1,48}?)\s+(?:\d+(?:\/\d+)?\s*(?:ft\.?)?\s+)?([+-]\d{1,2})\s+((?:\d+d\d+|\d+)(?:\s*[+-]\s*\d+)?\s+[A-Za-z]+(?:\s*\+\s*\d+d\d+\s+[A-Za-z]+)*)(.*)$/;
+
+function readWeapons(sections: Section[], fields: Record<string, string>, lines: string[]): Draft['weapons'] {
   const out: Draft['weapons'] = [];
-  const pool = [
-    ...Object.entries(fields).filter(([k]) => /wpn|weapon|attack/i.test(k)).map(([, v]) => v),
-    ...sections.filter((s) => /attack|weapon|action|equipment|inventory|gear/i.test(s.title)).flatMap((s) => s.lines),
-  ].join('\n');
-  const sources = pool.trim() ? [pool] : [text];
-  const names = [...WEAPONS].sort((a, b) => b.name.length - a.name.length);
-  for (const src of sources) {
-    let rest = src;
+  // Numbered weapon fields: "Wpn Name 2", "Wpn2 AtkBonus", "Wpn2 Damage" (official sheet, D&D Beyond).
+  const rows = new Map<string, Record<string, string>>();
+  for (const [k, v] of Object.entries(fields)) {
+    const m = /^(?:wpn|weapon|attack)(\d*)(name|atkbonus|attackbonus|atk|bonus|tohit|hit|damage|dmg|notes|properties|range|type)(\d*)$/.exec(norm(k));
+    if (!m || !v.trim()) continue;
+    const idx = m[1] || m[3] || '1';
+    rows.set(idx, { ...rows.get(idx), [m[2].replace(/^(atkbonus|attackbonus|bonus|tohit|hit)$/, 'atk').replace('dmg', 'damage')]: v.trim() });
+  }
+  for (const [, r] of [...rows].sort((a, b) => Number(a[0]) - Number(b[0]))) {
+    if (r.name && !/^[-–—]+$/.test(r.name)) out.push({ name: r.name.replace(/\s+/g, ' ').trim(), attack: r.atk ? signedInt(r.atk) ?? firstInt(r.atk) : undefined, damage: r.damage, notes: [r.notes, r.properties, r.range].filter(Boolean).join(', ') || undefined });
+  }
+  // Attack rows in the page text (a printed sheet, or an AI's table).
+  for (const l of lines) {
+    const m = ATTACK_ROW.exec(l.replace(/\s*\|\s*/g, ' '));
+    if (m && !/^(?:spell|save|attack bonus|initiative|dc)\b/i.test(m[1])) out.push({ name: m[1].trim(), attack: Number(m[2]), damage: m[3], notes: m[4].trim() || undefined });
+  }
+  // Otherwise, weapons named in the equipment or attack sections.
+  if (!out.length) {
+    const pool = sections.filter((s) => /attack|weapon|action|equipment|inventory|gear/i.test(s.title) && !/proficienc/i.test(s.title)).flatMap((s) => s.lines).join('\n');
+    let rest = pool;
+    const names = [...WEAPONS].sort((a, b) => b.name.length - a.name.length);
     for (const w of names) {
-      const re = new RegExp(`(?:\\+(\\d)\\s+)?\\b${w.name.replace(/ /g, '\\s+')}s?\\b`, 'i');
+      const re = new RegExp(`(?:\\+(\\d)\\s+)?\\b${w.name.replace(/ /g, '\\s+')}s?\\b(?:\\s*\\+(\\d))?`, 'i');
       const m = re.exec(rest);
       if (!m) continue;
-      out.push({ name: w.name, magic: m[1] ? Number(m[1]) : 0 });
+      const magic = Number(m[1] ?? m[2] ?? 0);
+      out.push({ name: magic ? `${w.name} +${magic}` : w.name, magic });
       rest = rest.replace(new RegExp(re.source, 'gi'), ' '); // so "Light Crossbow" doesn't also count as a crossbow
-      if (out.length >= 6) break;
     }
   }
-  return out;
+  const seen = new Set<string>();
+  return out.filter((w) => !seen.has(norm(w.name)) && seen.add(norm(w.name)));
 }
 
-const FEATURE_SECTION = /feature|trait|feats?\b|class abilit|special abilit|racial|species/i;
+const FEATURE_SECTION = /feature|trait|feats?\b|class abilit|special abilit|racial|species|actions?\b|boon|invocation|fighting style/i;
 const NOTE_SECTION = /personality|ideal|bond|flaw|backstory|background story|appearance|description|notes|history|allies/i;
-const ITEM_SECTION = /equipment|inventory|gear|possessions|items|treasure/i;
+const ITEM_SECTION = /equipment|inventory|gear|possessions|items|treasure|attuned/i;
+const ACTION_NAMES = new Set(['attack', 'dash', 'disengage', 'dodge', 'grapple', 'help', 'hide', 'improvise', 'influence', 'magic', 'ready', 'search', 'shove', 'study', 'utilize', 'unarmed strike', 'opportunity attack', 'two-weapon fighting']);
 
-function readFeatures(sections: Section[], kv: Map<string, string>): Draft['features'] {
+/**
+ * Features from feature sections: bullets, "Name. What it does" lines, or a short name line
+ * followed by its description (D&D Beyond's layout: "* Innate Sorcery • PHB 2024 p.142").
+ */
+function readFeatures(sections: Section[]): Draft['features'] {
   const out: Draft['features'] = [];
-  const add = (line: string) => {
-    const l = stripBullet(line);
-    if (l.length < 3) return;
-    const m = /^([^.:]{2,50}?)[.:]\s+(.+)$/.exec(l);
-    const name = (m ? m[1] : l.slice(0, 50)).trim();
-    const description = m ? m[2].trim() : l.length > 50 ? l : '';
-    if (out.length < 40 && !out.some((f) => norm(f.name) === norm(name))) out.push({ name, description });
-  };
-  const formText = get(kv, 'featuresandtraits', 'feattraits', 'features', 'traits', 'feats');
-  if (formText && formText.includes('\n')) formText.split('\n').forEach(add);
   for (const s of sections) {
-    if (!FEATURE_SECTION.test(s.title) || /ability scores/i.test(s.title)) continue;
-    // Description lines that follow a bullet belong to it.
-    for (const l of s.lines) {
-      if (!l) continue;
-      if (!BULLET.test(l) && out.length && !/[.:]\s/.test(l.slice(0, 52)) && out[out.length - 1].description.length < 600) {
-        out[out.length - 1].description = `${out[out.length - 1].description} ${l}`.trim();
-      } else add(l);
+    if (!FEATURE_SECTION.test(s.title) || /ability scores|proficienc|attacks?\b|spell/i.test(s.title)) continue;
+    const source = /^(?:features?(?: and | & )?traits?|features|traits|feats?|actions?|features and traits)$/i.test(s.title.trim()) ? '' : s.title.replace(/\b\w+/g, (w) => w.charAt(0) + w.slice(1).toLowerCase());
+    let current: Draft['features'][number] | null = null;
+    let lastEnded = true;
+    // Where features are bulleted, only a bullet starts one; every other line is description.
+    const bulleted = s.lines.some((l) => BULLET.test(l));
+    for (const raw of s.lines) {
+      if (!raw) {
+        lastEnded = true;
+        continue;
+      }
+      const bullet = BULLET.test(raw);
+      const l = stripBullet(raw);
+      if (/^(actions in combat|standard actions|other actions)\b/i.test(l)) continue;
+      const sentence = /^(?:you|your|the|a|an|when|if|as|while|once|each|this|that|on|in|at|for|until|whenever|after|before|it|its|they|their|until)\b/i.test(l);
+      const inline = sentence ? null : /^([A-Z][^.:!?]{1,50}?)(?:\s+[•·|]\s+[^.:]*?)?[.:]\s+(.+)$/.exec(l);
+      const shortName = !sentence && l.length <= 60 && /^[A-Z+]/.test(l) && !/[.!?]$/.test(l) && l.split(' ').length <= 9;
+      const named = bulleted ? bullet : (inline && inline[1].split(' ').length <= 7) || (shortName && (lastEnded || !current) && !(current && !current.description));
+      if (named) {
+        const [name, description] = inline && inline[1].split(' ').length <= 7 ? [inline[1], inline[2]] : [l, ''];
+        const clean = name.replace(/\s+[•·|]\s+.*$/, '').replace(/[:.]$/, '').trim();
+        if (ACTION_NAMES.has(clean.toLowerCase()) || clean.length < 2) {
+          current = null;
+          continue;
+        }
+        current = { name: clean, description: description.trim(), source };
+        out.push(current);
+      } else if (current && current.description.length < 3000) current.description = `${current.description}${current.description ? (lastEnded && current.description ? '\n' : ' ') : ''}${l}`;
+      lastEnded = /[.!?:)]$/.test(l);
     }
   }
-  return out;
+  // Uses per rest written into the description ("2 / Long Rest", "3 uses per Short Rest").
+  for (const f of out) {
+    const m = /(\d+)\s*(?:\/|uses?\s*(?:per|\/))\s*(long|short)\s*rest/i.exec(f.description) ?? /(\d+)\s*\/\s*(long|short)\b/i.exec(f.description);
+    if (m) (f.uses = Number(m[1])), (f.recharge = m[2].toLowerCase() as 'long' | 'short');
+  }
+  // A feature listed twice (on two pages, or as a trait and an action) is kept once, with the fuller text.
+  const merged = new Map<string, Draft['features'][number]>();
+  for (const f of out) {
+    const k = norm(f.name);
+    const had = merged.get(k);
+    if (!had || f.description.length > had.description.length) merged.set(k, { ...had, ...f, source: f.source || had?.source });
+  }
+  return [...merged.values()].slice(0, 200);
 }
 
-function readItems(sections: Section[], kv: Map<string, string>): { items: Draft['items']; currency: Draft['currency'] } {
+function readItems(sections: Section[], fields: Record<string, string>, kv: Map<string, string>): { items: Draft['items']; currency: Draft['currency'] } {
   const items: Draft['items'] = [];
   const currency: Draft['currency'] = {};
   const coin = (s: string) => {
@@ -375,43 +517,114 @@ function readItems(sections: Section[], kv: Map<string, string>): { items: Draft
     const v = firstInt(kv.get(c));
     if (v !== undefined) currency[c] = v;
   }
+  // Numbered equipment fields: "Eq Name0", "Eq Qty0", "Eq Weight0" (D&D Beyond) and the like.
+  const rows = new Map<string, Record<string, string>>();
+  for (const [k, v] of Object.entries(fields)) {
+    const m = /^(?:eq|equipment|item|inventory|gear)(\d*)(name|qty|quantity|count|weight|wt)?(\d*)$/.exec(norm(k));
+    if (!m || !v.trim() || !(m[1] || m[3])) continue;
+    const idx = m[1] || m[3];
+    rows.set(idx, { ...rows.get(idx), [(m[2] ?? 'name').replace(/^(quantity|count)$/, 'qty').replace('wt', 'weight')]: v.trim() });
+  }
+  for (const [, r] of [...rows].sort((a, b) => Number(a[0]) - Number(b[0]))) {
+    if (!r.name || /^[-–—]+$/.test(r.name) || /^=+.*=+$/.test(r.name)) continue;
+    items.push({ name: r.name.replace(/\s+/g, ' ').trim(), qty: firstInt(r.qty) ?? 1, weight: r.weight ? Number(/(\d+(?:\.\d+)?)/.exec(r.weight)?.[1] ?? 0) : undefined });
+  }
   const add = (raw: string) => {
     let l = stripBullet(raw);
     coin(l);
     l = l.replace(/(\d[\d,]*)\s*(pp|gp|ep|sp|cp)\b/gi, '').replace(/^[,;\s]+|[,;\s]+$/g, '');
-    if (l.length < 2 || l.length > 80) return;
+    if (l.length < 2 || l.length > 80 || /^(name|qty|quantity|weight|equipment|inventory|attuned items?|container|other possessions|total weight|weight carried|encumbered|push,? drag|lift|coins?)\b/i.test(l)) return;
     let qty = 1;
-    let m = /^(\d+)\s*[x×]?\s+(.+)$/i.exec(l);
+    let weight: number | undefined;
+    let m = /^(.+?)\s+(\d+)\s+(\d+(?:\.\d+)?)\s*lbs?\.?$/i.exec(l); // a printed table row: name, quantity, weight
+    if (m) (l = m[1]), (qty = Number(m[2])), (weight = Number(m[3]));
+    m = /^(.+?)\s+(\d+(?:\.\d+)?)\s*lbs?\.?$/i.exec(l);
+    if (m) (l = m[1]), (weight = Number(m[2]));
+    m = /^(\d+)\s*[x×]?\s+(.+)$/i.exec(l);
     if (m) (qty = Number(m[1])), (l = m[2]);
     m = /^(.+?)\s*(?:\((\d+)\)|[x×]\s*(\d+))$/i.exec(l);
     if (m) (qty = Number(m[2] ?? m[3])), (l = m[1]);
-    items.push({ name: l.trim(), qty });
+    items.push({ name: l.trim(), qty, weight });
   };
-  const form = kv.get('equipment');
-  if (form && form.includes('\n')) form.split('\n').forEach(add);
   for (const s of sections) {
-    if (!ITEM_SECTION.test(s.title)) continue;
+    if (!ITEM_SECTION.test(s.title) || /proficienc/i.test(s.title)) continue;
     for (const l of s.lines) {
       if (!l) continue;
-      if (!BULLET.test(l) && l.includes(',')) l.split(/[,;]/).forEach(add);
+      if (!BULLET.test(l) && l.includes(',') && !/\d\s*lbs?\.?$/i.test(l)) l.split(/[,;]/).forEach(add);
       else add(l);
     }
   }
-  return { items: items.slice(0, 60), currency };
+  // The same item from two places is kept once (with the larger count), not added up.
+  const merged = new Map<string, Draft['items'][number]>();
+  for (const it of items) {
+    const k = norm(it.name);
+    const had = merged.get(k);
+    merged.set(k, had ? { ...had, qty: Math.max(had.qty, it.qty), weight: had.weight ?? it.weight } : it);
+  }
+  return { items: [...merged.values()].slice(0, 300), currency };
+}
+
+/** Long form fields (features, equipment, proficiencies…) as sections, so they're read like page text. */
+function fieldBlocks(fields: Record<string, string>): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (!v.includes('\n') && v.length <= 120) continue;
+    const key = norm(k);
+    if (/backstory|personality|ideal|bond|flaw|appearance|allies|organi[sz]ation|notes/.test(key)) continue; // kept as notes
+    const prof = /proficienc|lang/.test(key);
+    const title = prof ? 'Proficiencies and languages' : /feat|trait|feature|action|boon/.test(key) ? 'Features and traits' : /equip|inventor|gear|item|possession|treasure/.test(key) ? 'Equipment' : /attack|weapon/.test(key) ? 'Attacks' : /spell/.test(key) ? 'Spells' : k.trim();
+    out.push(`## ${title}`);
+    for (const raw of v.split(/\r?\n/)) {
+      const l = raw.trim();
+      const h = /^=+\s*(.+?)\s*=+$/.exec(l) ?? (prof ? /^([A-Za-z ]{3,30}):\s*$/.exec(l) : null);
+      out.push(h ? `### ${prof ? 'Proficiency: ' : ''}${h[1]}` : l);
+    }
+    out.push('');
+  }
+  return out;
+}
+
+/** Languages and the other proficiencies, from labelled lines or "Languages" sections. */
+function readProficiencies(lines: string[], sections: Section[], kv: Map<string, string>): { languages?: string; proficiencies?: string } {
+  const langs: string[] = [];
+  const addLangs = (s: string) => s.split(/[,;\n]/).map((x) => x.replace(/^languages?\s*[:=-]?\s*/i, '').trim()).filter((x) => x && x.length <= 40).forEach((x) => !langs.some((y) => norm(y) === norm(x)) && langs.push(x));
+  const fromKv = get(kv, 'languages', 'language');
+  if (fromKv && !fromKv.includes('\n')) addLangs(fromKv);
+  for (const s of sections) if (/language/i.test(s.title)) s.lines.filter(Boolean).forEach(addLangs);
+  const profs: string[] = [];
+  const addProf = (l: string) => !profs.includes(l) && profs.push(l);
+  for (const l of lines.map(stripBullet)) {
+    if (/^(armou?r|weapons?|tools?|tool proficienc(?:y|ies)|other proficiencies)\s*(?:proficienc(?:y|ies))?\s*[:=]/i.test(l)) addProf(l);
+    else if (/^languages?\s*[:=]/i.test(l)) addLangs(l);
+  }
+  for (const s of sections) {
+    const m = /^Proficiency:\s*(.+)$/i.exec(s.title);
+    if (m && !/language/i.test(m[1]) && s.lines.some(Boolean)) addProf(`${m[1].replace(/\b\w+/g, (w) => w.charAt(0) + w.slice(1).toLowerCase())}: ${s.lines.filter(Boolean).join(', ')}`);
+    if (/^Proficiencies and languages$/i.test(s.title)) for (const l of s.lines.filter(Boolean)) if (!/^languages?\b/i.test(l) && !profs.some((p) => p.includes(l))) addProf(l);
+  }
+  return { languages: langs.join(', ') || undefined, proficiencies: profs.join('\n') || undefined };
+}
+
+export interface ReadOptions {
+  /** Where each form field sits on its page (from the PDF reader). */
+  positions?: Record<string, FieldPosition>;
+  /** The spells the rules know (normalised names), so a spell is recognised wherever it's written. */
+  spellNames?: Set<string>;
 }
 
 /** Reads a document's text (and any form fields) into a Draft. */
-export function readText(text: string, fields: Record<string, string> = {}): Draft {
+export function readText(text: string, fields: Record<string, string> = {}, opts: ReadOptions = {}): Draft {
   const d = emptyDraft();
-  const fieldLines = Object.entries(fields).flatMap(([k, v]) => (v.includes('\n') ? [] : [`${k}: ${v}`]));
-  const lines = [...fieldLines, ...text.split(/\r?\n/).flatMap(splitLabelled)].map(cleanLine);
+  const fieldLines = Object.entries(fields).flatMap(([k, v]) => (v.includes('\n') || v.length > 120 ? [] : [`${k}: ${v}`]));
+  const textLines = text.split(/\r?\n/).flatMap(splitLabelled).map(cleanLine);
+  const lines = [...fieldLines.map(cleanLine), ...textLines, '', ...fieldBlocks(fields).map(cleanLine)];
   const all = lines.join('\n');
   const kv = keyValues(lines, fields);
   const sections = sectionsOf(lines);
 
   d.name = get(kv, 'charactername', 'name', 'charactername2', 'pcname');
   if (!d.name) {
-    const h = lines.find((l) => /^#\s/.test(l)) ?? lines.find((l) => l && l.length <= 40 && !/[:|]/.test(l) && !headingOf(l));
+    const h = textLines.find((l) => /^#\s/.test(l)) ?? textLines.find((l) => l && l.length <= 40 && !/[:|]/.test(l) && !headingOf(l));
     if (h) d.name = h.replace(/^#+\s*/, '').trim();
   }
   d.species = get(kv, 'species', 'race', 'ancestry', 'lineage', 'heritage');
@@ -440,24 +653,23 @@ export function readText(text: string, fields: Record<string, string> = {}): Dra
   }
   d.speed = firstInt(get(kv, 'speed', 'walkingspeed') ?? /\bSpeed\b\s*[:=]?\s*(\d{1,3})/i.exec(all)?.[1]);
 
-  d.armorHints.push(...sections.filter((s) => ITEM_SECTION.test(s.title) || /armou?r/i.test(s.title)).flatMap((s) => s.lines), get(kv, 'equipment', 'armor', 'armour') ?? '');
-  d.shield = [d.acNote ?? '', ...d.armorHints].some((h) => /\bshield\b(?!\s+(?:spell|of faith))/i.test(h));
-  d.spells = readSpells(lines, fields);
-  d.weapons = readWeapons(sections, fields, all);
-  d.features = readFeatures(sections, kv);
-  const inv = readItems(sections, kv);
+  d.spells = readSpells(textLines.concat(fieldBlocks(fields).map(cleanLine)), fields, opts);
+  const spellSet = new Set(d.spells.map((x) => norm(x.name)));
+  // Spell attacks listed with the weapons (Fire Bolt +7 1d10 fire) are spells, not weapons.
+  d.weapons = readWeapons(sections, fields, lines).filter((w) => !spellSet.has(norm(w.name)) && !opts.spellNames?.has(norm(w.name)));
+  d.features = readFeatures(sections).filter((f) => !spellSet.has(norm(f.name)));
+  const inv = readItems(sections, fields, kv);
   d.items = inv.items;
   d.currency = inv.currency;
-  d.languages = get(kv, 'languages', 'language');
-  const profs = lines
-    .map(stripBullet)
-    .filter((l) => /^(armou?r|weapons?|tools?|tool proficienc(?:y|ies)|other proficiencies)\s*(?:proficienc(?:y|ies))?\s*[:=]/i.test(l));
-  const formProfs = get(kv, 'proficiencieslang', 'otherproficienciesandlanguages', 'proficiencies');
-  d.proficiencies = [...profs, ...(formProfs ? [formProfs] : [])].join('\n') || undefined;
-  for (const s of sections) if (NOTE_SECTION.test(s.title) && s.lines.some(Boolean)) d.notes.push(`${s.title}\n${s.lines.filter(Boolean).join('\n')}`);
-  for (const k of ['personalitytraits', 'ideals', 'bonds', 'flaws', 'backstory', 'characterbackstory', 'appearance']) {
+  d.armorHints.push(...sections.filter((s) => (ITEM_SECTION.test(s.title) || /armou?r/i.test(s.title)) && !/proficienc/i.test(s.title)).flatMap((s) => s.lines), ...d.items.map((i) => i.name), get(kv, 'armor', 'armour') ?? '');
+  d.shield = [d.acNote ?? '', ...d.armorHints].some((h) => /\bshield\b(?!\s+(?:spell|of faith))/i.test(h));
+  const p = readProficiencies(lines, sections, kv);
+  d.languages = p.languages;
+  d.proficiencies = p.proficiencies;
+  for (const s of sections) if (NOTE_SECTION.test(s.title) && !FEATURE_SECTION.test(s.title) && s.lines.some(Boolean)) d.notes.push(`${s.title}\n${s.lines.filter(Boolean).join('\n')}`);
+  for (const k of ['personalitytraits', 'ideals', 'bonds', 'flaws', 'backstory', 'characterbackstory', 'appearance', 'alliesorganizations', 'treasure']) {
     const v = kv.get(k);
-    if (v) d.notes.push(`${k.replace('characterbackstory', 'backstory')}: ${v}`);
+    if (v) d.notes.push(`${k.replace('characterbackstory', 'backstory').replace('alliesorganizations', 'allies & organizations').replace('personalitytraits', 'personality traits')}: ${v}`);
   }
   return d;
 }
@@ -473,12 +685,14 @@ Reply with only the JSON, using exactly these keys, and leave out anything the c
   "skills": { "arcana": "proficient", "stealth": "expertise" },
   "ac": 0, "maxHp": 0, "currentHp": 0, "speed": 30, "armor": "", "shield": false,
   "spells": [{ "name": "Fire Bolt", "level": 0 }],
-  "weapons": ["Dagger"],
-  "features": [{ "name": "", "description": "" }],
-  "equipment": ["Explorer's pack"],
+  "weapons": [{ "name": "Dagger", "attackBonus": 5, "damage": "1d4+3 piercing", "notes": "Finesse, Light, Thrown (20/60)" }],
+  "features": [{ "name": "", "description": "", "uses": 0, "recharge": "long" }],
+  "equipment": [{ "name": "Explorer's pack", "qty": 1, "weight": 0 }],
   "coins": { "gp": 0 },
   "languages": "", "proficiencies": "", "notes": ""
 }
+
+Include every spell, weapon, item and feature on every page of the sheet, each once. Write magic items by their full name (e.g. "Flame Tongue Longsword").
 
 Character:
 `;
@@ -529,15 +743,17 @@ export function readAiJson(data: Record<string, unknown>): Draft {
     if (str(o.name)) d.spells.push({ name: str(o.name)!, level: num(o.level) });
   }
   for (const w of Array.isArray(data.weapons) ? data.weapons : []) {
-    const name = typeof w === 'string' ? w : str((w as Record<string, unknown>)?.name);
-    const def = name ? WEAPONS.find((x) => new RegExp(`\\b${x.name}\\b`, 'i').test(name)) : undefined;
-    if (def) d.weapons.push({ name: def.name, magic: firstInt(/\+(\d)/.exec(name!)?.[1]) ?? 0 });
+    const o = (typeof w === 'string' ? { name: w } : w) as Record<string, unknown>;
+    if (str(o?.name)) d.weapons.push({ name: str(o.name)!, attack: num(o.attackBonus), damage: str(o.damage), notes: str(o.notes) });
   }
   for (const f of Array.isArray(data.features) ? data.features : []) {
     const o = f as Record<string, unknown>;
-    if (str(o?.name)) d.features.push({ name: str(o.name)!, description: str(o.description) ?? '' });
+    if (str(o?.name)) d.features.push({ name: str(o.name)!, description: str(o.description) ?? '', uses: num(o.uses) || undefined, recharge: o.recharge === 'short' ? 'short' : o.recharge === 'long' ? 'long' : undefined });
   }
-  for (const e of Array.isArray(data.equipment) ? data.equipment : []) if (str(e)) d.items.push({ name: str(e)!, qty: 1 });
+  for (const e of Array.isArray(data.equipment) ? data.equipment : []) {
+    const o = (typeof e === 'string' ? { name: e } : e) as Record<string, unknown>;
+    if (str(o?.name)) d.items.push({ name: str(o.name)!, qty: num(o.qty) ?? 1, weight: num(o.weight) || undefined });
+  }
   for (const [k, v] of Object.entries((data.coins ?? {}) as Record<string, unknown>)) {
     if (['cp', 'sp', 'ep', 'gp', 'pp'].includes(k) && num(v) !== undefined) d.currency[k as Coin] = num(v)!;
   }
@@ -556,7 +772,7 @@ const profFrom = (v: number | true | 'expertise' | undefined, mod: number, pb: n
 };
 
 /** Turns a Draft into a character, checking the sheet's numbers against the app's own math. */
-export function buildCharacter(d: Draft): ImportResult {
+export function buildCharacter(d: Draft, catalog?: Catalog): ImportResult {
   const c = blankCharacter();
   const found: string[] = [];
   const warnings: string[] = [];
@@ -620,31 +836,79 @@ export function buildCharacter(d: Draft): ImportResult {
 
   if (d.speed) c.speed = d.speed;
 
+  // Features first: fighting styles (Archery, Defense) count in the attack and AC checks below.
+  for (const f of d.features) c.features.push(blankFeature({ name: f.name, description: f.description, source: f.source ?? '', usesMax: f.uses ?? null, recharge: f.uses ? (f.recharge ?? 'long') : 'none' }));
+  if (c.features.length) found.push(`${c.features.length} feature${c.features.length === 1 ? '' : 's'} and traits`);
+  // Weapons keep the sheet's name ("Dragon Wing Shortbow"); their stats come from the catalog
+  // (an SRD magic weapon), the base weapon in the name, or the damage the sheet wrote.
+  const items = catalog?.items ?? [];
+  const attackChecks: [number, number][] = [];
   for (const w of d.weapons) {
-    const def = WEAPONS.find((x) => x.name === w.name)!;
-    c.weapons.push(blankWeapon({ name: w.magic ? `${def.name} +${w.magic}` : def.name, damage: [{ dice: def.dice, type: def.type }], finesse: !!def.finesse, ranged: def.ranged, properties: def.properties, mastery: def.mastery, magicBonus: w.magic }));
+    let name = w.name;
+    const pre = /^\+(\d)\s+(.+)$/.exec(name);
+    if (pre && WEAPONS.some((x) => x.name.toLowerCase() === pre[2].trim().toLowerCase())) name = `${pre[2].trim()} +${pre[1]}`;
+    const r = resolveItem(name, items);
+    if (w.magic && !r.bonus) r.bonus = w.magic;
+    let weapon = r.weapon || r.def?.weapon ? weaponFromResolved(r) : null;
+    if (!weapon && (w.damage || w.notes)) weapon = parseItemText([name, w.damage && `Damage: ${w.damage}`, w.notes && `Properties: ${w.notes}`].filter(Boolean).join('\n'), items).weapon ?? null;
+    const flat = !weapon && w.damage ? new RegExp(`^(\\d+)\\s+(${DAMAGE_TYPES.join('|')})`, 'i').exec(w.damage.trim()) : null;
+    if (flat) weapon = blankWeapon({ name, damage: [{ dice: flat[1], type: flat[2].toLowerCase() as DamageType }] });
+    if (!weapon) {
+      warnings.push(`${name}: no damage was found for it, so it wasn’t added to Attacks. Add it with Attacks → More… → Paste.`);
+      continue;
+    }
+    weapon.name = name;
+    // Extra damage the sheet wrote after the main damage ("1d6+4 Piercing + 1d6 Fire").
+    for (const m of (w.damage ?? '').matchAll(new RegExp(`\\+\\s*(\\d+d\\d+)\\s+(${DAMAGE_TYPES.join('|')})`, 'gi'))) {
+      const part = { dice: m[1].toLowerCase(), type: m[2].toLowerCase() as DamageType };
+      if (!weapon.damage.slice(1).some((x) => x.dice === part.dice && x.type === part.type)) weapon.damage.push(part);
+    }
+    c.weapons.push(weapon);
+    if (w.attack !== undefined) attackChecks.push([c.weapons.length - 1, w.attack]);
+  }
+  // The sheet's attack bonus tells what the name doesn't: a magic +1, or a weapon you aren't proficient with.
+  for (const [i, atk] of attackChecks) {
+    const w = c.weapons[i];
+    const diff = atk - weaponAttack(c, w).total;
+    if (!diff) continue;
+    if (!w.magicBonus && diff >= 1 && diff <= 3) {
+      w.magicBonus = diff;
+      found.push(`${w.name}: +${diff} magic bonus (from the sheet’s attack bonus of +${atk})`);
+    } else if (diff === -pb && w.proficient) w.proficient = false;
+    else warnings.push(`${w.name}: your sheet gives ${atk >= 0 ? '+' : ''}${atk} to hit; the app works out ${signedText(weaponAttack(c, w).total)}. Check the weapon’s ability, proficiency and magic bonus in Attacks.`);
   }
   if (c.weapons.length) found.push(`Weapons: ${c.weapons.map((w) => w.name).join(', ')}`);
 
+  // Spells: the full SRD (with the app's tuned dice), then the built-in list; anything else keeps the sheet's own details.
+  const known = catalog ? new Map(tunedSpells(catalog.spells).map((x) => [norm(x.name), x])) : null;
   const unknown: string[] = [];
-  for (const s of d.spells) {
-    const lib = SPELL_BY_NORM.get(norm(s.name));
-    if (lib) c.spells.push({ ...structuredClone(lib), id: uid() });
+  for (const sp of d.spells) {
+    const def = known?.get(norm(sp.name));
+    const lib = SPELL_BY_NORM.get(norm(sp.name));
+    let spell: Spell;
+    if (def) spell = spellFromDef(def, uid());
+    else if (lib) spell = { ...structuredClone(lib), id: uid() };
     else {
-      unknown.push(s.name);
-      c.spells.push(blankSpell({ name: s.name, level: s.level ?? 1, resolution: 'utility', element: 'arcane', shape: 'aura', description: 'Imported by name. Open Edit spell to add its dice, range and effect.' }));
+      unknown.push(sp.name);
+      spell = spellFromInfo(sp.name, sp.level, sp.info);
     }
+    if (sp.prepared !== undefined) spell.prepared = sp.prepared || spell.level === 0;
+    c.spells.push(spell);
   }
-  if (c.spells.length) found.push(`${c.spells.length} spell${c.spells.length === 1 ? '' : 's'} (${c.spells.length - unknown.length} with dice ready)`);
-  if (unknown.length) warnings.push(`These spells aren’t in the built-in list, so they were added by name only: ${unknown.join(', ')}.`);
+  if (c.spells.length) found.push(`${c.spells.length} spell${c.spells.length === 1 ? '' : 's'} (${c.spells.length - unknown.length} from the rules with dice ready)`);
+  if (unknown.length) warnings.push(`These spells aren’t in the rules the app has, so they were added from what your sheet says about them: ${unknown.join(', ')}. Add the book to your rules library, or open Edit spell to fill in the rest.`);
   if (c.spells.length && !c.spellcasting.ability) {
     const caster = c.classes.map((k) => classById(k.classId)).find((k) => k.caster !== 'none');
     if (caster?.spellAbility) c.spellcasting.ability = caster.spellAbility;
   }
 
-  for (const f of d.features) c.features.push(blankFeature({ name: f.name, description: f.description, usesMax: null, recharge: 'none' }));
-  if (c.features.length) found.push(`${c.features.length} feature${c.features.length === 1 ? '' : 's'} and traits`);
-  for (const i of d.items) c.inventory.push({ id: uid(), name: i.name, qty: i.qty, weight: 0, notes: '' });
+  // Items keep the sheet's names and counts, with the catalog's weight and description where it knows them.
+  for (const i of d.items) {
+    const r = resolveItem(i.name, items);
+    const base = inventoryFromResolved(r, items);
+    c.inventory.push({ ...base, id: uid(), name: i.name, qty: i.qty, weight: i.weight ?? base.weight });
+    if (r.armor && r.armor.id === c.armor.armorId && r.bonus) c.armor.magicBonus = r.bonus;
+  }
   if (c.inventory.length) found.push(`${c.inventory.length} item${c.inventory.length === 1 ? '' : 's'}`);
   Object.assign(c.currency, d.currency);
   if (d.languages) c.languages = d.languages;
@@ -666,4 +930,45 @@ export function buildCharacter(d: Draft): ImportResult {
   return { character: c, found, warnings };
 }
 
-export const importFromText = (text: string, fields: Record<string, string> = {}) => buildCharacter(readText(text, fields));
+/** Reads a document straight into a character. Pass the catalog so spells and items are matched against the full rules. */
+export const importFromText = (text: string, fields: Record<string, string> = {}, opts: ReadOptions & { catalog?: Catalog } = {}) =>
+  buildCharacter(readText(text, fields, { ...opts, spellNames: opts.spellNames ?? (opts.catalog ? new Set(opts.catalog.spells.map((x) => norm(x.name))) : undefined) }), opts.catalog);
+
+const signedText = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+
+const CASTING: [RegExp, CastingTime, string][] = [
+  [/^1?\s*(?:BA\b|bonus)/i, 'bonus', 'Bonus Action'],
+  [/^1?\s*(?:R\b|reaction)/i, 'reaction', 'Reaction'],
+  [/^1?\s*(?:A\b|action)/i, 'action', 'Action'],
+];
+
+/** A spell the rules don't know, from its row on the sheet: casting time, range, save or attack, damage. */
+function spellFromInfo(name: string, level: number | undefined, info: SpellInfo | undefined): Spell {
+  const ct = info?.castingTime?.trim() ?? '';
+  const time = CASTING.find(([re]) => re.test(ct));
+  const saveHit = info?.saveHit?.trim() ?? '';
+  const save = /\b(STR|DEX|CON|INT|WIS|CHA)\b/i.exec(saveHit);
+  const attack = /^[+-]\d/.test(saveHit);
+  const notes = info?.notes ?? '';
+  const damage = [...notes.matchAll(new RegExp(`(\\d+d\\d+(?:\\s*[+-]\\s*\\d+)?)\\s*(${DAMAGE_TYPES.join('|')})`, 'gi'))].map((m) => ({ dice: m[1].replace(/\s+/g, ''), type: m[2].toLowerCase() as DamageType }));
+  const healing = /heal|hit points|\bH:/i.test(notes) ? (/(\d+d\d+(?:\s*[+-]\s*\d+)?)/.exec(notes)?.[1]?.replace(/\s+/g, '') ?? '') : '';
+  return blankSpell({
+    name,
+    level: level ?? 1,
+    castingTime: time?.[1] ?? (ct ? 'other' : 'action'),
+    castingTimeText: time?.[2] ?? (ct || 'Action'),
+    range: info?.range ?? '',
+    components: info?.components ?? '',
+    duration: info?.duration ?? '',
+    concentration: /conc/i.test(info?.duration ?? ''),
+    school: info?.school ?? '',
+    resolution: healing ? 'heal' : attack ? 'attack' : save ? 'save' : damage.length ? 'auto' : 'utility',
+    saveAbility: save ? (save[1].toLowerCase() as Ability) : 'dex',
+    halfOnSave: !!save && damage.length > 0,
+    damage,
+    healing,
+    element: damage[0]?.type ?? (healing ? 'healing' : 'arcane'),
+    shape: attack ? 'bolt' : save ? 'burst' : 'aura',
+    description: [notes && `From your sheet: ${notes}`, 'Imported from your sheet. Open Edit spell to check its dice, range and effect.'].filter(Boolean).join('\n'),
+  });
+}

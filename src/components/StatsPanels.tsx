@@ -5,6 +5,7 @@ import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, SKILLS, allClasses, classById, type CasterType } from '../systems/dnd5e/data';
 import { levelDown, syncFeatures } from '../systems/dnd5e/leveling';
+import { LanguagesField } from './Languages';
 import { LevelUpDialog } from './LevelUp';
 import { uid, type ProfLevel } from '../systems/dnd5e/model';
 import {
@@ -118,6 +119,9 @@ export function IdentityPanel() {
             {c.alignment ? ` · ${c.alignment}` : ''}
             {c.xp ? ` · ${c.xp.toLocaleString()} XP` : ''}
           </p>
+          <p className="hint" style={{ gridColumn: '1 / -1', margin: 0 }} id="char-languages-line">
+            <b>Languages:</b> {c.languages.trim() || 'none yet (add them under Edit)'}
+          </p>
           <div className="row" style={{ gridColumn: '1 / -1' }}>
             <button type="button" className="btn small primary" onClick={() => setLeveling(true)} disabled={totalLevel(c) >= 20}>
               Level up
@@ -147,6 +151,7 @@ export function IdentityPanel() {
             <TextField label="Player" value={c.player} onChange={(v) => update((d) => void (d.player = v))} id="char-player" />
             <TextField label="Size" value={c.size} onChange={(v) => update((d) => void (d.size = v))} id="char-size" />
           </div>
+          <LanguagesField value={c.languages} onChange={(v) => update((d) => void (d.languages = v))} id="char-languages" />
           <h3>Classes</h3>
           {c.classes.map((k, idx) => (
             <div key={k.id} className="item" style={{ padding: 10, display: 'grid', gap: 8 }}>

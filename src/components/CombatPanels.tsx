@@ -2,7 +2,10 @@ import { useRef, useState } from 'react';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ARMOR, DAMAGE_TYPES, STANDARD_ACTIONS, UNARMORED_DEFENSES, WEAPONS, type Ability, type DamageType } from '../systems/dnd5e/data';
-import { blankWeapon, uid } from '../systems/dnd5e/model';
+import { blankWeapon, uid, type Weapon } from '../systems/dnd5e/model';
+import { parseItemText } from '../systems/dnd5e/items';
+import { useCatalog } from '../state/catalog';
+import { AddItemDialog } from './Items';
 import { armorClass, armorWarnings, hitDice, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
 import { Check, ConfirmButton, NumField, Panel, SelectField, TextField, mathText } from './ui';
 import { isValid } from '../engine/dice';
@@ -223,8 +226,10 @@ export function AttacksPanel() {
   const t = useTable();
   const [open, setOpen] = useState<string | null>(null);
   const [pick, setPick] = useState('');
+  const [adding, setAdding] = useState(false);
   return (
     <Panel title="Attacks" tab="combat">
+      {adding && <AddItemDialog mode="weapon" onClose={() => setAdding(false)} />}
       <div className="list">
         {c.weapons.length === 0 && <p className="hint">No weapons yet. Add one below.</p>}
         {c.weapons.map((w, idx) => {
@@ -274,6 +279,8 @@ export function AttacksPanel() {
                     <Check label="Ranged" id={`w-rng-${w.id}`} checked={w.ranged} onChange={(b) => update((d) => void (d.weapons[idx].ranged = b))} />
                   </div>
                   <TextField label="Properties" id={`w-props-${w.id}`} value={w.properties} onChange={(v) => update((d) => void (d.weapons[idx].properties = v))} />
+                  <TextField label="Description" id={`w-notes-${w.id}`} multiline value={w.notes} placeholder="What the weapon does, its rarity, attunement…" onChange={(v) => update((d) => void (d.weapons[idx].notes = v))} />
+                  <FillFromText weapon={w} onApply={(next) => update((d) => void (d.weapons[idx] = { ...next, id: w.id }))} />
                   <div className="row">
                     <button type="button" className="btn small" onClick={() => update((d) => void d.weapons[idx].damage.push({ dice: '1d6', type: 'fire' }))}>
                       Add extra damage (e.g. Flame Tongue)
@@ -313,6 +320,9 @@ export function AttacksPanel() {
         >
           Add
         </button>
+        <button type="button" className="btn small ghost" onClick={() => setAdding(true)} title="Magic weapons, your rules library's weapons, or paste a stat block">
+          More…
+        </button>
         <button
           type="button"
           className="btn small ghost"
@@ -326,5 +336,60 @@ export function AttacksPanel() {
         </button>
       </div>
     </Panel>
+  );
+}
+
+/** Paste a stat block into a weapon you already have: its damage, properties, bonus and description are filled in. */
+function FillFromText({ weapon, onApply }: { weapon: Weapon; onApply: (w: Weapon) => void }) {
+  const cat = useCatalog();
+  const [text, setText] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  if (text === null)
+    return (
+      <div className="row">
+        <button type="button" className="btn small ghost" onClick={() => (setText(''), setNote(''))}>
+          Fill from a pasted stat block
+        </button>
+        {note && (
+          <span className="hint" role="status">
+            {note}
+          </span>
+        )}
+      </div>
+    );
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <label className="field" htmlFor={`w-paste-${weapon.id}`}>
+        <span>Paste the weapon’s stat block or description</span>
+        <textarea id={`w-paste-${weapon.id}`} className="input" style={{ minHeight: 120 }} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+      </label>
+      <div className="row">
+        <button
+          type="button"
+          className="btn small primary"
+          disabled={!text.trim()}
+          onClick={() => {
+            // The pasted block renames the weapon only if it starts with a name (a short line, not a
+            // sentence or a "Damage: …" field); otherwise this weapon keeps its own.
+            const first = text.trim().split('\n')[0];
+            const named = first.length <= 50 && !/[.:]/.test(first.replace(/\d+\.\d+/g, '')) && !/^(weapon|armou?r|damage|properties|mastery|range|weight)\b/i.test(first);
+            const p = parseItemText(named ? text : `${weapon.name}\n${text}`, cat?.items ?? []);
+            if (!p.weapon) {
+              setNote('That didn’t read as a weapon: no damage dice or base weapon found.');
+              setText(null);
+              return;
+            }
+            onApply({ ...p.weapon, name: p.name === 'New item' ? weapon.name : p.name, proficient: weapon.proficient, ability: weapon.ability });
+            setNote(`Filled in: ${p.found.slice(0, 3).join('; ')}${p.check.length ? `. Check: ${p.check.join(' ')}` : ''}`);
+            setText(null);
+          }}
+        >
+          Fill it in
+        </button>
+        <button type="button" className="btn small ghost" onClick={() => setText(null)}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }

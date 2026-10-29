@@ -193,6 +193,8 @@ export interface Item {
   qty: number;
   weight: number;
   notes: string;
+  /** Its rules text (from the item list, a pasted stat block or an imported sheet). */
+  description?: string;
 }
 
 /** A die or roll the player saved on the Dice page: a formula like "3d6+{DEX}", or a die with its own labelled faces. */

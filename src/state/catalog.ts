@@ -1,5 +1,5 @@
 // The rules the sheet draws on: the SRD 5.2.1 plus every pack in your rules library,
-// merged into one catalog of classes, subclasses, feats, spells and creatures. Library
+// merged into one catalog of classes, subclasses, feats, spells, creatures and items. Library
 // content sits beside the SRD's (same shapes), so it shows up in Level up, the spell list
 // and the companion picker without any special handling.
 
@@ -13,13 +13,14 @@ let pending: Promise<Catalog> | null = null;
 const listeners = new Set<(c: Catalog) => void>();
 
 function merge(base: Catalog, packs: Partial<Catalog>[]): Catalog {
-  const out: Catalog = { classes: [...base.classes], subclasses: [...base.subclasses], feats: [...base.feats], spells: [...base.spells], creatures: [...base.creatures] };
+  const out: Catalog = { classes: [...base.classes], subclasses: [...base.subclasses], feats: [...base.feats], spells: [...base.spells], creatures: [...base.creatures], items: [...base.items] };
   for (const p of packs) {
     out.classes.push(...(p.classes ?? []));
     out.subclasses.push(...(p.subclasses ?? []));
     out.feats.push(...(p.feats ?? []));
     out.spells.push(...(p.spells ?? []));
     out.creatures.push(...(p.creatures ?? []));
+    out.items.push(...(p.items ?? []));
   }
   return out;
 }

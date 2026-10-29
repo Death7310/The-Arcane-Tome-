@@ -8,6 +8,7 @@
 //   feats         name, then "General Feat (Prerequisite: …)"
 //   classes       a "Hit Point Die: D10 per Fighter level" block with "Level 1: Feature"
 //                 headings (2024 layout) or a level table (2014 layout)
+//   items         name, then "Weapon (longsword), rare (requires attunement)", then the text
 //
 // Free-form rules can't be read reliably by patterns, so there's also a JSON format that an
 // AI chat can produce from any document (RULES_AI_PROMPT); it's validated before import.
@@ -15,7 +16,8 @@
 import { ABILITIES, ABILITY_NAMES, type Ability } from './data';
 import type { CastingTime, Companion } from './model';
 import type { Element as FxElement, Shape } from '../../fx/types';
-import type { Catalog, ClassDef, ClassFeatureDef, CreatureDef, FeatDef, SpellDef, Steps, SubclassDef } from './srd';
+import type { Catalog, ClassDef, ClassFeatureDef, CreatureDef, FeatDef, ItemDef, SpellDef, Steps, SubclassDef } from './srd';
+import { itemFromJson, readItemBlocks } from './items';
 import { companionFromCreature, parseStatBlock, pbForCr } from './statblock';
 
 export interface Section {
@@ -32,6 +34,7 @@ export interface RulesContent {
   feats: FeatDef[];
   spells: SpellDef[];
   creatures: CreatureDef[];
+  items: ItemDef[];
 }
 
 export interface ReadResult extends RulesContent {
@@ -377,10 +380,11 @@ export function readRulesDocument(text: string, source: string): ReadResult {
     feats: readFeats(lines, source),
     spells: readSpells(lines, source),
     creatures: readCreatures(lines, source),
+    items: readItemBlocks(lines, source, slug),
     notes: [],
   };
-  if (!classes.length && !result.spells.length && !result.creatures.length && !result.feats.length) {
-    result.notes.push('No spells, creatures, feats or classes were laid out in a way the reader recognises. The text is still searchable; for the rest, use the AI conversion.');
+  if (!classes.length && !result.spells.length && !result.creatures.length && !result.feats.length && !result.items.length) {
+    result.notes.push('No spells, creatures, feats, items or classes were laid out in a way the reader recognises. The text is still searchable; for the rest, use the AI conversion.');
   }
   return result;
 }
@@ -414,7 +418,12 @@ export const RULES_AI_PROMPT = `Convert the tabletop RPG rules below into JSON f
     "saves": ["dex"], "skills": "Perception +3", "senses": "", "languages": "", "cr": 1,
     "actions": [ { "kind": "trait | action | bonus | reaction | legendary", "name": "<name>", "text": "<what it does>",
       "attack": "melee | ranged | null", "toHit": "5", "reach": "5 ft.", "damage": "1d8 + 3", "damageType": "piercing",
-      "save": "con | null", "dc": "12" } ] } ]
+      "save": "con | null", "dc": "12" } ] } ],
+  "items": [ { "name": "<item>", "type": "weapon | armor | shield | gear | tool | wondrous item | potion | ring | rod | scroll | staff | wand",
+    "base": "<the base weapon or armor it is, e.g. Longsword, Chain Shirt; optional>", "rarity": "<common … legendary; leave out for mundane gear>",
+    "attunement": false, "bonus": <+N to attack and damage, or to AC; optional>,
+    "damage": [ { "dice": "1d8", "type": "slashing" } ], "extraDamage": [ { "dice": "1d6", "type": "fire" } ],
+    "properties": "Finesse, Light", "mastery": "Nick", "range": "80/320", "ac": 14, "weight": 3, "cost": 50, "text": "<what it does>" } ]
 }
 
 Where a number depends on the character (a companion's AC, a feature's uses), write it with these tokens: {PB} proficiency bonus, {LEVEL} character level, {LEVEL:<class>} that class's level, {SPELLATK} spell attack bonus, {SPELLDC} spell save DC, {STR} … {CHA} ability modifiers. Answer with the JSON only.
@@ -576,8 +585,9 @@ export function readRulesJson(data: unknown, fallbackName: string): ReadResult &
     });
     return creatureFromCompanion(comp, source);
   });
+  const items: ItemDef[] = arr<Record<string, unknown>>(d.items).map((o) => itemFromJson(o, `${slug(source)}:${slug(str(o.name, 'item'))}`, source));
   const sections: Section[] = arr<Record<string, unknown>>(d.rules).map((r, i) => ({ id: `s${i}`, title: str(r.title, `Section ${i + 1}`), level: 2, text: str(r.text) }));
-  return { name, sections, classes, subclasses, feats, spells, creatures, notes: [] };
+  return { name, sections, classes, subclasses, feats, spells, creatures, items, notes: [] };
 }
 
 /** Counts for a summary line. */
@@ -587,6 +597,7 @@ export const contentCounts = (c: Partial<RulesContent>) => ({
   feats: c.feats?.length ?? 0,
   spells: c.spells?.length ?? 0,
   creatures: c.creatures?.length ?? 0,
+  items: c.items?.length ?? 0,
 });
 
 export type { Catalog };

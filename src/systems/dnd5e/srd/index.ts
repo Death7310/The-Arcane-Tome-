@@ -1,5 +1,5 @@
 // The D&D 5e (2024) reference data: classes and subclasses level by level, feats, the full
-// spell list and the creatures, from the System Reference Document 5.2.1 by Wizards of the
+// spell list, the creatures and the equipment and magic items, from the System Reference Document 5.2.1 by Wizards of the
 // Coast LLC (CC-BY-4.0, https://creativecommons.org/licenses/by/4.0/), built by
 // scripts/srd/build.mjs. It's loaded on first use so the sheet itself opens fast.
 //
@@ -120,12 +120,66 @@ export interface CreatureDef {
 /** A spell from the rules: the sheet's Spell, minus the per-character fields. */
 export type SpellDef = Omit<Spell, 'id' | 'prepared' | 'abilityOverride'> & { srd?: string; classes?: string[]; source?: string };
 
+export interface ItemWeaponStats {
+  dice: string;
+  type: string;
+  category: 'simple' | 'martial';
+  ranged: boolean;
+  finesse: boolean;
+  /** "Ammunition (80/320), Two-Handed", as the rules write it. */
+  properties: string;
+  mastery: string;
+  range?: [number, number];
+}
+
+export interface ItemArmorStats {
+  category: 'light' | 'medium' | 'heavy' | 'shield';
+  base: number;
+  maxDex?: number;
+  strength?: number;
+  stealth?: boolean;
+}
+
+/** What a magic weapon or armor adds to the base item it's made from. */
+export interface ItemTemplate {
+  applies: 'weapon' | 'armor' | 'shield' | 'ammunition';
+  /** The base items it can be ("Longsword", "Shortbow"…). */
+  bases: string[];
+  attackBonus?: number;
+  damageBonus?: number;
+  acBonus?: number;
+  /** Dice it adds on every hit; type 'same' means the weapon's own damage type. */
+  extraDamage?: { dice: string; type: string }[];
+}
+
+export interface ItemDef {
+  /** 'w:shortbow', 'a:chain-mail', 'g:rope', 't:thieves-tools', 'm:bag-of-holding' (homebrew: 'pack:<pack>:<key>'). */
+  id: string;
+  /** "Shortbow", or "Flame Tongue {base}" for a magic item made from a base weapon or armor. */
+  name: string;
+  kind: 'weapon' | 'armor' | 'gear' | 'tool' | 'magic';
+  /** "Simple ranged weapon", "Heavy armor", "Wondrous item", "Potion"… */
+  category: string;
+  rarity?: string;
+  attunement?: boolean;
+  charges?: number;
+  /** Pounds, and gold pieces. */
+  weight?: number;
+  cost?: number;
+  text: string;
+  weapon?: ItemWeaponStats;
+  armor?: ItemArmorStats;
+  template?: ItemTemplate;
+  source?: string;
+}
+
 export interface Catalog {
   classes: ClassDef[];
   subclasses: SubclassDef[];
   feats: FeatDef[];
   spells: SpellDef[];
   creatures: CreatureDef[];
+  items: ItemDef[];
 }
 
 /** The value at `level` from change points (the last one at or below it). */
@@ -143,13 +197,14 @@ let loading: Promise<Catalog> | null = null;
 
 /** The SRD catalog, loaded once on first use. */
 export function loadSrd(): Promise<Catalog> {
-  loading ??= Promise.all([import('./classes.json'), import('./subclasses.json'), import('./feats.json'), import('./spells.json'), import('./creatures.json')]).then(
-    ([classes, subclasses, feats, spells, creatures]) => ({
+  loading ??= Promise.all([import('./classes.json'), import('./subclasses.json'), import('./feats.json'), import('./spells.json'), import('./creatures.json'), import('./items.json')]).then(
+    ([classes, subclasses, feats, spells, creatures, items]) => ({
       classes: (classes.default as ClassDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       subclasses: (subclasses.default as SubclassDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       feats: (feats.default as FeatDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       spells: (spells.default as SpellDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       creatures: (creatures.default as unknown as CreatureDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
+      items: (items.default as ItemDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
     }),
   );
   return loading;

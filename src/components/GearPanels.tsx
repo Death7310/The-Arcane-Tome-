@@ -5,6 +5,8 @@ import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, allClasses } from '../systems/dnd5e/data';
 import { blankFeature, uid, type Feature, type UsesFormula } from '../systems/dnd5e/model';
 import { inventoryWeight, resolveTokens, usesMax } from '../systems/dnd5e/rules';
+import { AddItemDialog } from './Items';
+import { LanguagesField } from './Languages';
 import { RulesText } from './RulesText';
 import { ConfirmButton, NumField, Panel, Pips, SelectField, TextField } from './ui';
 
@@ -166,9 +168,25 @@ function FeatureEditor({ f, idx }: { f: Feature; idx: number }) {
 export function InventoryPanel() {
   const { char: c, update } = useChar();
   const [name, setName] = useState('');
+  const [adding, setAdding] = useState<'list' | 'paste' | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
   const coins = ['pp', 'gp', 'ep', 'sp', 'cp'] as const;
   return (
-    <Panel title="Inventory" tab="gear">
+    <Panel
+      title="Inventory"
+      tab="gear"
+      actions={
+        <span className="row" style={{ gap: 4 }}>
+          <button type="button" className="btn small" onClick={() => setAdding('list')} title="Weapons, armor, gear and magic items from the rules">
+            Item list
+          </button>
+          <button type="button" className="btn small ghost" onClick={() => setAdding('paste')} title="Paste an item's stat block">
+            Paste
+          </button>
+        </span>
+      }
+    >
+      {adding && <AddItemDialog mode="any" start={adding} onClose={() => setAdding(null)} />}
       <div className="grid-auto" style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 6 }}>
         {coins.map((k) => (
           <NumField key={k} label={k.toUpperCase()} id={`coin-${k}`} value={c.currency[k]} min={0} onChange={(n) => update((d) => void (d.currency[k] = n))} />
@@ -177,13 +195,31 @@ export function InventoryPanel() {
       <h3>Items · {inventoryWeight(c)} lb</h3>
       <div className="list">
         {c.inventory.map((it, idx) => (
-          <div key={it.id} className="row" style={{ flexWrap: 'nowrap' }}>
-            <input className="input" style={{ flex: 1, minWidth: 0 }} value={it.name} aria-label="Item name" id={`inv-name-${it.id}`} onChange={(e) => update((d) => void (d.inventory[idx].name = e.target.value))} />
-            <NumField value={it.qty} min={0} ariaLabel="Quantity" id={`inv-qty-${it.id}`} className="ac" onChange={(n) => update((d) => void (d.inventory[idx].qty = n))} />
-            <NumField value={it.weight} min={0} step={0.1} ariaLabel="Weight each (lb)" id={`inv-wt-${it.id}`} className="ac" onChange={(n) => update((d) => void (d.inventory[idx].weight = n))} />
-            <button type="button" className="btn small ghost icon" aria-label={`Remove ${it.name}`} onClick={() => update((d) => void d.inventory.splice(idx, 1))}>
-              ✕
-            </button>
+          <div key={it.id} className="inv-item">
+            <div className="row" style={{ flexWrap: 'nowrap' }}>
+              <button
+                type="button"
+                className={`btn small ghost icon inv-more${it.description || it.notes ? ' has' : ''}`}
+                aria-expanded={open === it.id}
+                aria-label={`Details for ${it.name}`}
+                title={it.description || it.notes ? 'Description and notes' : 'Add a description or notes'}
+                onClick={() => setOpen(open === it.id ? null : it.id)}
+              >
+                {open === it.id ? '▾' : '▸'}
+              </button>
+              <input className="input" style={{ flex: 1, minWidth: 0 }} value={it.name} aria-label="Item name" id={`inv-name-${it.id}`} onChange={(e) => update((d) => void (d.inventory[idx].name = e.target.value))} />
+              <NumField value={it.qty} min={0} ariaLabel="Quantity" id={`inv-qty-${it.id}`} className="ac" onChange={(n) => update((d) => void (d.inventory[idx].qty = n))} />
+              <NumField value={it.weight} min={0} step={0.1} ariaLabel="Weight each (lb)" id={`inv-wt-${it.id}`} className="ac" onChange={(n) => update((d) => void (d.inventory[idx].weight = n))} />
+              <button type="button" className="btn small ghost icon" aria-label={`Remove ${it.name}`} onClick={() => update((d) => void d.inventory.splice(idx, 1))}>
+                ✕
+              </button>
+            </div>
+            {open === it.id && (
+              <div className="item-body">
+                {it.description && <RulesText text={it.description} />}
+                <TextField label={it.description ? 'Your notes' : 'Description or notes'} id={`inv-notes-${it.id}`} multiline value={it.notes} onChange={(v) => update((d) => void (d.inventory[idx].notes = v))} />
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -202,7 +238,7 @@ export function InventoryPanel() {
           Add
         </button>
       </form>
-      <p className="hint" style={{ marginBottom: 0 }}>Columns: name, quantity, weight each (lb).</p>
+      <p className="hint" style={{ marginBottom: 0 }}>Columns: name, quantity, weight each (lb). ▸ opens an item’s description and your notes.</p>
     </Panel>
   );
 }
@@ -212,7 +248,7 @@ export function NotesPanel() {
   return (
     <Panel title="Proficiencies & notes" tab="gear">
       <div style={{ display: 'grid', gap: 10 }}>
-        <TextField label="Languages" id="languages" value={c.languages} onChange={(v) => update((d) => void (d.languages = v))} />
+        <LanguagesField id="languages" value={c.languages} onChange={(v) => update((d) => void (d.languages = v))} />
         <TextField label="Weapon, armor & tool proficiencies" id="profs" multiline value={c.proficiencies} onChange={(v) => update((d) => void (d.proficiencies = v))} />
         <TextField label="Notes" id="notes" multiline value={c.notes} onChange={(v) => update((d) => void (d.notes = v))} />
       </div>

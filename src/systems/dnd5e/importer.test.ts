@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { docxText } from '../../import/extract';
 import { buildCharacter, importFromText, looksLikeAiJson, readAiJson } from './importer';
 import { armorClass, maxHp } from './rules';
+import type { Catalog, ItemDef, SpellDef } from './srd';
+import srdItems from './srd/items.json';
+import srdSpells from './srd/spells.json';
 
 const AI_MARKDOWN = `# Thalia Brightwater
 *Level 5 Half-Elf Bard (College of Lore)*
@@ -196,5 +199,129 @@ describe('reading a Word document', () => {
     expect(text).toContain('Name: Ash');
     expect(text).toMatch(/STR\s*\n?\s*\|\s*DEX/);
     expect(text).toContain('15 & more');
+  });
+});
+
+describe('importing a multi-page D&D Beyond-style export', () => {
+  const catalog = {
+    classes: [],
+    subclasses: [],
+    feats: [],
+    creatures: [],
+    spells: (srdSpells as SpellDef[]).map((s) => ({ ...s, source: 'SRD 5.2.1' })),
+    items: (srdItems as ItemDef[]).map((i) => ({ ...i, source: 'SRD 5.2.1' })),
+  } as Catalog;
+  // Page 1: stats, attacks, proficiencies. Page 2: features. Page 3: spells. Page 4: inventory.
+  const fields: Record<string, string> = {
+    CharacterName: 'Seren Ashvale',
+    'CLASS  LEVEL': 'Ranger 5',
+    RACE: 'Wood Elf',
+    BACKGROUND: 'Outlander',
+    STR: '10',
+    DEX: '18',
+    CON: '14',
+    INT: '12',
+    WIS: '14',
+    CHA: '8',
+    AC: '15',
+    MaxHP: '44',
+    Speed: '35',
+    'Wpn Name': 'Dragon Wing Shortbow',
+    'Wpn1 AtkBonus': '+10',
+    'Wpn1 Damage': '1d6+5 Piercing + 1d6 Fire',
+    'Wpn Name 2': 'Shortsword',
+    'Wpn2 AtkBonus ': '+7',
+    'Wpn2 Damage ': '1d6+4 Piercing',
+    'Wpn Name 3': 'Fire Bolt',
+    'Wpn3 AtkBonus  ': '+4',
+    'Wpn3 Damage ': '2d10 Fire',
+    ProficienciesLang: '=== ARMOR ===\nLight Armor, Medium Armor, Shields\n=== WEAPONS ===\nMartial Weapons, Simple Weapons\n=== TOOLS ===\nHerbalism Kit\n=== LANGUAGES ===\nCommon, Elvish, Sylvan',
+    FeaturesTraits1:
+      "=== RANGER FEATURES ===\n* Favored Enemy • PHB 2024\nYou always have Hunter's Mark prepared. You can cast it without a slot.\n2 / Long Rest\n* Deft Explorer\nExpertise in one skill and two more languages.\n=== SPECIES TRAITS ===\n* Darkvision\nYou can see in dim light within 60 feet.\n* Fey Ancestry\nAdvantage on saves to avoid being Charmed.\n=== FEATS ===\n* Archery\nYou gain a +2 bonus to attack rolls you make with Ranged weapons.\n* Magic Initiate (Wizard)\nTwo cantrips and a level 1 spell.",
+    FeaturesTraits2: "* Fey Ancestry\nAdvantage on saves to avoid being Charmed, and magic can't put you to sleep.\n* Keen Senses\nProficiency in the Perception skill.",
+    Actions1: "=== ACTIONS ===\nActions in Combat: Attack, Dash, Disengage, Dodge, Grapple, Help, Hide\n=== BONUS ACTIONS ===\n* Hunter's Mark\nMark a creature as your quarry.",
+    spellHeader0: '=== CANTRIPS ===',
+    spellName0: 'Fire Bolt',
+    spellSaveHit0: '+4',
+    spellName1: 'Prestidigitation',
+    spellHeader1: '=== 1st LEVEL ===',
+    spellName2: "Hunter's Mark",
+    spellCastingTime2: '1BA',
+    spellName3: 'Cure Wounds',
+    spellName4: 'Zephyr Strike',
+    spellCastingTime4: '1BA',
+    spellDuration4: 'Conc., 1 Minute',
+    spellNotes4: 'D: 1d8 Force',
+    spellHeader2: '=== 2nd LEVEL ===',
+    spellName5: 'Pass without Trace',
+    spellName6: 'Cordon of Arrows',
+    spellSaveHit6: 'DEX 13',
+    spellRange6: '5 ft.',
+    spellNotes6: 'D: 1d6 Piercing',
+    'Eq Name0': 'Dragon Wing Shortbow',
+    'Eq Weight0': '2 lb.',
+    'Eq Name1': 'Shortsword',
+    'Eq Name2': 'Studded Leather Armor',
+    'Eq Name3': 'Arrows',
+    'Eq Qty3': '20',
+    'Eq Name4': 'Potion of Healing',
+    'Eq Qty4': '2',
+    'Eq Name5': 'Rope',
+    'Eq Name6': 'Rope',
+    GP: '35',
+  };
+  // Spell rows sit under their heading on page 3, top to bottom.
+  const positions: Record<string, { page: number; x: number; y: number }> = {};
+  ['spellHeader0', 'spellName0', 'spellName1', 'spellHeader1', 'spellName2', 'spellName3', 'spellName4', 'spellHeader2', 'spellName5', 'spellName6'].forEach((k, i) => (positions[k] = { page: 3, x: 40, y: 700 - i * 20 }));
+  const { character: c, found, warnings } = importFromText('', fields, { positions, catalog });
+
+  it('reads the identity and scores', () => {
+    expect(c.name).toBe('Seren Ashvale');
+    expect(c.classes).toMatchObject([{ classId: 'ranger', level: 5 }]);
+    expect(c.abilities.dex).toBe(18);
+  });
+
+  it('keeps the magic weapon’s name, its extra damage and its +1 (Archery counted)', () => {
+    expect(c.weapons.map((w) => w.name)).toEqual(['Dragon Wing Shortbow', 'Shortsword']);
+    const bow = c.weapons[0];
+    expect(bow).toMatchObject({ ranged: true, magicBonus: 1, damage: [{ dice: '1d6', type: 'piercing' }, { dice: '1d6', type: 'fire' }] });
+    expect(found.join(' ')).toMatch(/Dragon Wing Shortbow: \+1 magic bonus/);
+    expect(c.weapons[1].magicBonus).toBe(0);
+  });
+
+  it('reads every spell with its level, from the SRD where it can', () => {
+    const level = Object.fromEntries(c.spells.map((s) => [s.name, s.level]));
+    expect(level).toEqual({ 'Fire Bolt': 0, Prestidigitation: 0, "Hunter's Mark": 1, 'Cure Wounds': 1, 'Zephyr Strike': 1, 'Pass without Trace': 2, 'Cordon of Arrows': 2 });
+    expect(c.spells.find((s) => s.name === 'Cure Wounds')!.description.length).toBeGreaterThan(100);
+    expect(c.spells.find((s) => s.name === 'Zephyr Strike')).toMatchObject({ castingTime: 'bonus', concentration: true, damage: [{ dice: '1d8', type: 'force' }] });
+    expect(c.spells.find((s) => s.name === 'Cordon of Arrows')).toMatchObject({ resolution: 'save', saveAbility: 'dex', range: '5 ft.' });
+    expect(warnings.join(' ')).toMatch(/Zephyr Strike, Cordon of Arrows/);
+  });
+
+  it('reads features from every page once, without the standard actions or spells', () => {
+    const names = c.features.map((f) => f.name);
+    expect(names).toEqual(['Favored Enemy', 'Deft Explorer', 'Darkvision', 'Fey Ancestry', 'Archery', 'Magic Initiate (Wizard)', 'Keen Senses']);
+    expect(c.features.find((f) => f.name === 'Fey Ancestry')!.description).toMatch(/sleep/);
+    expect(c.features.find((f) => f.name === 'Favored Enemy')).toMatchObject({ usesMax: 2, recharge: 'long', source: 'Ranger Features' });
+  });
+
+  it('reads the inventory with counts and SRD weights, each item once', () => {
+    expect(c.inventory.map((i) => [i.name, i.qty])).toEqual([
+      ['Dragon Wing Shortbow', 1],
+      ['Shortsword', 1],
+      ['Studded Leather Armor', 1],
+      ['Arrows', 20],
+      ['Potion of Healing', 2],
+      ['Rope', 1],
+    ]);
+    expect(c.inventory.find((i) => i.name === 'Shortsword')!.weight).toBe(2);
+    expect(c.inventory.find((i) => i.name === 'Potion of Healing')!.description).toMatch(/regain Hit Points/);
+    expect(c.armor.armorId).toBe('studded');
+    expect(c.currency.gp).toBe(35);
+  });
+
+  it('splits languages from the other proficiencies', () => {
+    expect(c.languages).toBe('Common, Elvish, Sylvan');
+    expect(c.proficiencies).toBe('Armor: Light Armor, Medium Armor, Shields\nWeapons: Martial Weapons, Simple Weapons\nTools: Herbalism Kit');
   });
 });

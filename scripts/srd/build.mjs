@@ -466,6 +466,133 @@ function creature(c) {
 
 const creatures = release.content.filter((c) => c.type === 'monster').map(creature);
 
+// ── Items ────────────────────────────────────────────────────────────────────
+// Weapons, armor, gear, tools and magic items. Magic weapons and armor that are made from
+// a base item ("Flame Tongue {base}", "{base} +1") become templates listing the bases they
+// fit, with their bonuses and any extra damage dice they always add.
+
+const label = (s) => cap(String(s).replace(/-/g, ' '));
+const PROPERTY_ORDER = ['Ammunition', 'Finesse', 'Heavy', 'Light', 'Loading', 'Reach', 'Thrown', 'Two-Handed', 'Versatile'];
+
+function weaponStats(c) {
+  const f = c.fields;
+  const tags = new Set(c.tags);
+  const range = f.normalRange ? ` (${f.normalRange}/${f.longRange})` : '';
+  const props = [];
+  if (tags.has('ammunition')) props.push(`Ammunition${range}`);
+  if (tags.has('finesse')) props.push('Finesse');
+  if (tags.has('property.heavy')) props.push('Heavy');
+  if (tags.has('property.light')) props.push('Light');
+  if (tags.has('loading')) props.push('Loading');
+  if (tags.has('reach')) props.push('Reach');
+  if (tags.has('thrown')) props.push(`Thrown${range}`);
+  if (tags.has('two-handed')) props.push('Two-Handed');
+  if (f.versatileDamage) props.push(`Versatile (${f.versatileDamage})`);
+  props.sort((a, b) => PROPERTY_ORDER.indexOf(a.replace(/ \(.*/, '')) - PROPERTY_ORDER.indexOf(b.replace(/ \(.*/, '')));
+  return {
+    dice: f.damage,
+    type: f.damageType,
+    category: f.category,
+    ranged: f.range === 'ranged',
+    finesse: tags.has('finesse'),
+    properties: props.join(', '),
+    mastery: f.mastery ? cap(f.mastery) : '',
+    ...(f.normalRange ? { range: [f.normalRange, f.longRange] } : {}),
+  };
+}
+
+const baseWeapons = release.content.filter((c) => c.type === 'weapon');
+const baseArmor = release.content.filter((c) => c.type === 'armor');
+const ammunition = release.content.filter((c) => c.type === 'gear' && c.fields?.category === 'ammunition');
+
+/** The base items a magic template fits, from its `appliesTo` condition. */
+function basesOf(applies) {
+  const where = applies.where ?? '';
+  const pool = applies.type === 'weapon' ? baseWeapons : applies.type === 'armor' ? baseArmor : ammunition;
+  const ids = [...where.matchAll(/@([a-z-]+\.[a-z0-9-]+)/g)].map((m) => m[1]);
+  return pool
+    .filter((c) => {
+      if (/item\.id (?:in|==)/.test(where)) return ids.includes(c.id);
+      if (/item\.range == 'melee'/.test(where) && c.fields.range !== 'melee') return false;
+      if (/item\.category == 'shield'/.test(where) && c.fields.category !== 'shield') return false;
+      if (/item\.category != 'shield'/.test(where) && c.fields.category === 'shield') return false;
+      if (/item\.category in \['medium', 'heavy'\]/.test(where) && !['medium', 'heavy'].includes(c.fields.category)) return false;
+      if (/item\.id != @armor\.hide/.test(where) && c.id === 'armor.hide') return false;
+      return true;
+    })
+    .map((c) => text(`${c.id}.name`));
+}
+
+/** Extra damage a magic weapon always adds (or adds while the wielder switches it on, like Flame Tongue's flames). */
+function extraDamageOf(c) {
+  const out = [];
+  for (const e of c.effects ?? []) {
+    if (e.op !== 'add' || !e.target?.rolls?.includes('damage.weapon') || typeof e.value !== 'string' || !/^\s*\d*d\d+\s*$/.test(e.value)) continue;
+    // Only dice that come with attunement, or with a switch the wielder flips (Flame Tongue's
+    // flames). Damage against certain targets, or from a power picked on a hit, isn't rolled every time.
+    const rest = (e.when ?? '').replace(/self\.\w+/g, '').replace(/&&|\s/g, '');
+    if (rest) continue;
+    const tag = e.tags?.[0];
+    const type = typeof tag === 'string' ? tag.replace('damage.', '') : 'same';
+    out.push({ dice: e.value.replace(/\s+/g, ''), type });
+  }
+  return out;
+}
+
+function item(c) {
+  const f = c.fields ?? {};
+  const base = { id: '', name: text(`${c.id}.name`), text: text(`${c.id}.description`), ...(f.weight ? { weight: f.weight } : {}), ...(f.cost ? { cost: f.cost } : {}) };
+  if (c.type === 'weapon') return { ...base, id: `w:${short(c.id)}`, kind: 'weapon', category: `${label(f.category)} ${f.range === 'ranged' ? 'ranged' : 'melee'} weapon`, weapon: weaponStats(c) };
+  if (c.type === 'armor')
+    return {
+      ...base,
+      id: `a:${short(c.id)}`,
+      kind: 'armor',
+      category: f.category === 'shield' ? 'Shield' : `${label(f.category)} armor`,
+      armor: {
+        category: f.category,
+        base: f.baseAc,
+        ...(f.category === 'medium' ? { maxDex: 2 } : {}),
+        ...(f.strength ? { strength: f.strength } : {}),
+        ...(f.stealthDisadvantage ? { stealth: true } : {}),
+      },
+    };
+  if (c.type === 'gear') return { ...base, id: `g:${short(c.id)}`, kind: 'gear', category: label(f.category) };
+  if (c.type === 'tool') return { ...base, id: `t:${short(c.id)}`, kind: 'tool', category: f.category === 'other' ? 'Tool' : label(f.category).replace(/s$/, '') };
+  // Magic items, standalone or built on a base item.
+  const magic = {
+    ...base,
+    id: `m:${short(c.id)}`,
+    kind: 'magic',
+    rarity: label(f.rarity),
+    ...(f.requiresAttunement ? { attunement: true } : {}),
+    ...(f.maxCharges ? { charges: f.maxCharges } : {}),
+  };
+  if (c.type === 'magicItem') return { ...magic, category: label(f.category) };
+  const applies = c.appliesTo.type === 'gear' ? 'ammunition' : c.appliesTo.type === 'armor' && /== 'shield'/.test(c.appliesTo.where ?? '') ? 'shield' : c.appliesTo.type;
+  const extra = extraDamageOf(c);
+  return {
+    ...magic,
+    category: applies === 'weapon' ? 'Weapon' : applies === 'shield' ? 'Shield' : applies === 'armor' ? 'Armor' : 'Ammunition',
+    template: {
+      applies,
+      bases: basesOf(c.appliesTo),
+      ...(f.attackBonus ? { attackBonus: f.attackBonus } : {}),
+      ...(f.damageBonus ? { damageBonus: f.damageBonus } : {}),
+      ...(f.acBonus ? { acBonus: f.acBonus } : {}),
+      ...(extra.length ? { extraDamage: extra } : {}),
+    },
+  };
+}
+
+const items = [
+  ...baseWeapons,
+  ...baseArmor,
+  ...release.content.filter((c) => c.type === 'gear' || c.type === 'tool'),
+  ...release.content.filter((c) => c.type === 'magicItem' || (c.type === 'template' && c.id.startsWith('magic-items.') && c.appliesTo)),
+].map(item);
+const languages = release.content.filter((c) => c.type === 'language').map((c) => ({ name: text(`${c.id}.name`), ...(c.fields?.rare ? { rare: true } : {}) }));
+
 // ── Write ────────────────────────────────────────────────────────────────────
 
 mkdirSync(OUT, { recursive: true });
@@ -478,4 +605,6 @@ write('subclasses', subclasses);
 write('feats', feats);
 write('spells', spells);
 write('creatures', creatures);
+write('items', items);
+write('languages', languages);
 writeFileSync(`${OUT}/credit.json`, JSON.stringify({ source: 'System Reference Document 5.2.1', via: `@opencharacter/5e-srd-5.2 ${release.manifest.version}`, credit: release.manifest.credit }));

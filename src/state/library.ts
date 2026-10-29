@@ -57,7 +57,7 @@ export function packFrom(name: string, source: string, r: ReadResult): Pack {
     createdAt: Date.now(),
     enabled: true,
     sections: r.sections,
-    content: { classes: r.classes, subclasses: r.subclasses, feats: r.feats, spells: r.spells, creatures: r.creatures },
+    content: { classes: r.classes, subclasses: r.subclasses, feats: r.feats, spells: r.spells, creatures: r.creatures, items: r.items },
   };
 }
 

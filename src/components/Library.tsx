@@ -16,13 +16,14 @@ function countsText(c: ReturnType<typeof contentCounts>, sections?: number): str
     c.feats ? `${c.feats} feat${c.feats === 1 ? '' : 's'}` : '',
     c.spells ? `${c.spells} spell${c.spells === 1 ? '' : 's'}` : '',
     c.creatures ? `${c.creatures} creature${c.creatures === 1 ? '' : 's'}` : '',
+    c.items ? `${c.items} item${c.items === 1 ? '' : 's'}` : '',
   ].filter(Boolean);
   return parts.join(' · ') || 'nothing yet';
 }
 
 /**
  * Your rules library: import rules documents (your own game's PDF, a supplement, house
- * rules), and the sheet pulls their classes, subclasses, feats, spells and creatures into
+ * rules), and the sheet pulls their classes, subclasses, feats, spells, creatures and items into
  * Level up, the spell list and the companion list. Everything is also readable and
  * searchable here. Stored on this device; included in backups.
  */
@@ -51,7 +52,7 @@ export function LibraryDialog({ onClose }: { onClose: () => void }) {
           {lib.packs === null && <p className="hint">Opening your library…</p>}
           {lib.packs && packs.length === 0 && (
             <div className="note">
-              <b>No rules imported yet.</b> Add a rulebook, supplement or homebrew document and its classes, subclasses, feats, spells and creatures join the official ones on
+              <b>No rules imported yet.</b> Add a rulebook, supplement or homebrew document and its classes, subclasses, feats, spells, creatures and items join the official ones on
               your sheet.{' '}
               <button type="button" className="btn small primary" onClick={() => setMode('add')}>
                 Add rules
@@ -150,6 +151,7 @@ function AddRules({ onSaved, save }: { onSaved: () => void; save: (p: Pack) => P
       ['Feats', r.feats.map((k) => k.name)],
       ['Spells', r.spells.map((k) => `${k.name} (${k.level === 0 ? 'cantrip' : `level ${k.level}`})`)],
       ['Creatures', r.creatures.map((k) => k.name)],
+      ['Items', r.items.map((k) => (k.rarity ? `${k.name} (${k.rarity.toLowerCase()})` : k.name))],
     ];
     return (
       <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
@@ -190,7 +192,7 @@ function AddRules({ onSaved, save }: { onSaved: () => void; save: (p: Pack) => P
               // Content is labelled with the pack's final name.
               const name = review.name.trim();
               const relabel = <T extends { source?: string }>(xs: T[]) => xs.map((x) => ({ ...x, source: name }));
-              const result = { ...r, classes: relabel(r.classes), subclasses: relabel(r.subclasses), feats: relabel(r.feats), spells: relabel(r.spells), creatures: relabel(r.creatures) };
+              const result = { ...r, classes: relabel(r.classes), subclasses: relabel(r.subclasses), feats: relabel(r.feats), spells: relabel(r.spells), creatures: relabel(r.creatures), items: relabel(r.items) };
               if (await save(packFrom(name, review.source, result))) onSaved();
             }}
           >
@@ -244,7 +246,7 @@ function AddRules({ onSaved, save }: { onSaved: () => void; save: (p: Pack) => P
         {showPrompt && (
           <>
             <p className="hint">
-              The reader finds spells, creatures, feats and classes laid out the way D&amp;D books lay them out. For anything else, copy this prompt into ChatGPT, Claude, Gemini or
+              The reader finds spells, creatures, feats, magic items and classes laid out the way D&amp;D books lay them out. For anything else, copy this prompt into ChatGPT, Claude, Gemini or
               another AI, paste your rules under it (a chapter at a time for a long book), and paste the AI’s JSON answer above.
             </p>
             <textarea className="input mono" readOnly value={RULES_AI_PROMPT} aria-label="Prompt for an AI" onFocus={(e) => e.currentTarget.select()} />

@@ -125,6 +125,8 @@ export function armorClass(c: Character): Breakdown {
     if (armor.category === 'medium') parts.push({ label: 'Dexterity (max 2)', value: Math.min(2, dex) });
   }
   parts.push({ label: 'Armor enchantment', value: c.armor.magicBonus });
+  // The Defense fighting style: +1 while wearing Light, Medium or Heavy armor.
+  if (armor.category !== 'none' && hasFightingStyle(c, 'defense')) parts.push({ label: 'Defense fighting style', value: 1 });
   if (c.armor.shield) parts.push({ label: 'Shield', value: 2 });
   parts.push({ label: 'Other AC bonus', value: c.bonus.ac });
   for (const e of c.effects) if (e.ac) parts.push({ label: e.name, value: e.ac });
@@ -334,12 +336,17 @@ export function weaponAbility(c: Character, w: Weapon): Ability {
   return w.ranged ? 'dex' : 'str';
 }
 
+/** A fighting style taken as a feat or named as a feature ("Archery", "Fighting Style: Archery"). */
+export const hasFightingStyle = (c: Character, style: string) => c.features.some((f) => new RegExp(`^(?:fighting style\\s*[:(-]\\s*)?${style}\\)?$`, 'i').test(f.name.trim()));
+
 export function weaponAttack(c: Character, w: Weapon): Breakdown {
   const a = weaponAbility(c, w);
   return sum([
     { label: `${ABILITY_NAMES[a]} modifier`, value: mod(c, a) },
     { label: 'Proficiency', value: w.proficient ? pb(c) : 0 },
     { label: 'Magic weapon', value: w.magicBonus },
+    // The Archery fighting style: +2 to attack rolls with Ranged weapons.
+    { label: 'Archery', value: w.ranged && hasFightingStyle(c, 'archery') ? 2 : 0 },
     { label: 'Exhaustion', value: exhaustionPenalty(c) },
   ]);
 }

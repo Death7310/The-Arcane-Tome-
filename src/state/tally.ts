@@ -44,6 +44,7 @@ export function shortLabel(label: string): string {
   if (label === 'Proficiency') return 'PROF';
   if (/magic/i.test(label)) return 'MAGIC';
   if (/exhaustion/i.test(label)) return 'EXH';
+  if (/archery/i.test(label)) return 'ARCHERY';
   return 'BONUS';
 }
 
