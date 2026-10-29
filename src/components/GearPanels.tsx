@@ -28,7 +28,7 @@ export function FeaturesPanel() {
   return (
     <Panel
       title="Features & traits"
-      tab="gear combat"
+      tab="stats"
       actions={
         <button
           type="button"

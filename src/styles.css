@@ -140,28 +140,41 @@ button { cursor: pointer; }
 }
 .banner strong { color: var(--gilt); }
 
-/* ── Tabs: five pages on phones; "Character sheet | Dice" on wider screens ── */
+/* ── Tabs: every page on phones; "Character sheet | your pages | Dice" on wider screens ── */
 .tabs { display: flex; gap: 4px; padding-block: 10px 2px; }
 .tabs button {
   border: 1px solid var(--line); background: var(--surface); border-radius: 8px;
   padding: 8px 4px; font: 700 14px/1 var(--font-display); letter-spacing: 0.04em; color: var(--muted);
 }
 .tabs button[aria-selected='true'] { background: var(--gilt); color: var(--gilt-ink); border-color: var(--gilt); }
-.tabs .tab-wide { order: -1; }
 @media (min-width: 900px) {
   .tabs { padding-block: 0; margin-top: -4px; }
   .tabs button { padding: 8px 16px; }
   .tabs .tab-narrow { display: none; }
 }
 @media (max-width: 899px) {
-  .tabs { display: grid; grid-template-columns: repeat(5, 1fr); }
-  .tabs button { font-size: 13px; letter-spacing: 0.02em; }
+  /* As many pages as you like: they wrap onto another row, so every page stays in view. */
+  .tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); }
+  .tabs button { padding: 8px 4px; font-size: 13px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tabs .tab-wide { display: none; }
-  .folio[data-active='stats'] .panel:not([data-tab~='stats']),
-  .folio[data-active='combat'] .panel:not([data-tab~='combat']),
-  .folio[data-active='magic'] .panel:not([data-tab~='magic']),
-  .folio[data-active='gear'] .panel:not([data-tab~='gear']) { display: none; }
+  /* One page at a time, in that page's own order. */
+  .folio > .col { display: contents; }
+  .folio > .col > .panel { order: var(--page-order, 0); }
+  .folio:not([data-active='dice']) > .col > .panel:not([data-on-page]) { display: none; }
 }
+@media (min-width: 900px) {
+  /* The main sheet shows the built-in pages' panels in their columns; a page you made shows
+     its own panels flowing left to right in the page's order. */
+  .folio[data-view='sheet'] > .col > .panel:not([data-sheet]),
+  .folio[data-view='page'] > .col > .panel:not([data-on-page]) { display: none; }
+  .folio[data-view='page']:not([data-active='dice']) { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .folio[data-view='page'] > .col { display: contents; }
+  .folio[data-view='page'] > .col > .panel { order: var(--page-order, 0); }
+}
+@media (min-width: 900px) { .narrow-only { display: none !important; } }
+.empty-page { grid-column: 1 / -1; border: 1px dashed var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 10px; color: var(--muted); }
+.empty-page p { margin: 0; }
+.folio[data-active='dice'] .empty-page { display: none; }
 
 /* ── Folio grid ── */
 .folio { display: grid; gap: 16px; align-items: start; }
@@ -684,3 +697,21 @@ button.stat:hover { border-color: var(--gilt); }
 /* Item list rows: the name and its stats wrap instead of being cut off on a phone. */
 .lib button.item-pick { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 0; border: 0; background: none; border-radius: 0; }
 .lib button.item-pick b, .lib button.item-pick small { white-space: normal; }
+
+/* Arranging: which pages a panel is on */
+.page-picker { position: relative; }
+.page-picker summary { list-style: none; cursor: pointer; font-size: 12.5px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--fg); background: var(--surface-2); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.page-picker summary::-webkit-details-marker { display: none; }
+.page-picker[open] summary { border-color: var(--gilt); }
+.page-picker-list { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 200px; display: grid; gap: 6px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--gilt); border-radius: 10px; box-shadow: var(--shadow); }
+.page-picker-list .check { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.page-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 10px; }
+@media (max-width: 520px) { .page-row { grid-template-columns: minmax(0, 1fr) auto; } .page-row > .row { grid-column: 1 / -1; } }
+
+/* Tiles you made */
+.tile-entries { display: grid; gap: 10px; }
+.tile-note h3 { margin-top: 0; }
+.tile-tracker, .tile-roll { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; }
+.tile-label { font-weight: 600; }
+.tile-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.tile-bar > span { display: block; height: 100%; background: var(--gilt); }

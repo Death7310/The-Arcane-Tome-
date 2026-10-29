@@ -591,7 +591,6 @@ const items = [
   ...release.content.filter((c) => c.type === 'gear' || c.type === 'tool'),
   ...release.content.filter((c) => c.type === 'magicItem' || (c.type === 'template' && c.id.startsWith('magic-items.') && c.appliesTo)),
 ].map(item);
-const languages = release.content.filter((c) => c.type === 'language').map((c) => ({ name: text(`${c.id}.name`), ...(c.fields?.rare ? { rare: true } : {}) }));
 
 // ── Write ────────────────────────────────────────────────────────────────────
 
@@ -606,5 +605,4 @@ write('feats', feats);
 write('spells', spells);
 write('creatures', creatures);
 write('items', items);
-write('languages', languages);
 writeFileSync(`${OUT}/credit.json`, JSON.stringify({ source: 'System Reference Document 5.2.1', via: `@opencharacter/5e-srd-5.2 ${release.manifest.version}`, credit: release.manifest.credit }));

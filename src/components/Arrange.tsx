@@ -7,11 +7,32 @@
 // Drags only change the page while they run; the layout is saved once, when you let go.
 
 import { createContext, useContext, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
-import { gridTracks, MIN_HEIGHT, movePanel, setHeight, shiftPanel, stepPanel, toggleCollapsed, type Layout, type PanelId } from '../state/layout';
+import { gridTracks, MIN_HEIGHT, movePanel, onSheet, placeInPage, setHeight, setPanelPages, shiftPanel, stepInPage, stepPanel, toggleCollapsed, type Layout, type PanelKey } from '../state/layout';
+
+/** Which page is showing: on a phone any page; on a wide screen the main sheet or a page you made. */
+export interface ActiveView {
+  pageId: string | null;
+  view: 'sheet' | 'page';
+  /** Panels that exist for this character (a tile of another character doesn't). */
+  exists: (k: PanelKey) => boolean;
+}
+
+/** Phones (and narrow windows) show one page at a time, in the page's own order. */
+const narrow = () => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 899px)').matches;
 
 export interface SlotApi {
-  id: PanelId;
+  id: PanelKey;
   arranging: boolean;
+  /** On the page being shown, and its place in that page's order. */
+  onPage: boolean;
+  order: number;
+  /** On the wide screen's main sheet. */
+  onSheet: boolean;
+  /** Shown in columns (the wide main sheet), so it can move between them. */
+  inColumns: boolean;
+  /** Every page, and whether this panel is on it. */
+  pages: { id: string; name: string; on: boolean }[];
+  setPages(ids: string[]): void;
   dragging: boolean;
   collapsed: boolean;
   height: number | undefined;
@@ -48,8 +69,31 @@ interface Target {
 
 const columnsOf = (folio: HTMLElement) => [...folio.querySelectorAll<HTMLElement>(':scope > .col')];
 
+/**
+ * On a page shown in its own order (a phone, or a page you made on a wide screen): the panel a
+ * drop at (x, y) would land before (null for the end), and the marker. Panels read left to
+ * right, then top to bottom.
+ */
+function pageDropTarget(folio: HTMLElement, id: PanelKey, x: number, y: number): { before: PanelKey | null; line: Line } {
+  const fr = folio.getBoundingClientRect();
+  const shown = [...folio.querySelectorAll<HTMLElement>('.panel[data-on-page]')]
+    .filter((p) => p.dataset.panel !== id)
+    .map((p) => ({ key: p.dataset.panel as PanelKey, r: p.getBoundingClientRect() }))
+    .filter((p) => p.r.height > 0)
+    .sort((a, b) => a.r.top - b.r.top || a.r.left - b.r.left);
+  const sideBySide = shown.some((p) => p.r.width < fr.width * 0.75);
+  const next = shown.find((p) => (sideBySide ? y < p.r.top || (y <= p.r.bottom && x < p.r.left + p.r.width / 2) : y < p.r.top + p.r.height / 2));
+  const last = shown[shown.length - 1];
+  if (sideBySide && next) return { before: next.key, line: { left: next.r.left - 10, top: next.r.top, width: 4, height: next.r.height } };
+  const top = next ? next.r.top - 10 : last ? last.r.bottom + 6 : fr.top;
+  return { before: next?.key ?? null, line: { left: fr.left, top, width: fr.width, height: 4 } };
+}
+
+/** Whether panels are shown in a page's own order (rather than in the wide sheet's columns). */
+const pageMode = (a: ActiveView) => !!a.pageId && (narrow() || a.view === 'page');
+
 /** Which column and position a panel dropped at (x, y) would land in, and where to draw the marker. */
-function dropTarget(folio: HTMLElement, id: PanelId, x: number, y: number): Target | null {
+function dropTarget(folio: HTMLElement, id: PanelKey, x: number, y: number): Target | null {
   const cols = columnsOf(folio);
   let best = -1;
   let bestDistance = Infinity;
@@ -130,10 +174,12 @@ interface Divider {
  * The arranging machinery for the sheet: an API for each panel slot, the column dividers
  * (drawn inside the folio) and the drag overlay (the ghost and the drop marker).
  */
-export function useArranger(layout: Layout, setLayout: (l: Layout) => void, folioRef: RefObject<HTMLElement | null>, arranging: boolean) {
+export function useArranger(layout: Layout, setLayout: (l: Layout) => void, folioRef: RefObject<HTMLElement | null>, arranging: boolean, active: ActiveView) {
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
-  const [drag, setDrag] = useState<{ id: PanelId; title: string; x: number; y: number; line: Line | null } | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const [drag, setDrag] = useState<{ id: PanelKey; title: string; x: number; y: number; line: Line | null } | null>(null);
   const [dividers, setDividers] = useState<Divider[]>([]);
 
   useLayoutEffect(() => {
@@ -164,10 +210,29 @@ export function useArranger(layout: Layout, setLayout: (l: Layout) => void, foli
     };
   }, [arranging, layout, folioRef]);
 
-  const beginDrag = (id: PanelId) => (e: RPointerEvent<HTMLElement>, title: string) => {
+  const beginDrag = (id: PanelKey) => (e: RPointerEvent<HTMLElement>, title: string) => {
     const folio = folioRef.current;
     if (e.button !== 0 || !folio) return;
     e.preventDefault();
+    // A phone (or a page you made) shows one page in its own order, so a drag reorders that page.
+    const pageId = activeRef.current.pageId;
+    if (pageMode(activeRef.current) && pageId) {
+      let drop: ReturnType<typeof pageDropTarget> | null = null;
+      setDrag({ id, title, x: e.clientX, y: e.clientY, line: null });
+      track(
+        e,
+        (ev) => {
+          drop = pageDropTarget(folio, id, ev.clientX, ev.clientY);
+          setDrag({ id, title, x: ev.clientX, y: ev.clientY, line: drop.line });
+          edgeScroll(ev.clientY);
+        },
+        (commit) => {
+          setDrag(null);
+          if (commit && drop) setLayout(placeInPage(layoutRef.current, pageId, id, drop.before));
+        },
+      );
+      return;
+    }
     let target: Target | null = null;
     setDrag({ id, title, x: e.clientX, y: e.clientY, line: null });
     track(
@@ -184,7 +249,7 @@ export function useArranger(layout: Layout, setLayout: (l: Layout) => void, foli
     );
   };
 
-  const beginResize = (id: PanelId) => (e: RPointerEvent<HTMLElement>) => {
+  const beginResize = (id: PanelKey) => (e: RPointerEvent<HTMLElement>) => {
     const panel = e.currentTarget.closest<HTMLElement>('.panel');
     if (e.button !== 0 || !panel) return;
     e.preventDefault();
@@ -234,16 +299,29 @@ export function useArranger(layout: Layout, setLayout: (l: Layout) => void, foli
     );
   };
 
-  const slot = (id: PanelId): SlotApi => {
+  const slot = (id: PanelKey): SlotApi => {
     const set = (fn: (l: Layout) => Layout) => setLayout(fn(layoutRef.current));
+    const page = layout.pages.find((p) => p.id === active.pageId);
     return {
       id,
       arranging,
+      onPage: !!page?.panels.includes(id),
+      order: page ? page.panels.indexOf(id) : 0,
+      onSheet: onSheet(layout, id),
+      inColumns: active.view === 'sheet',
+      pages: layout.pages.map((p) => ({ id: p.id, name: p.name, on: p.panels.includes(id) })),
+      setPages: (ids) => set((l) => setPanelPages(l, id, ids)),
       dragging: drag?.id === id,
       collapsed: layout.collapsed.includes(id),
       height: layout.heights[id],
       toggle: () => set((l) => toggleCollapsed(l, id)),
-      step: (dir) => set((l) => stepPanel(l, id, dir)),
+      step: (dir) =>
+        set((l) => {
+          const a = activeRef.current;
+          if (pageMode(a) && a.pageId) return stepInPage(l, a.pageId, id, dir, a.exists);
+          // The wide sheet: past the next panel on screen in the columns.
+          return stepPanel(l, id, dir, (k) => a.exists(k) && onSheet(l, k));
+        }),
       shift: (dir) => set((l) => shiftPanel(l, id, dir)),
       fitHeight: () => set((l) => setHeight(l, id, null)),
       nudgeHeight: (by) => {
@@ -292,18 +370,23 @@ export function ArrangeTools(props: { slot: SlotApi; title: string }) {
   return (
     <div className="arrange-tools">
       <div className="row">
+        <PagePicker slot={slot} title={title} />
         <button type="button" className="btn small ghost" aria-label={`Move ${title} up`} title="Move up" onClick={() => slot.step(-1)}>
           ↑
         </button>
         <button type="button" className="btn small ghost" aria-label={`Move ${title} down`} title="Move down" onClick={() => slot.step(1)}>
           ↓
         </button>
-        <button type="button" className="btn small ghost wide-only" aria-label={`Move ${title} to the column on the left`} title="Column to the left" onClick={() => slot.shift(-1)}>
-          ←
-        </button>
-        <button type="button" className="btn small ghost wide-only" aria-label={`Move ${title} to the column on the right`} title="Column to the right" onClick={() => slot.shift(1)}>
-          →
-        </button>
+        {slot.inColumns && (
+          <>
+            <button type="button" className="btn small ghost wide-only" aria-label={`Move ${title} to the column on the left`} title="Column to the left" onClick={() => slot.shift(-1)}>
+              ←
+            </button>
+            <button type="button" className="btn small ghost wide-only" aria-label={`Move ${title} to the column on the right`} title="Column to the right" onClick={() => slot.shift(1)}>
+              →
+            </button>
+          </>
+        )}
         {slot.height !== undefined && (
           <button type="button" className="btn small ghost wide-only" onClick={slot.fitHeight}>
             Fit height
@@ -320,5 +403,29 @@ export function ArrangeTools(props: { slot: SlotApi; title: string }) {
         onKeyDown={onKey}
       />
     </div>
+  );
+}
+
+/** Which pages a panel is on: tick another page to show it there too, untick to take it off. */
+function PagePicker({ slot, title }: { slot: SlotApi; title: string }) {
+  const on = slot.pages.filter((p) => p.on);
+  return (
+    <details className="page-picker">
+      <summary aria-label={`Pages ${title} is on`}>On: {on.map((p) => p.name).join(', ') || 'no page'}</summary>
+      <div className="page-picker-list" role="group" aria-label={`Show ${title} on`}>
+        {slot.pages.map((p) => (
+          <label key={p.id} className="check">
+            <input
+              type="checkbox"
+              checked={p.on}
+              disabled={p.on && on.length === 1}
+              onChange={(e) => slot.setPages(e.target.checked ? [...on.map((x) => x.id), p.id] : on.map((x) => x.id).filter((x) => x !== p.id))}
+            />
+            {p.name}
+          </label>
+        ))}
+        <span className="hint">A tile can be on several pages. Untick to take it off one.</span>
+      </div>
+    </details>
   );
 }

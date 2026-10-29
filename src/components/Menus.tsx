@@ -4,6 +4,7 @@ import { fx, perform, sound, centerOf, type DiceSpeed } from '../fx';
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
 import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
 import { isNative, saveFileToDevice, shareFile } from '../state/native';
+import { isDefault, normalizeLayout, resetLayout } from '../state/layout';
 import { listPacks, restoreLibrary } from '../state/library';
 import { downloadText, makeBackup, parseImport, type MergeResult, type SavePoint, type Settings } from '../state/storage';
 import { blankCharacter, uid, type Character } from '../systems/dnd5e/model';
@@ -351,13 +352,23 @@ export function SettingsDialog(props: {
         </span>
         <h3 style={{ margin: '8px 0 0' }}>Layout</h3>
         <p className="hint" style={{ margin: 0 }}>
-          Move, resize and fold the panels the way you like them. The layout is kept on this device, so a phone and a laptop can each have their own.
+          Move, resize and fold the panels, move them between pages, and add pages and tiles of your own. The layout is kept on this device, so a phone and a laptop can each have their own.
         </p>
         <span className="row">
           <button type="button" className="btn small" onClick={props.onArrange}>
             Arrange panels
           </button>
-          <button type="button" className="btn small ghost" disabled={!s.layout} onClick={() => set({ layout: null })}>
+          <button
+            type="button"
+            className="btn small ghost"
+            disabled={!s.layout}
+            title="Usual places and sizes; pages you made are kept"
+            onClick={() => {
+              // Pages you made survive a reset (with their tiles); everything else goes back to the usual.
+              const reset = resetLayout(normalizeLayout(s.layout));
+              set({ layout: isDefault(reset) ? null : reset });
+            }}
+          >
             Reset layout
           </button>
         </span>

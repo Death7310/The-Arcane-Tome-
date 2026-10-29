@@ -284,7 +284,10 @@ export interface Character {
   inventory: Item[];
   currency: { cp: number; sp: number; ep: number; gp: number; pp: number };
   proficiencies: string;
+  /** The languages you know, comma-separated ("Common, Elvish, Draconic"). */
   languages: string;
+  /** Your own description of a language, by its key (see languageKey), replacing the built-in lore. */
+  languageNotes: Record<string, string>;
   notes: string;
   turn: Turn;
   customDice: CustomDie[];
@@ -295,7 +298,38 @@ export interface Character {
   /** Levels gained with Level up, newest last, so they can be undone. */
   progression: LevelStep[];
   companions: Companion[];
+  /** Tiles you made yourself (for homebrew rules or another system): notes, trackers and rolls. */
+  tiles: Tile[];
   updatedAt: number;
+}
+
+export type TileEntryKind = 'note' | 'tracker' | 'roll';
+
+export interface TileEntry {
+  id: string;
+  kind: TileEntryKind;
+  label: string;
+  /** A note's text. */
+  text: string;
+  /** A tracker's current value and its maximum (null for none). */
+  value: number;
+  max: number | null;
+  /** A roll's dice, with tokens like {STR} or {PB} allowed. */
+  formula: string;
+}
+
+export interface Tile {
+  id: string;
+  title: string;
+  entries: TileEntry[];
+}
+
+export function blankTileEntry(kind: TileEntryKind, partial: Partial<TileEntry> = {}): TileEntry {
+  return { id: uid(), kind, label: kind === 'note' ? 'Notes' : kind === 'tracker' ? 'Tracker' : 'Roll', text: '', value: 0, max: kind === 'tracker' ? 10 : null, formula: kind === 'roll' ? '1d20' : '', ...partial };
+}
+
+export function blankTile(partial: Partial<Tile> = {}): Tile {
+  return { id: uid(), title: 'New tile', entries: [blankTileEntry('note')], ...partial };
 }
 
 export const uid = (): string =>
@@ -414,6 +448,8 @@ export function blankCharacter(): Character {
     portrait: null,
     progression: [],
     companions: [],
+    tiles: [],
+    languageNotes: {},
     updatedAt: Date.now(),
   };
 }
@@ -478,6 +514,10 @@ export function normalizeCharacter(raw: unknown): Character {
     portrait: typeof c.portrait === 'string' && c.portrait.startsWith('data:image/') ? c.portrait : null,
     progression: Array.isArray(c.progression) ? c.progression.filter((p) => p && typeof p.entryId === 'string' && typeof p.classLevel === 'number') : [],
     companions: Array.isArray(c.companions) ? c.companions.map((k) => blankCompanion({ ...k, abilities: { ...allAbilities(10), ...k.abilities } })) : [],
+    tiles: Array.isArray(c.tiles)
+      ? c.tiles.filter((t) => t && typeof t.id === 'string').map((t) => blankTile({ ...t, entries: Array.isArray(t.entries) ? t.entries.map((e) => blankTileEntry(e?.kind ?? 'note', e)) : [] }))
+      : [],
+    languageNotes: c.languageNotes && typeof c.languageNotes === 'object' && !Array.isArray(c.languageNotes) ? Object.fromEntries(Object.entries(c.languageNotes).filter(([, v]) => typeof v === 'string')) : {},
     inventory: Array.isArray(c.inventory) ? c.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
   };
   while (merged.spellcasting.slotsUsed.length < 9) merged.spellcasting.slotsUsed.push(0);

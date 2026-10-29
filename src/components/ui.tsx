@@ -13,7 +13,9 @@ export function Panel(props: { title: string; tab: string; actions?: ReactNode; 
       data-tab={props.tab}
       data-panel={slot?.id}
       data-h={sized ? '' : undefined}
-      style={sized ? ({ '--panel-h': `${slot!.height}px` } as CSSProperties) : undefined}
+      data-on-page={slot?.onPage ? '' : undefined}
+      data-sheet={slot?.onSheet ? '' : undefined}
+      style={{ ...(sized ? { '--panel-h': `${slot!.height}px` } : {}), ...(slot ? { '--page-order': slot.order } : {}) } as CSSProperties}
       id={props.id}
       aria-label={props.title}
     >
