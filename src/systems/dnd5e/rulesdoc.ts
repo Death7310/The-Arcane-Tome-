@@ -18,6 +18,7 @@ import type { CastingTime, Companion } from './model';
 import type { Element as FxElement, Shape } from '../../fx/types';
 import type { Catalog, ClassDef, ClassFeatureDef, CreatureDef, FeatDef, ItemDef, SpellDef, Steps, SubclassDef } from './srd';
 import { itemFromJson, readItemBlocks } from './items';
+import { readSpellText } from './spellimport';
 import { companionFromCreature, parseStatBlock, pbForCr } from './statblock';
 
 export interface Section {
@@ -378,7 +379,8 @@ export function readRulesDocument(text: string, source: string): ReadResult {
     classes,
     subclasses,
     feats: readFeats(lines, source),
-    spells: readSpells(lines, source),
+    // The fuller spell reader (D&D Beyond copies, notes), plus anything only the book-layout reader finds.
+    spells: [...readSpellText(text, source), ...readSpells(lines, source)].filter((sp, i, all) => all.findIndex((x) => slug(x.name) === slug(sp.name)) === i),
     creatures: readCreatures(lines, source),
     items: readItemBlocks(lines, source, slug),
     notes: [],

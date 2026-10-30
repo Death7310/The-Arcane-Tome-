@@ -4,8 +4,8 @@
 // subclasses, feats, spells and creatures read from it, which join the SRD in the catalog.
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ReadResult, Section } from '../systems/dnd5e/rulesdoc';
-import type { Catalog } from '../systems/dnd5e/srd';
+import { slug, type ReadResult, type Section } from '../systems/dnd5e/rulesdoc';
+import type { Catalog, SpellDef } from '../systems/dnd5e/srd';
 import { setLibraryContent } from './catalog';
 
 export interface Pack {
@@ -146,4 +146,34 @@ export async function restoreLibrary(raw: string): Promise<number> {
   }
   if (n) applyPacks(await listPacks());
   return n;
+}
+
+/**
+ * Adds spells to the library pack with this name, making it if there isn't one. A spell the
+ * pack already has (by name) is replaced, so importing the same document twice doesn't
+ * double it up. Returns how many were new.
+ */
+export async function addSpellsToLibrary(packName: string, spells: SpellDef[], source: string): Promise<{ added: number; replaced: number }> {
+  const packs = await listPacks();
+  const existing = packs.find((p) => p.name.trim().toLowerCase() === packName.trim().toLowerCase());
+  const name = existing?.name ?? packName.trim();
+  const named = spells.map((sp) => ({ ...sp, source: name, srd: `${slug(name)}:${slug(sp.name)}` }));
+  const old = existing?.content.spells ?? [];
+  const replaced = old.filter((sp) => named.some((n) => slug(n.name) === slug(sp.name))).length;
+  const pack: Pack = existing
+    ? { ...existing, content: { ...existing.content, spells: [...old.filter((sp) => !named.some((n) => slug(n.name) === slug(sp.name))), ...named] } }
+    : { ...packFrom(name, source, { sections: [], classes: [], subclasses: [], feats: [], spells: named, creatures: [], items: [], notes: [] }) };
+  await putPack(pack);
+  applyPacks(await listPacks());
+  return { added: named.length - replaced, replaced };
+}
+
+/** Takes one spell out of a library pack (by the pack's name, which is the spell's source). */
+export async function removeLibrarySpell(packName: string, spellName: string): Promise<boolean> {
+  const packs = await listPacks();
+  const pack = packs.find((p) => p.name === packName);
+  if (!pack?.content.spells?.some((sp) => sp.name === spellName)) return false;
+  await putPack({ ...pack, content: { ...pack.content, spells: pack.content.spells.filter((sp) => sp.name !== spellName) } });
+  applyPacks(await listPacks());
+  return true;
 }

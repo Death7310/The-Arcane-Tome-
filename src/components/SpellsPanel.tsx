@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { isValid } from '../engine/dice';
 import { ELEMENTS, SHAPES, type Element } from '../fx/types';
 import { useChar } from '../state/character';
@@ -6,18 +6,18 @@ import { ordinal, useTable, type SlotChoice } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, type Ability, type DamageType } from '../systems/dnd5e/data';
 import { blankSpell, uid, type Spell } from '../systems/dnd5e/model';
 import { defaultSpellAbility, pactSlots, planSpell, signed, spellAttack, spellSaveDc, spellSlots } from '../systems/dnd5e/rules';
-import { spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
-import type { SpellDef } from '../systems/dnd5e/srd';
 import { useCatalog } from '../state/catalog';
 import { spellCounts } from '../systems/dnd5e/leveling';
 import { RulesText } from './RulesText';
 import { Check, ConfirmButton, Dialog, NumField, Panel, Pips, SelectField, TextField, mathText } from './ui';
+import { SpellBrowser, SpellImport } from './SpellBrowser';
 
 const ABILITY_SELECT = [{ id: 'auto' as const, name: 'From class' }, ...ABILITIES.map((a) => ({ id: a, name: ABILITY_NAMES[a] }))];
 
 export function SpellsPanel() {
   const { char: c, update } = useChar();
   const [libOpen, setLibOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const slots = spellSlots(c);
   const pact = pactSlots(c);
   const maxLevel = Math.max(0, ...c.spells.map((s) => s.level));
@@ -29,9 +29,16 @@ export function SpellsPanel() {
       title="Spellcasting"
       tab="magic"
       actions={
-        <button type="button" className="btn small primary" onClick={() => setLibOpen(true)}>
-          Add spell
-        </button>
+        <span className="row" style={{ gap: 4 }}>
+          {(c.spells.length > 0 || removing) && (
+            <button type="button" className="btn small ghost" aria-pressed={removing} onClick={() => setRemoving((r) => !r)}>
+              {removing ? 'Done' : 'Remove spells'}
+            </button>
+          )}
+          <button type="button" className="btn small primary" onClick={() => setLibOpen(true)}>
+            Add spell
+          </button>
+        </span>
       }
     >
       <div className="grid-3">
@@ -96,7 +103,7 @@ export function SpellsPanel() {
             {c.spells
               .filter((s) => s.level === lvl)
               .map((s) => (
-                <SpellRow key={s.id} spell={s} slots={slots} pact={pact} />
+                <SpellRow key={s.id} spell={s} slots={slots} pact={pact} removing={removing} />
               ))}
           </div>
         </div>
@@ -147,8 +154,8 @@ function spellSummary(s: Spell, plan: ReturnType<typeof planSpell>, dc: number, 
   return bits.join(' · ');
 }
 
-function SpellRow({ spell: s, slots, pact }: { spell: Spell; slots: number[]; pact: { count: number; level: number } }) {
-  const { char: c } = useChar();
+function SpellRow({ spell: s, slots, pact, removing }: { spell: Spell; slots: number[]; pact: { count: number; level: number }; removing: boolean }) {
+  const { char: c, update } = useChar();
   const t = useTable();
   const [open, setOpen] = useState(false);
   const [choosing, setChoosing] = useState(false);
@@ -168,17 +175,21 @@ function SpellRow({ spell: s, slots, pact }: { spell: Spell; slots: number[]; pa
           </b>
           <small>{spellSummary(s, plan, spellSaveDc(c, s).total, spellAttack(c, s).total)}</small>
         </button>
-        <button
-          type="button"
-          className="cast"
-          onClick={(e) => {
-            if (s.level === 0) castWith({ kind: 'free', level: 0 }, e.currentTarget);
-            else setChoosing((v) => !v);
-          }}
-          aria-expanded={s.level > 0 ? choosing : undefined}
-        >
-          Cast
-        </button>
+        {removing ? (
+          <ConfirmButton label="Remove" confirmLabel="Tap to remove" className="btn small" onConfirm={() => update((d) => void (d.spells = d.spells.filter((x) => x.id !== s.id)))} />
+        ) : (
+          <button
+            type="button"
+            className="cast"
+            onClick={(e) => {
+              if (s.level === 0) castWith({ kind: 'free', level: 0 }, e.currentTarget);
+              else setChoosing((v) => !v);
+            }}
+            aria-expanded={s.level > 0 ? choosing : undefined}
+          >
+            Cast
+          </button>
+        )}
       </div>
       {choosing && (
         <div className="popover" role="group" aria-label={`Cast ${s.name} with`}>
@@ -235,7 +246,7 @@ function SpellEditor({ spell: s }: { spell: Spell }) {
   if (!editing) {
     return (
       <div className="item-body">
-        <p>{s.description || 'No description.'}</p>
+        <RulesText text={s.description || 'No description.'} />
         <div className="row">
           <span className="chip">{ELEMENTS.find((e) => e.id === s.element)?.name}</span>
           <span className="chip plain">{SHAPES.find((x) => x.id === s.shape)?.name}</span>
@@ -347,100 +358,49 @@ function SpellEditor({ spell: s }: { spell: Spell }) {
 }
 
 function SpellLibrary({ onClose }: { onClose: () => void }) {
-  const { char: c, update } = useChar();
-  const t = useTable();
-  const cat = useCatalog();
-  const [q, setQ] = useState('');
-  const [level, setLevel] = useState<'all' | number>('all');
-  const [cls, setCls] = useState<'mine' | 'all' | string>('mine');
-  const [open, setOpen] = useState<string | null>(null);
-  const mine = c.classes.map((k) => k.classId);
-  const known = new Set(c.spells.map((s) => s.name.toLowerCase()));
-  const all = useMemo(() => (cat ? tunedSpells(cat.spells) : []), [cat]);
-  const list = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return all
-      .filter((s) => (!needle || s.name.toLowerCase().includes(needle)) && (level === 'all' || s.level === level))
-      .filter((s) => cls === 'all' || !s.classes?.length || (cls === 'mine' ? s.classes.some((k) => mine.includes(k)) : s.classes.includes(cls)))
-      .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
-  }, [all, q, level, cls, mine.join()]);
-  const add = (s: SpellDef, el: HTMLElement) => {
-    update((d) => void d.spells.push(spellFromDef(s, uid())));
-    t.preview(s.element, s.shape, s.level, el);
-  };
+  const { update } = useChar();
+  const [tab, setTab] = useState<'list' | 'import'>('list');
+  const [message, setMessage] = useState('');
   return (
     <Dialog title="Add a spell" onClose={onClose}>
-      <div className="row">
-        <input className="input" style={{ flex: 1 }} placeholder="Search spells" value={q} id="spell-search" aria-label="Search spells" onChange={(e) => setQ(e.target.value)} autoFocus />
+      <div className="row" style={{ justifyContent: 'space-between' }}>
+        <div className="seg" role="radiogroup" aria-label="How to add">
+          <button type="button" role="radio" aria-checked={tab === 'list'} onClick={() => setTab('list')}>
+            Spell list
+          </button>
+          <button type="button" role="radio" aria-checked={tab === 'import'} onClick={() => setTab('import')}>
+            Import spells
+          </button>
+        </div>
         <button
           type="button"
-          className="btn"
+          className="btn small ghost"
           onClick={() => {
-            update((d) => void d.spells.push(blankSpell({ id: uid(), name: q.trim() || 'New spell' })));
+            update((d) => void d.spells.push(blankSpell({ id: uid(), name: 'New spell' })));
             onClose();
           }}
         >
           Write my own
         </button>
       </div>
-      <div className="row" style={{ marginTop: 8 }}>
-        <select className="input" style={{ width: 'auto' }} value={String(level)} aria-label="Spell level" onChange={(e) => setLevel(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
-          <option value="all">All levels</option>
-          {Array.from({ length: 10 }, (_, l) => (
-            <option key={l} value={l}>
-              {l === 0 ? 'Cantrips' : `${ordinal(l)} level`}
-            </option>
-          ))}
-        </select>
-        <select className="input" style={{ width: 'auto' }} value={cls} aria-label="Class spell list" onChange={(e) => setCls(e.target.value)}>
-          <option value="mine">My classes’ spells</option>
-          <option value="all">Every spell</option>
-          {(cat?.classes ?? []).map((k) => (
-            <option key={k.id} value={k.id}>
-              {k.name} spells
-            </option>
-          ))}
-        </select>
-        <span className="hint">{cat ? `${list.length} spells` : 'Loading spells…'}</span>
+      {message && (
+        <p className="note good" role="status">
+          {message}
+        </p>
+      )}
+      <div style={{ marginTop: 10 }}>
+        {tab === 'list' ? (
+          <>
+            <SpellBrowser pageSize={150} />
+            <p className="hint">
+              Spells from the System Reference Document 5.2.1 by Wizards of the Coast (CC-BY-4.0), plus your own from the rules library. Not every published spell is in the SRD: import the ones you
+              need with “Import spells”, from pasted text or a document.
+            </p>
+          </>
+        ) : (
+          <SpellImport onSaved={(m) => (setMessage(m), setTab('list'))} />
+        )}
       </div>
-      <div className="lib">
-        {list.slice(0, 200).map((s) => {
-          const id = `${s.source}:${s.name}`;
-          return (
-            <div key={id} className={`lib-row el-${s.element}`}>
-              <button type="button" className="lib-main" aria-expanded={open === id} onClick={() => setOpen(open === id ? null : id)}>
-                <span>
-                  <b>{s.name}</b>
-                  <span className="hint">
-                    {' '}
-                    · {s.level === 0 ? 'Cantrip' : `${ordinal(s.level)} level`} · {s.school}
-                    {s.concentration ? ' · Concentration' : ''}
-                    {s.source && s.source !== 'SRD 5.2.1' ? ` · ${s.source}` : ''}
-                  </span>
-                </span>
-                <span className="chip">{ELEMENTS.find((e) => e.id === s.element)?.name}</span>
-              </button>
-              <button type="button" className="btn small" onClick={(e) => add(s, e.currentTarget)} disabled={known.has(s.name.toLowerCase())}>
-                {known.has(s.name.toLowerCase()) ? 'Added' : 'Add'}
-              </button>
-              {open === id && (
-                <div className="lib-detail">
-                  <p className="hint" style={{ margin: 0 }}>
-                    {s.castingTimeText} · {s.range} · {s.components} · {s.duration}
-                    {s.classes?.length ? ` · ${s.classes.map((k) => cat?.classes.find((x) => x.id === k)?.name ?? k).join(', ')}` : ''}
-                  </p>
-                  <RulesText text={s.description} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {list.length > 200 && <p className="hint">Showing the first 200. Search or filter to narrow it down.</p>}
-      </div>
-      <p className="hint">
-        Spells from the System Reference Document 5.2.1 by Wizards of the Coast (CC-BY-4.0), plus any from your rules library. Not every published spell is in the SRD; for others, write your own
-        or import them into your rules library.
-      </p>
     </Dialog>
   );
 }

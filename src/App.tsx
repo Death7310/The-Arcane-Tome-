@@ -12,6 +12,7 @@ import { LibraryDialog } from './components/Library';
 import { CharactersDialog, SettingsDialog } from './components/Menus';
 import { AdvChip, ResultCard } from './components/Results';
 import { SpellsPanel } from './components/SpellsPanel';
+import { SpellCompendiumPanel } from './components/SpellBrowser';
 import { AbilitiesPanel, GlancePanel, IdentityPanel, SkillsPanel } from './components/StatsPanels';
 import { fx, setDiceSpeed, setTally, sound } from './fx';
 import { CharacterContext } from './state/character';
@@ -41,6 +42,7 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   inventory: InventoryPanel,
   notes: NotesPanel,
   languages: LanguagesPanel,
+  compendium: SpellCompendiumPanel,
 };
 
 function initialState(): Saved {

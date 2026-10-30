@@ -10,7 +10,7 @@ const ACCEPT = '.pdf,.docx,.odt,.txt,.md,.markdown,.html,.htm,.rtf,.json,applica
 
 function countsText(c: ReturnType<typeof contentCounts>, sections?: number): string {
   const parts = [
-    sections !== undefined ? `${sections} section${sections === 1 ? '' : 's'}` : '',
+    sections ? `${sections} section${sections === 1 ? '' : 's'}` : '',
     c.classes ? `${c.classes} class${c.classes === 1 ? '' : 'es'}` : '',
     c.subclasses ? `${c.subclasses} subclass${c.subclasses === 1 ? '' : 'es'}` : '',
     c.feats ? `${c.feats} feat${c.feats === 1 ? '' : 's'}` : '',
