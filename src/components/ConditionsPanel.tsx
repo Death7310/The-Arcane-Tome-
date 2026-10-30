@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { isValid } from '../engine/dice';
+import { centerOf, performCondition, performEffect, performEnd } from '../fx';
 import { useChar } from '../state/character';
 import { CONDITIONS, EFFECT_PRESETS, type ConditionId } from '../systems/dnd5e/data';
 import { blankEffect, type Effect } from '../systems/dnd5e/model';
@@ -21,15 +22,25 @@ export function ConditionsPanel() {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Effect>(() => blankEffect({ name: '' }));
   const active = CONDITIONS.filter((k) => c.conditions.includes(k.id));
-  const toggle = (id: ConditionId) =>
-    update((d) => void (d.conditions = d.conditions.includes(id) ? d.conditions.filter((x) => x !== id) : [...d.conditions, id]));
+  // Each condition plays its own effect as it takes hold, and a lifting light as it ends.
+  const toggle = (id: ConditionId, el: HTMLElement) => {
+    const ending = c.conditions.includes(id);
+    performCondition(id, centerOf(el), CONDITIONS.find((k) => k.id === id)!.name, ending);
+    update((d) => void (d.conditions = ending ? d.conditions.filter((x) => x !== id) : [...d.conditions, id]));
+  };
+  const setExhaustion = (n: number) => {
+    const at = centerOf(document.getElementById('exhaustion'));
+    if (n > c.exhaustion) performCondition('exhaustion', at, `Exhaustion ${n}`);
+    else if (n === 0 && c.exhaustion > 0) performCondition('exhaustion', at, 'Exhaustion', true);
+    update((d) => void (d.exhaustion = n));
+  };
   const badDice = draft.bonus.trim() !== '' && !isValid(draft.bonus.trim().replace(/^\+/, ''));
 
   return (
     <Panel title="Conditions & effects" tab="combat">
       <div className="conditions" role="group" aria-label="Conditions">
         {CONDITIONS.map((k) => (
-          <button key={k.id} type="button" className="cond" aria-pressed={c.conditions.includes(k.id)} title={k.summary} onClick={() => toggle(k.id)}>
+          <button key={k.id} type="button" className="cond" aria-pressed={c.conditions.includes(k.id)} title={k.summary} onClick={(e) => toggle(k.id, e.currentTarget)}>
             {k.name}
           </button>
         ))}
@@ -50,7 +61,7 @@ export function ConditionsPanel() {
 
       <h3>Exhaustion</h3>
       <div className="row">
-        <NumField value={c.exhaustion} min={0} max={6} ariaLabel="Exhaustion level, 0 to 6" id="exhaustion" className="ac" onChange={(n) => update((d) => void (d.exhaustion = n))} />
+        <NumField value={c.exhaustion} min={0} max={6} ariaLabel="Exhaustion level, 0 to 6" id="exhaustion" className="ac" onChange={setExhaustion} />
         <span className="hint" style={{ color: c.exhaustion >= 6 ? 'var(--bad)' : c.exhaustion ? 'var(--warn)' : undefined }}>
           {c.exhaustion === 0
             ? 'None. Each level gives −2 to every d20 Test and −5 ft Speed; a Long Rest removes one.'
@@ -64,7 +75,7 @@ export function ConditionsPanel() {
       <div className="list">
         {c.effects.length === 0 && <p className="hint" style={{ margin: 0 }}>Spells and abilities affecting you right now, like Bless or Shield of Faith. Rounds count down when you tap New turn.</p>}
         {c.effects.map((e) => (
-          <div className="item effect" key={e.id}>
+          <div className="item effect" key={e.id} data-effect={e.id}>
             <div className="item-head">
               <span className="item-title">
                 <b>{e.name}</b>
@@ -79,7 +90,14 @@ export function ConditionsPanel() {
                     +1
                   </button>
                 )}
-                <ConfirmButton label="End" confirmLabel="End it?" onConfirm={() => update((d) => void (d.effects = d.effects.filter((x) => x.id !== e.id)))} />
+                <ConfirmButton
+                  label="End"
+                  confirmLabel="End it?"
+                  onConfirm={() => {
+                    performEnd(e.name, centerOf(document.querySelector(`[data-effect="${e.id}"]`)));
+                    update((d) => void (d.effects = d.effects.filter((x) => x.id !== e.id)));
+                  }}
+                />
               </span>
             </div>
           </div>
@@ -87,7 +105,7 @@ export function ConditionsPanel() {
       </div>
       <div className="row" style={{ marginTop: 8 }}>
         {EFFECT_PRESETS.map((p) => (
-          <button key={p.name} type="button" className="btn small" onClick={() => update((d) => void d.effects.push(blankEffect({ ...p })))} title={p.note}>
+          <button key={p.name} type="button" className="btn small" onClick={(ev) => (performEffect(p.name, centerOf(ev.currentTarget)), update((d) => void d.effects.push(blankEffect({ ...p }))))} title={p.note}>
             + {p.name}
           </button>
         ))}
@@ -103,6 +121,7 @@ export function ConditionsPanel() {
             ev.preventDefault();
             if (!draft.name.trim() || badDice) return;
             update((d) => void d.effects.push(blankEffect({ ...draft, name: draft.name.trim() })));
+            performEffect(draft.name.trim(), centerOf(ev.currentTarget));
             setDraft(blankEffect({ name: '' }));
             setAdding(false);
           }}

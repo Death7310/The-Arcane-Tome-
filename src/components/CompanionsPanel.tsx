@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { centerOf, performCondition } from '../fx';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
@@ -100,7 +101,12 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
       k.hp = Math.max(0, k.hp - (n - fromTemp));
     });
   const toggleTurn = (part: 'action' | 'bonus' | 'reaction') => set((k) => void (k.turn[part] = !k.turn[part]));
-  const toggleCondition = (id: ConditionId) => set((k) => void (k.conditions = k.conditions.includes(id) ? k.conditions.filter((x) => x !== id) : [...k.conditions, id]));
+  // Its conditions play their themed effect as they take hold or end, like yours.
+  const toggleCondition = (id: ConditionId, el: HTMLElement) => {
+    const ending = comp.conditions.includes(id);
+    performCondition(id, centerOf(el), `${comp.name}: ${CONDITIONS.find((x) => x.id === id)?.name}`, ending);
+    set((k) => void (k.conditions = ending ? k.conditions.filter((x) => x !== id) : [...k.conditions, id]));
+  };
 
   return (
     <div className={`companion${down ? ' down' : ''}`}>
@@ -163,7 +169,7 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
       {comp.conditions.length > 0 && (
         <div className="chips" aria-label={`${comp.name}'s conditions`}>
           {comp.conditions.map((id) => (
-            <button key={id} type="button" className="chip cond-on" title={`${CONDITIONS.find((x) => x.id === id)?.summary} Tap to end it.`} onClick={() => toggleCondition(id)}>
+            <button key={id} type="button" className="chip cond-on" title={`${CONDITIONS.find((x) => x.id === id)?.summary} Tap to end it.`} onClick={(e) => toggleCondition(id, e.currentTarget)}>
               {CONDITIONS.find((x) => x.id === id)?.name} ✕
             </button>
           ))}
@@ -214,7 +220,7 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
           {view === 'conditions' && (
             <div className="chips">
               {CONDITIONS.map((x) => (
-                <button key={x.id} type="button" className="chip" aria-pressed={comp.conditions.includes(x.id)} title={x.summary} onClick={() => toggleCondition(x.id)}>
+                <button key={x.id} type="button" className="chip" aria-pressed={comp.conditions.includes(x.id)} title={x.summary} onClick={(e) => toggleCondition(x.id, e.currentTarget)}>
                   {x.name}
                 </button>
               ))}

@@ -10,9 +10,12 @@
 // kept at ≤35% opacity, and disabled entirely when flashing is turned off or the
 // reader prefers reduced motion.
 
-import type { ActionMotion, EffectRequest, Element, FxLevel, Outcome, Point } from './types';
+import type { ActionMotion, ConditionFx, EffectRequest, Element, FxLevel, Outcome, Point } from './types';
 
-type Sprite = 'glow' | 'soft' | 'shard' | 'spark' | 'plus' | 'leaf' | 'drop' | 'foot';
+type Sprite = 'glow' | 'soft' | 'shard' | 'spark' | 'plus' | 'leaf' | 'drop' | 'foot' | 'heart' | 'star' | 'link' | 'glyph';
+
+/** Shapes drawn solid (not as glowing light), so they read on light pages too. */
+const SOLID: Sprite[] = ['soft', 'drop', 'foot', 'leaf', 'heart', 'link', 'glyph'];
 
 export interface Drawable {
   additive: boolean;
@@ -104,6 +107,8 @@ interface ParticleOpts {
   orbit?: { cx: number; cy: number; w: number; pull: number };
   twinkle?: boolean;
   delay?: number;
+  /** The character a 'glyph' particle shows ("Z", "!", "?", "♪"). */
+  glyph?: string;
 }
 
 class Particle implements Drawable {
@@ -126,6 +131,7 @@ class Particle implements Drawable {
   orbit?: ParticleOpts['orbit'];
   twinkle: boolean;
   delay: number;
+  glyph: string;
 
   constructor(o: ParticleOpts) {
     this.x = o.x;
@@ -139,7 +145,8 @@ class Particle implements Drawable {
     this.kind = o.sprite ?? 'glow';
     this.gravity = o.gravity ?? 0;
     this.drag = o.drag ?? 0;
-    this.additive = o.additive ?? (this.kind !== 'soft' && this.kind !== 'drop' && this.kind !== 'foot' && this.kind !== 'leaf');
+    this.additive = o.additive ?? !SOLID.includes(this.kind);
+    this.glyph = o.glyph ?? '';
     this.alpha = o.alpha ?? 1;
     this.rot = o.rot ?? Math.random() * Math.PI * 2;
     this.vrot = o.vrot ?? (this.kind === 'shard' || this.kind === 'leaf' ? rand(-9, 9) : 0);
@@ -244,6 +251,55 @@ class Particle implements Drawable {
         ctx.ellipse(0, 0, s * 0.45, s, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+        break;
+      }
+      case 'heart': {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(Math.sin(this.rot) * 0.35);
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.moveTo(0, s * 0.9);
+        ctx.bezierCurveTo(-s * 1.4, -s * 0.1, -s * 0.6, -s * 1.2, 0, -s * 0.45);
+        ctx.bezierCurveTo(s * 0.6, -s * 1.2, s * 1.4, -s * 0.1, 0, s * 0.9);
+        ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'star': {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rot);
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        for (let i = 0; i < 10; i++) {
+          const r = i % 2 ? s * 0.42 : s;
+          const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+          ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'link': {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rot);
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = Math.max(1.5, s * 0.28);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, s, s * 0.55, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+        break;
+      }
+      case 'glyph': {
+        ctx.fillStyle = this.color;
+        ctx.font = `700 ${Math.round(s * 2)}px Georgia, serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.glyph, this.x, this.y);
         break;
       }
     }
@@ -1333,6 +1389,167 @@ export class FxEngine {
     if (this.level === 'off' || !this.ctx) return;
     this.impact('healing', at, 1, 'none', 0.8);
     this.text(`+${amount}`, at, '#8ff5b0', 30);
+  }
+
+  /**
+   * A condition taking hold (or, with `ending`, lifting), drawn in its own theme: stone for
+   * Petrified, drifting Zs for Unconscious, green bubbles for Poisoned, hearts for Charmed…
+   */
+  condition(id: ConditionFx, at: Point, name: string, ending = false) {
+    if (this.level === 'off' || !this.ctx) return;
+    if (ending) {
+      this.add(new Ring(at.x, at.y, 12, 110, 3, '#e9f2ff', 0.7));
+      this.spray(at, 18, { speed: [60, 180], life: [0.5, 0.9], size: [2, 4], colors: ['#ffffff', '#e8f0ff', '#fff6d8'], twinkle: true, drag: 2, gravity: -60 });
+      this.text(`${name} ends`, { x: at.x, y: at.y - 34 }, '#dfe9ff', 20);
+      return;
+    }
+    const up = (n: number, o: Omit<ParticleOpts, 'x' | 'y' | 'life' | 'size' | 'color'> & { colors: string[]; size: [number, number]; life: [number, number]; spreadX?: number }) => {
+      for (let i = 0; i < this.n(n); i++)
+        this.particle({ ...o, x: at.x + rand(-(o.spreadX ?? 40), o.spreadX ?? 40), y: at.y + rand(-10, 20), life: rand(o.life[0], o.life[1]), size: rand(o.size[0], o.size[1]), color: pick(o.colors), delay: (o.delay ?? 0) + rand(0, 0.5) });
+    };
+    let label = '#e9e4d6';
+    switch (id) {
+      case 'blinded':
+        this.dim(0.5, 1500);
+        this.vignette('#000000', 0.85, 1500);
+        for (let i = 0; i < this.n(36); i++) {
+          const a = rand(0, Math.PI * 2);
+          const r = rand(90, 160);
+          this.particle({ x: at.x + Math.cos(a) * r, y: at.y + Math.sin(a) * r, life: rand(1, 1.5), size: rand(16, 26), sizeEnd: 6, sprite: 'soft', color: pick(['#15141b', '#25232d', '#34313d']), orbit: { cx: at.x, cy: at.y, w: rand(1, 2), pull: 90 }, alpha: 0.8 });
+        }
+        label = '#b9b6c4';
+        break;
+      case 'charmed':
+        up(16, { sprite: 'heart', colors: ['#ff5fa2', '#ff8fc0', '#ffc2dc'], size: [7, 13], sizeEnd: 9, life: [1.2, 1.9], vy: -90, gravity: -30, vx: 0, spreadX: 60 });
+        this.add(new Ring(at.x, at.y, 10, 90, 3, '#ff9cc9', 0.9));
+        this.vignette('#ff6fae', 0.25, 1100);
+        label = '#ff9cc9';
+        break;
+      case 'deafened':
+        for (let i = 0; i < 3; i++) this.add(new Ring(at.x, at.y, 170 - i * 20, 8, 3, '#a7adbb', 0.9, i * 0.18));
+        up(4, { sprite: 'glyph', glyph: '♪', colors: ['#c9ced9'], size: [10, 14], sizeEnd: 8, life: [1, 1.4], vy: 50, gravity: 120, alpha: 0.85 });
+        label = '#c9ced9';
+        break;
+      case 'frightened':
+        this.shake(6, 520);
+        this.vignette('#2a0838', 0.7, 1200);
+        up(22, { sprite: 'soft', colors: ['#2c1838', '#3d2050', '#1a0f24'], size: [14, 24], sizeEnd: 40, life: [0.9, 1.4], vy: -140, gravity: -60, alpha: 0.6, spreadX: 70 });
+        this.spray(at, 7, { speed: [160, 260], life: [0.8, 1.1], size: [14, 20], sizeEnd: 12, sprite: 'glyph', glyph: '!', colors: ['#d9b3ff', '#ffffff'], drag: 3 });
+        label = '#d9b3ff';
+        break;
+      case 'grappled':
+      case 'restrained': {
+        const vines = id === 'restrained';
+        this.add(new Ring(at.x, at.y, 140, 34, 5, vines ? '#5f9a3e' : '#9b8f7e', 0.9));
+        for (let i = 0; i < this.n(vines ? 26 : 18); i++) {
+          const a = rand(0, Math.PI * 2);
+          const r = rand(90, 140);
+          this.particle({
+            x: at.x + Math.cos(a) * r,
+            y: at.y + Math.sin(a) * r,
+            life: rand(0.9, 1.3),
+            size: vines ? rand(6, 10) : rand(6, 9),
+            sizeEnd: vines ? 6 : 7,
+            sprite: vines ? 'leaf' : 'link',
+            color: pick(vines ? ['#4f8a34', '#6fae48', '#3d6e2a'] : ['#b8b2a6', '#8e887c', '#d2cdc2']),
+            orbit: { cx: at.x, cy: at.y, w: rand(2.5, 3.5), pull: 80 },
+            alpha: 0.95,
+          });
+        }
+        this.shake(3, 260);
+        label = vines ? '#8fd06a' : '#cfc6b6';
+        break;
+      }
+      case 'incapacitated':
+        this.dim(0.3, 1000);
+        up(18, { sprite: 'soft', colors: ['#8b8796', '#a29eac'], size: [10, 16], sizeEnd: 4, life: [0.8, 1.2], vy: 20, gravity: 160, alpha: 0.6 });
+        label = '#b9b6c4';
+        break;
+      case 'invisible':
+        for (let i = 0; i < this.n(46); i++) {
+          const a = rand(0, Math.PI * 2);
+          const r = rand(0, 60);
+          this.particle({ x: at.x + Math.cos(a) * r, y: at.y + Math.sin(a) * r, vx: Math.cos(a) * rand(20, 70), vy: Math.sin(a) * rand(20, 70), life: rand(0.8, 1.5), size: rand(2, 5), color: pick(['#ffffff', '#dff4ff', '#b8e2ff']), twinkle: true, drag: 1 });
+        }
+        this.add(new Ring(at.x, at.y, 20, 130, 2, '#dff4ff', 1));
+        label = 'rgba(223,244,255,0.75)';
+        break;
+      case 'paralyzed':
+        this.vignette('#a7d8ff', 0.4, 1100);
+        this.shake(3, 300);
+        for (let i = 0; i < this.n(40); i++) {
+          const a = rand(0, Math.PI * 2);
+          this.particle({ x: at.x + Math.cos(a) * rand(20, 70), y: at.y + Math.sin(a) * rand(20, 70), vx: rand(-260, 260), vy: rand(-260, 260), life: rand(0.08, 0.18), size: rand(2, 3.5), sprite: 'spark', color: pick(['#ffffff', '#cfe6ff', '#fff3a0']), delay: rand(0, 1), drag: 6 });
+        }
+        this.add(new Ring(at.x, at.y, 60, 62, 3, '#cfe6ff', 1.2, 0, 6));
+        label = '#cfe6ff';
+        break;
+      case 'petrified':
+        this.shake(8, 480);
+        this.vignette('#6f6a63', 0.6, 1200);
+        this.dim(0.2, 900);
+        this.add(new Rays(at.x, at.y, 110, '#b7b0a5', 0.9, 9));
+        this.spray(at, 26, { speed: [120, 320], life: [0.8, 1.3], size: [6, 12], sprite: 'shard', colors: ['#8d877d', '#a9a296', '#6e695f', '#c4bdb1'], gravity: 900, angle: -Math.PI / 2, spread: Math.PI * 0.6, additive: false });
+        this.spray(at, 14, { speed: [20, 80], life: [1, 1.6], size: [14, 22], sizeEnd: 40, sprite: 'soft', colors: ['#9a948a', '#7d776e'], alpha: 0.5, gravity: 40, drag: 1.5 });
+        label = '#c4bdb1';
+        break;
+      case 'poisoned':
+        this.vignette('#6aa84a', 0.35, 1200);
+        up(24, { sprite: 'drop', colors: ['#9bd65a', '#6aa84a', '#c6ee86', '#8a6aa8'], size: [3, 7], sizeEnd: 9, life: [1, 1.6], vy: -70, gravity: -40, alpha: 0.85, spreadX: 50 });
+        this.spray(at, 10, { speed: [10, 50], life: [1.2, 1.8], size: [16, 24], sizeEnd: 46, sprite: 'soft', colors: ['#6f8f4a', '#86a85a'], alpha: 0.4, gravity: -20, drag: 1 });
+        label = '#b4e07a';
+        break;
+      case 'prone':
+        this.shake(5, 300);
+        this.spray({ x: at.x, y: at.y + 24 }, 16, { speed: [60, 200], life: [0.6, 1], size: [12, 20], sizeEnd: 34, sprite: 'soft', colors: ['#a08c6e', '#8a7a62'], alpha: 0.5, angle: -Math.PI / 2, spread: Math.PI * 0.55, drag: 2.5, gravity: 120 });
+        for (let i = 0; i < 4; i++) this.particle({ x: at.x + rand(-30, 30), y: at.y - 60, vx: 0, vy: 900, life: 0.12, size: 3, sprite: 'spark', color: '#e9e4d6', delay: i * 0.03 });
+        label = '#d8c8ae';
+        break;
+      case 'stunned':
+        this.shake(3, 300);
+        for (let i = 0; i < this.n(7); i++) {
+          const a = (i / 7) * Math.PI * 2;
+          this.particle({ x: at.x + Math.cos(a) * 52, y: at.y - 50 + Math.sin(a) * 18, life: 1.8, size: 11, sizeEnd: 9, sprite: 'star', color: pick(['#ffe27a', '#fff3b0', '#ffd75e']), orbit: { cx: at.x, cy: at.y - 50, w: 4.5, pull: 0 }, twinkle: true });
+        }
+        this.spray(at, 12, { speed: [80, 200], life: [0.4, 0.7], size: [2, 4], colors: ['#ffe27a', '#ffffff'], drag: 3 });
+        label = '#ffe27a';
+        break;
+      case 'unconscious':
+        this.dim(0.45, 1800);
+        this.vignette('#1e2a55', 0.55, 1800);
+        for (let i = 0; i < this.n(6); i++)
+          this.particle({ x: at.x + 10 + i * 10, y: at.y - 10, vx: rand(30, 50), vy: rand(-70, -50), life: 1.7, size: 11 + i * 3, sizeEnd: 14 + i * 3.5, sprite: 'glyph', glyph: i % 3 === 2 ? 'Z' : 'z', color: pick(['#c9d4ff', '#9fb0ff', '#e6ebff']), delay: i * 0.2, drag: 0.4 });
+        label = '#c9d4ff';
+        break;
+      case 'exhaustion':
+        this.dim(0.3, 1300);
+        this.vignette('#4a4652', 0.45, 1300);
+        up(14, { sprite: 'drop', colors: ['#bfe3ff', '#9fd0f5'], size: [2.5, 4.5], sizeEnd: 3, life: [0.7, 1.1], vy: 40, gravity: 600, spreadX: 30 });
+        label = '#b9b6c4';
+        break;
+    }
+    this.text(name, { x: at.x, y: at.y - 40 }, label, 22, 0.1);
+  }
+
+  /** A timed effect starting (Bless, Haste, Shield…), in its spell's own light. */
+  effect(name: string, at: Point) {
+    if (this.level === 'off' || !this.ctx) return;
+    const n = name.toLowerCase();
+    if (/haste/.test(n)) {
+      this.action('dash', at);
+      this.aura('lightning', at, 0.6);
+    } else if (/shield of faith/.test(n)) {
+      this.add(new Ring(at.x, at.y, 40, 90, 6, '#ffe27a', 1.2, 0, 6));
+      this.aura('radiant', at, 0.5);
+    } else if (/shield|armor|barkskin/.test(n)) {
+      this.add(new Ring(at.x, at.y, 30, 80, 6, '#cdb3ff', 1, 0, 6));
+      this.add(new Ring(at.x, at.y, 34, 86, 3, '#9a78ff', 1, 0.12, 6));
+    } else if (/bane|curse|hex|bestow/.test(n)) this.aura('necrotic', at, 0.6);
+    else if (/bless|guidance|aid|heroism|inspiration/.test(n)) this.aura('radiant', at, /guidance/.test(n) ? 0.3 : 0.7);
+    else if (/fire|flame/.test(n)) this.aura('fire', at, 0.6);
+    else if (/ice|frost|cold/.test(n)) this.aura('cold', at, 0.6);
+    else this.aura('arcane', at, 0.5);
+    this.text(name, { x: at.x, y: at.y - 40 }, '#e9e4d6', 22, 0.1);
   }
 
   /**

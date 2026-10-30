@@ -1,7 +1,7 @@
 import { rollDice, setDiceSurface, type DicePhase, type DieSpec, type DiceRollOptions } from './dice';
 import { fx } from './engine';
 import { sound } from './sound';
-import type { ActionMotion, EffectRequest, Point } from './types';
+import type { ActionMotion, ConditionFx, EffectRequest, Point } from './types';
 
 export { fx, sound, setDiceSurface, type DicePhase, type DieSpec };
 export { weaponLook, type StrikeLook } from './strikes';
@@ -21,6 +21,25 @@ export function perform(req: EffectRequest): number {
   if (req.delayMs) window.setTimeout(playSound, req.delayMs);
   else playSound();
   return travel;
+}
+
+/** A condition taking hold (or lifting): its themed animation and sound. */
+export function performCondition(id: ConditionFx, from: Point, name: string, ending = false) {
+  fx.condition(id, from, name, ending);
+  sound.condition(id, ending);
+}
+
+/** Something wearing off (a timed effect ending): a light lifting away. */
+export function performEnd(name: string, from: Point) {
+  fx.condition('incapacitated', from, name, true);
+  sound.condition('incapacitated', true);
+}
+
+/** A timed effect starting (Bless, Haste, Shield…): its spell's look and sound. */
+export function performEffect(name: string, from: Point) {
+  fx.effect(name, from);
+  const n = name.toLowerCase();
+  sound.element(/bane|curse|hex/.test(n) ? 'necrotic' : /haste/.test(n) ? 'lightning' : /shield(?! of faith)/.test(n) ? 'force' : /bless|guidance|faith|aid/.test(n) ? 'radiant' : 'arcane', { shape: 'aura', power: 0 });
 }
 
 export function performAction(motion: ActionMotion, from: Point, label?: string) {

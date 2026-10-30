@@ -4,7 +4,7 @@
 // made from a click, and the context is created lazily on the first one.
 
 import type { StrikeLook } from './strikes';
-import type { ActionMotion, Element, Outcome, Shape } from './types';
+import type { ActionMotion, ConditionFx, Element, Outcome, Shape } from './types';
 
 type Ctx = AudioContext;
 
@@ -294,6 +294,72 @@ class SoundEngine {
         break;
       default:
         this.chimes(0, [880, 1318.5], 0.06, 0.06, 0.4);
+    }
+  }
+
+  /** A condition taking hold (or lifting), in its own sound. */
+  condition(id: ConditionFx, ending = false) {
+    if (!this.ensure()) return;
+    if (ending) {
+      this.chimes(0, [880, 1318.5], 0.08, 0.06, 0.45);
+      return;
+    }
+    switch (id) {
+      case 'blinded':
+        this.n({ dur: 1, type: 'lowpass', freq: 900, freqEnd: 120, q: 0.6, gain: 0.45, attack: 0.05 });
+        break;
+      case 'charmed':
+        this.chimes(0, [1046.5, 1318.5, 1568, 2093], 0.09, 0.06, 0.7);
+        break;
+      case 'deafened':
+        this.t({ dur: 0.9, freq: 3200, gain: 0.05, attack: 0.02 });
+        this.n({ dur: 0.6, type: 'lowpass', freq: 500, freqEnd: 150, q: 0.5, gain: 0.3, attack: 0.02 });
+        break;
+      case 'frightened':
+        this.t({ dur: 1.1, freq: 98, gain: 0.35, type: 'triangle', attack: 0.15 });
+        this.t({ dur: 1.1, freq: 104, gain: 0.3, type: 'triangle', attack: 0.15 });
+        this.n({ dur: 0.9, type: 'bandpass', freq: 400, freqEnd: 1400, q: 0.8, gain: 0.25, attack: 0.3 });
+        break;
+      case 'grappled':
+        this.crackle(0, 0.5, 40, 0.25, 4200);
+        this.n({ dur: 0.25, type: 'lowpass', freq: 500, q: 0.7, gain: 0.4, attack: 0.005 });
+        break;
+      case 'restrained':
+        this.n({ dur: 0.7, type: 'bandpass', freq: 260, freqEnd: 180, q: 6, gain: 0.35, attack: 0.05 });
+        this.crackle(0.1, 0.5, 25, 0.12, 1800);
+        break;
+      case 'incapacitated':
+        this.t({ dur: 0.8, freq: 420, freqEnd: 120, gain: 0.18, attack: 0.02 });
+        break;
+      case 'invisible':
+        this.chimes(0, [2093, 2637, 3136], 0.06, 0.04, 0.9);
+        this.n({ dur: 0.8, type: 'highpass', freq: 5000, q: 0.5, gain: 0.08, attack: 0.1 });
+        break;
+      case 'paralyzed':
+        this.crackle(0, 1, 70, 0.22, 3200);
+        this.t({ dur: 0.9, freq: 1800, gain: 0.04, type: 'square', attack: 0.01 });
+        break;
+      case 'petrified':
+        this.t({ dur: 0.5, freq: 90, freqEnd: 40, gain: 0.7 });
+        this.n({ dur: 0.5, type: 'lowpass', freq: 400, q: 0.7, gain: 0.55, attack: 0.003 });
+        this.crackle(0.05, 0.6, 60, 0.3, 900);
+        break;
+      case 'poisoned':
+        for (let i = 0; i < 7; i++) this.t({ at: i * 0.11 + Math.random() * 0.05, dur: 0.09, freq: 280 + Math.random() * 260, freqEnd: 700 + Math.random() * 300, gain: 0.12, attack: 0.005 });
+        break;
+      case 'prone':
+        this.t({ dur: 0.3, freq: 85, freqEnd: 45, gain: 0.6 });
+        this.n({ dur: 0.25, type: 'lowpass', freq: 600, q: 0.7, gain: 0.45, attack: 0.003 });
+        break;
+      case 'stunned':
+        this.chimes(0, [1318.5, 1174.7, 1318.5, 1174.7, 1318.5], 0.11, 0.06, 0.3);
+        break;
+      case 'unconscious':
+        this.chimes(0, [783.99, 659.25, 523.25, 392], 0.22, 0.05, 0.9);
+        break;
+      case 'exhaustion':
+        this.n({ dur: 1, type: 'bandpass', freq: 900, freqEnd: 260, q: 1.2, gain: 0.3, attack: 0.2 });
+        break;
     }
   }
 

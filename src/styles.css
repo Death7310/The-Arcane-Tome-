@@ -538,10 +538,11 @@ button.stat:hover { border-color: var(--gilt); }
 
 /* ── Effects layers ── */
 .fx-canvas, .fx-dim, .fx-flash, .fx-vignette { position: fixed; inset: 0; pointer-events: none; }
-.fx-canvas { z-index: 52; width: 100vw; height: 100vh; }
-.fx-dim { z-index: 50; background: var(--fx-dim); opacity: 0; }
-.fx-flash { z-index: 53; opacity: 0; background: #fff; }
-.fx-vignette { z-index: 51; opacity: 0; --fx-vignette: #ff6a1a; box-shadow: inset 0 0 18vmin 4vmin var(--fx-vignette); }
+/* Above dialogs (z-index 60), so effects played from one (previews, Settings' "Try every effect") show. */
+.fx-canvas { z-index: 68; width: 100vw; height: 100vh; }
+.fx-dim { z-index: 66; background: var(--fx-dim); opacity: 0; }
+.fx-flash { z-index: 69; opacity: 0; background: #fff; }
+.fx-vignette { z-index: 67; opacity: 0; --fx-vignette: #ff6a1a; box-shadow: inset 0 0 18vmin 4vmin var(--fx-vignette); }
 
 @media (prefers-reduced-motion: reduce) {
   .result { animation: none; }

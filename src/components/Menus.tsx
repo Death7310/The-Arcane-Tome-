@@ -1,7 +1,8 @@
 import { FairnessCheck } from './Fairness';
 import { useEffect, useRef, useState } from 'react';
-import { fx, perform, sound, centerOf, type DiceSpeed } from '../fx';
+import { fx, perform, performCondition, sound, centerOf, type DiceSpeed } from '../fx';
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
+import { CONDITIONS } from '../systems/dnd5e/data';
 import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
 import { isNative, saveFileToDevice, shareFile } from '../state/native';
 import { isDefault, normalizeLayout, resetLayout } from '../state/layout';
@@ -439,6 +440,17 @@ export function SettingsDialog(props: {
               {ELEMENTS.find((q) => q.id === x.el)!.name}
             </button>
           ))}
+        </div>
+        <h3 style={{ margin: 0 }}>Conditions</h3>
+        <div className="actions-grid">
+          {CONDITIONS.map((k) => (
+            <button key={k.id} type="button" className="cast" title={k.summary} onClick={(e) => performCondition(k.id, centerOf(e.currentTarget), k.name)}>
+              {k.name}
+            </button>
+          ))}
+          <button type="button" className="cast" onClick={(e) => performCondition('exhaustion', centerOf(e.currentTarget), 'Exhaustion')}>
+            Exhaustion
+          </button>
         </div>
         <button type="button" className="btn small ghost" onClick={() => sound.dice(3)}>
           Test dice sound

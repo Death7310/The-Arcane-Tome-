@@ -1,4 +1,4 @@
-import type { DamageType } from '../systems/dnd5e/data';
+import type { ConditionId, DamageType } from '../systems/dnd5e/data';
 
 /** Visual + audio "flavour" of an effect. Damage types map 1:1; the rest cover non-damaging magic and actions. */
 export type Element = DamageType | 'healing' | 'arcane' | 'shadow' | 'nature';
@@ -68,3 +68,6 @@ export interface EffectRequest {
 }
 
 export type FxLevel = 'full' | 'reduced' | 'off';
+
+/** A condition's animation: one of the 15 conditions, or a level of Exhaustion. */
+export type ConditionFx = ConditionId | 'exhaustion';
