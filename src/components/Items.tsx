@@ -7,7 +7,7 @@ import { useChar } from '../state/character';
 import { useCatalog } from '../state/catalog';
 import { WEAPONS, ARMOR } from '../systems/dnd5e/data';
 import { armorFromResolved, inventoryFromResolved, itemName, itemSummary, parseItemText, resolveItem, weaponFromResolved, type ParsedItem } from '../systems/dnd5e/items';
-import { uid, type Character, type Item, type Weapon } from '../systems/dnd5e/model';
+import { uid, type Character, type Companion, type Item, type Weapon } from '../systems/dnd5e/model';
 import type { ItemDef } from '../systems/dnd5e/srd';
 import { RulesText } from './RulesText';
 import { Dialog } from './ui';
@@ -25,8 +25,8 @@ const KINDS: { id: Kind; name: string }[] = [
 const isWeaponDef = (d: ItemDef) => d.kind === 'weapon' || !!d.weapon || d.template?.applies === 'weapon';
 const isArmorDef = (d: ItemDef) => d.kind === 'armor' || !!d.armor || d.template?.applies === 'armor' || d.template?.applies === 'shield';
 
-/** Puts an item in the inventory, adding to the count when it's already there. */
-export function addToInventory(d: Character, item: Omit<Item, 'id'>) {
+/** Puts an item in an inventory (yours or a companion's), adding to the count when it's already there. */
+export function addToInventory(d: { inventory: Item[] }, item: Omit<Item, 'id'>) {
   const same = d.inventory.find((i) => i.name.trim().toLowerCase() === item.name.trim().toLowerCase());
   if (same) {
     same.qty += item.qty || 1;
@@ -35,13 +35,33 @@ export function addToInventory(d: Character, item: Omit<Item, 'id'>) {
   } else d.inventory.push({ ...item, id: uid() });
 }
 
-function wear(d: Character, armor: { armorId: string; shield: boolean; magicBonus: number }) {
+type Worn = { armorId: string; shield: boolean; magicBonus: number };
+
+function wear(d: Character, armor: Worn) {
   if (armor.shield) d.armor.shield = true;
   else if (armor.armorId) (d.armor.armorId = armor.armorId), (d.armor.magicBonus = armor.magicBonus);
 }
 
-export function AddItemDialog({ mode, onClose, start = 'list' }: { mode: 'weapon' | 'any'; onClose: () => void; start?: 'list' | 'paste' }) {
+/** A companion puts on armor or barding (or takes up a shield): its AC is then worked out from it. */
+function wearOnCompanion(k: Companion, armor: Worn) {
+  const now = k.armor ?? { armorId: '', shield: false, magicBonus: 0 };
+  k.armor = armor.shield ? { ...now, shield: true } : { ...now, armorId: armor.armorId, magicBonus: armor.magicBonus };
+}
+
+/**
+ * The item picker and paste box. With `companionId`, everything goes to that companion: its
+ * gear, the weapons it wields, and armor or barding it wears.
+ */
+export function AddItemDialog({ mode, onClose, start = 'list', companionId }: { mode: 'weapon' | 'any'; onClose: () => void; start?: 'list' | 'paste'; companionId?: string }) {
   const { char: c, update } = useChar();
+  const comp = companionId ? c.companions.find((k) => k.id === companionId) : undefined;
+  /** Whose gear this is: the companion's, or yours. */
+  const holder = (d: Character): Character | Companion => (companionId ? (d.companions.find((k) => k.id === companionId) ?? d) : d);
+  const putOn = (d: Character, armor: Worn) => {
+    const h = holder(d);
+    if (h === d) wear(d, armor);
+    else wearOnCompanion(h as Companion, armor);
+  };
   const cat = useCatalog();
   const items = useMemo(() => cat?.items ?? [], [cat]);
   const [tab, setTab] = useState<'list' | 'paste'>(start);
@@ -65,11 +85,12 @@ export function AddItemDialog({ mode, onClose, start = 'list' }: { mode: 'weapon
     });
   }, [items, q, kind, source]);
 
-  const done = (what: string) => setAdded(`${what} added.`);
+  const done = (what: string) => setAdded(`${what} added${comp ? ` to ${comp.name}` : ''}.`);
   const addWeapon = (w: Weapon, inv?: Omit<Item, 'id'>) =>
     update((d) => {
-      d.weapons.push({ ...w, id: uid() });
-      if (inv && mode === 'any') addToInventory(d, inv);
+      const h = holder(d);
+      h.weapons.push({ ...w, id: uid() });
+      if (inv && mode === 'any') addToInventory(h, inv);
     });
 
   /** Adds a catalog entry, made from `base` when it's a magic item built on a base weapon or armor. */
@@ -82,15 +103,15 @@ export function AddItemDialog({ mode, onClose, start = 'list' }: { mode: 'weapon
     if (w) addWeapon(w, inv);
     else
       update((d) => {
-        addToInventory(d, inv);
+        addToInventory(holder(d), inv);
         const armor = wearIt ? armorFromResolved(r) : null;
-        if (armor) wear(d, armor);
+        if (armor) putOn(d, armor);
       });
     done(r.name);
   };
 
   return (
-    <Dialog title={mode === 'weapon' ? 'Add a weapon' : 'Add equipment'} onClose={onClose}>
+    <Dialog title={comp ? `Gear for ${comp.name}` : mode === 'weapon' ? 'Add a weapon' : 'Add equipment'} onClose={onClose}>
       <div className="seg" role="radiogroup" aria-label="How to add">
         <button type="button" role="radio" aria-checked={tab === 'list'} onClick={() => setTab('list')}>
           Item list
@@ -101,7 +122,7 @@ export function AddItemDialog({ mode, onClose, start = 'list' }: { mode: 'weapon
       </div>
       {added && (
         <p className="note good" role="status" style={{ marginTop: 10 }}>
-          {added} {mode === 'weapon' ? 'It’s in Attacks.' : 'Weapons go in Attacks as well as your inventory.'}
+          {added} {comp ? 'Weapons it wields get an attack button on its card.' : mode === 'weapon' ? 'It’s in Attacks.' : 'Weapons go in Attacks as well as your inventory.'}
         </p>
       )}
 
@@ -178,15 +199,22 @@ export function AddItemDialog({ mode, onClose, start = 'list' }: { mode: 'weapon
         </>
       )}
 
-      {tab === 'paste' && <PasteItem mode={mode} items={items} wearing={c.armor.armorId !== 'none'} onAdd={(p, wearIt) => {
-        if (p.weapon) addWeapon(p.weapon, p.item);
-        else
-          update((d) => {
-            addToInventory(d, p.item);
-            if (wearIt && p.armor) wear(d, p.armor);
-          });
-        done(p.name);
-      }} />}
+      {tab === 'paste' && (
+        <PasteItem
+          mode={mode}
+          items={items}
+          wearing={comp ? !!comp.armor : c.armor.armorId !== 'none'}
+          onAdd={(p, wearIt) => {
+            if (p.weapon) addWeapon(p.weapon, p.item);
+            else
+              update((d) => {
+                addToInventory(holder(d), p.item);
+                if (wearIt && p.armor) putOn(d, p.armor);
+              });
+            done(p.name);
+          }}
+        />
+      )}
     </Dialog>
   );
 }

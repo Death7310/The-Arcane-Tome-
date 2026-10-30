@@ -185,6 +185,16 @@ export interface Companion {
   notes: string;
   /** Where it came from: "SRD 5.2.1", "Pasted stat block", "Made up". */
   source: string;
+  /** Its own conditions, which affect its rolls like yours affect yours. */
+  conditions: ConditionId[];
+  /** What it has used this turn. */
+  turn: Turn;
+  /** What it carries. */
+  inventory: Item[];
+  /** Weapons it wields, rolled with its own STR or DEX and Proficiency Bonus. */
+  weapons: Weapon[];
+  /** Armor or barding it wears; null means its stat block's AC. */
+  armor: { armorId: string; shield: boolean; magicBonus: number } | null;
 }
 
 export interface Item {
@@ -481,6 +491,11 @@ export function blankCompanion(partial: Partial<Companion> = {}): Companion {
     source: 'Made up',
     ...partial,
     actions: (partial.actions ?? []).map((a) => blankCompanionAction(a)),
+    conditions: Array.isArray(partial.conditions) ? partial.conditions : [],
+    turn: { ...emptyTurn(), ...partial.turn },
+    inventory: Array.isArray(partial.inventory) ? partial.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
+    weapons: Array.isArray(partial.weapons) ? partial.weapons.map((w) => blankWeapon(w)) : [],
+    armor: partial.armor && typeof partial.armor.armorId === 'string' ? { ...{ shield: false, magicBonus: 0 }, ...(partial.armor as Partial<NonNullable<Companion['armor']>>), armorId: partial.armor.armorId } : null,
   };
 }
 

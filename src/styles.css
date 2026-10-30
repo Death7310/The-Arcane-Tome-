@@ -715,3 +715,12 @@ button.stat:hover { border-color: var(--gilt); }
 .tile-label { font-weight: 600; }
 .tile-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .tile-bar > span { display: block; height: 100%; background: var(--gilt); }
+
+/* Companion turns and conditions */
+.comp-turn { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.comp-turn .chip[aria-pressed='true'] { text-decoration: line-through; opacity: 0.75; }
+.comp-move { display: inline-flex; gap: 4px; align-items: center; }
+.comp-move .ac { width: 64px; }
+.chip.cond-on { border-color: var(--warn); color: var(--warn); }
+.companion.down { border-color: var(--bad); }
+.companion .seg { justify-self: start; }

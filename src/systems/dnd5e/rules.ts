@@ -392,10 +392,13 @@ export function classSummary(c: Character): string {
 
 export const conditionName = (id: ConditionId): string => CONDITIONS.find((k) => k.id === id)?.name ?? id;
 
-export const has = (c: Character, id: ConditionId): boolean => c.conditions.includes(id);
+/** Anything with conditions: a character, or a companion. */
+type Conditioned = Pick<Character, 'conditions'>;
+
+export const has = (c: Conditioned, id: ConditionId): boolean => c.conditions.includes(id);
 
 /** Which incapacitating condition stops you taking actions, if any. */
-export function incapacitatedBy(c: Character): string | null {
+export function incapacitatedBy(c: Conditioned): string | null {
   const k = c.conditions.find((x) => INCAPACITATING.includes(x));
   return k ? conditionName(k) : null;
 }
@@ -418,7 +421,7 @@ export interface RollMode {
  * Only effects the rules apply unconditionally to your own rolls are automated; anything
  * that depends on the attacker or the situation stays a reminder.
  */
-export function rollMode(c: Character, kind: TestKind): RollMode {
+export function rollMode(c: Conditioned, kind: TestKind): RollMode {
   const adv: string[] = [];
   const dis: string[] = [];
   let autoFail: string | null = null;

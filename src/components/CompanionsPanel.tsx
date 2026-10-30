@@ -2,11 +2,13 @@ import { useMemo, useState } from 'react';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
-import { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, type Ability } from '../systems/dnd5e/data';
+import { ABILITIES, ABILITY_NAMES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, type Ability, type ConditionId } from '../systems/dnd5e/data';
+import { carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, evalFormula, isFormula } from '../systems/dnd5e/formula';
-import { blankCompanion, blankCompanionAction, type Character, type Companion, type CompanionAction } from '../systems/dnd5e/model';
+import { blankCompanion, blankCompanionAction, uid, type Character, type Companion, type CompanionAction } from '../systems/dnd5e/model';
 import { abilityMod, resolveTokens, signed } from '../systems/dnd5e/rules';
 import { COMPANION_AI_PROMPT, companionFromCreature, parseStatBlock } from '../systems/dnd5e/statblock';
+import { AddItemDialog } from './Items';
 import { RulesText } from './RulesText';
 import { Check, ConfirmButton, Dialog, NumField, Panel, SelectField, TextField } from './ui';
 
@@ -78,13 +80,18 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
   const t = useTable();
   const [amount, setAmount] = useState(5);
   const [editing, setEditing] = useState(false);
+  const [view, setView] = useState<'sheet' | 'gear' | 'conditions'>('sheet');
   const max = Math.max(1, num(comp.maxHp, c, comp.hp));
-  const ac = evalFormula(comp.ac, c);
-  const pb = num(comp.pb, c, 2);
+  const ac = companionAc(comp, c);
+  const pb = compPb(comp, c);
   const set = (fn: (k: Companion) => void) => update((d) => fn(d.companions[idx]));
   const hpPct = Math.max(0, Math.min(100, (comp.hp / max) * 100));
   const usable = comp.actions.filter((a) => a.kind !== 'trait');
   const traits = comp.actions.filter((a) => a.kind === 'trait');
+  const speed = walkSpeed(comp);
+  const moveLeft = speed * (1 + comp.turn.dashes) - comp.turn.movementUsed;
+  const down = comp.hp <= 0;
+  const stopped = INCAPACITATING.find((x) => comp.conditions.includes(x));
 
   const hurt = (n: number) =>
     set((k) => {
@@ -92,17 +99,19 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
       k.tempHp -= fromTemp;
       k.hp = Math.max(0, k.hp - (n - fromTemp));
     });
+  const toggleTurn = (part: 'action' | 'bonus' | 'reaction') => set((k) => void (k.turn[part] = !k.turn[part]));
+  const toggleCondition = (id: ConditionId) => set((k) => void (k.conditions = k.conditions.includes(id) ? k.conditions.filter((x) => x !== id) : [...k.conditions, id]));
 
   return (
-    <div className="companion">
+    <div className={`companion${down ? ' down' : ''}`}>
       <div className="comp-head">
         <button type="button" className="comp-title" onClick={onToggle} aria-expanded={expanded}>
           <b>{comp.name}</b>
           <small>{[comp.kind || `${comp.size} ${comp.type}`, comp.cr ? `CR ${comp.cr}` : ''].filter(Boolean).join(' · ')}</small>
         </button>
         <div className="comp-stats">
-          <span title={isFormula(comp.ac) ? comp.ac : undefined}>
-            <b>{ac ?? '?'}</b> AC
+          <span title={ac.worn ? `Wearing ${ac.worn}` : isFormula(comp.ac) ? comp.ac : undefined}>
+            <b>{ac.total}</b> AC
           </span>
           <span>
             <b>
@@ -129,10 +138,53 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
             Full
           </button>
         )}
-        <span className="hint">{comp.speed}</span>
       </div>
-      {usable.length > 0 && (
+      {down && <p className="hint" style={{ margin: 0, color: 'var(--bad)' }}>{comp.name} is at 0 Hit Points.</p>}
+
+      {/* Its turn: what it has used, and how far it can still move. */}
+      <div className="comp-turn" role="group" aria-label={`${comp.name}'s turn`}>
+        {(['action', 'bonus', 'reaction'] as const).map((part) => (
+          <button key={part} type="button" className="chip" aria-pressed={comp.turn[part]} title={comp.turn[part] ? 'Used this turn (tap to undo)' : 'Not used yet'} onClick={() => toggleTurn(part)}>
+            {part === 'action' ? 'Action' : part === 'bonus' ? 'Bonus' : 'Reaction'}
+          </button>
+        ))}
+        <span className="comp-move">
+          <span className="hint">Moved</span>
+          <NumField value={comp.turn.movementUsed} min={0} step={5} ariaLabel={`Feet ${comp.name} has moved`} id={`comp-move-${comp.id}`} className="ac" onChange={(n) => set((k) => void (k.turn.movementUsed = Math.max(0, n)))} />
+          <span className="hint">of {speed * (1 + comp.turn.dashes)} ft{moveLeft < 0 ? ' (too far)' : ''}</span>
+          <button type="button" className="btn small ghost" onClick={() => set((k) => void ((k.turn.dashes += 1), (k.turn.action = true)))} title="Dash: its Action, for as much movement again">
+            Dash
+          </button>
+        </span>
+        <button type="button" className="btn small ghost" onClick={() => t.companionNewTurn(comp)} title="Its turn starts over (your New turn does this too)">
+          New turn
+        </button>
+      </div>
+      {comp.conditions.length > 0 && (
+        <div className="chips" aria-label={`${comp.name}'s conditions`}>
+          {comp.conditions.map((id) => (
+            <button key={id} type="button" className="chip cond-on" title={`${CONDITIONS.find((x) => x.id === id)?.summary} Tap to end it.`} onClick={() => toggleCondition(id)}>
+              {CONDITIONS.find((x) => x.id === id)?.name} ✕
+            </button>
+          ))}
+        </div>
+      )}
+      {stopped && <p className="hint" style={{ margin: 0, color: 'var(--warn)' }}>{CONDITIONS.find((x) => x.id === stopped)?.name}: it can’t take actions, Bonus Actions or Reactions.</p>}
+
+      {(comp.weapons.length > 0 || usable.length > 0) && (
         <div className="comp-actions">
+          {comp.weapons.map((w) => {
+            const atk = companionWeaponAttack(comp, w, c);
+            const mod = compMod(comp, compWeaponAbility(comp, w)) + w.magicBonus;
+            return (
+              <button key={w.id} type="button" className={`cast el-${w.damage[0]?.type ?? 'bludgeoning'}`} onClick={(e) => t.companionWeapon(comp, w, e.currentTarget)} title={mathLine(atk)}>
+                <span>{w.name}</span>
+                <small>
+                  {signed(atk.total)} · {w.damage.map((d, i) => `${i === 0 && mod ? `${d.dice}${signed(mod)}` : d.dice} ${d.type}`).join(' + ')}
+                </small>
+              </button>
+            );
+          })}
           {usable.map((a) => (
             <button key={a.id} type="button" className="cast" onClick={(e) => t.companionAct(comp, a, e.currentTarget)} title={a.text}>
               <span>{a.name}</span>
@@ -141,78 +193,224 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
           ))}
         </div>
       )}
+
       {expanded && !editing && (
         <div className="comp-sheet">
-          <div className="comp-abilities">
-            {ABILITIES.map((a) => {
-              const m = abilityMod(comp.abilities[a]);
-              const save = m + (comp.saves.includes(a) ? pb : 0);
-              return (
-                <div key={a} className="comp-ability">
-                  <span className="k">{a.toUpperCase()}</span>
-                  <button type="button" className="v" onClick={(e) => t.companionTest(comp, `${ABILITY_NAMES[a]} check`, m, e.currentTarget)} title={`${ABILITY_NAMES[a]} check`}>
-                    {signed(m)}
-                  </button>
-                  <small>{comp.abilities[a]}</small>
-                  <button type="button" className={`save${comp.saves.includes(a) ? ' prof' : ''}`} onClick={(e) => t.companionTest(comp, `${ABILITY_NAMES[a]} save`, save, e.currentTarget)} title={`${ABILITY_NAMES[a]} save`}>
-                    Save {signed(save)}
-                  </button>
-                </div>
-              );
-            })}
+          <div className="seg" role="radiogroup" aria-label={`${comp.name}: what to show`}>
+            {(
+              [
+                ['sheet', 'Sheet'],
+                ['gear', `Gear${comp.inventory.length + comp.weapons.length ? ` (${comp.inventory.length + comp.weapons.length})` : ''}`],
+                ['conditions', `Conditions${comp.conditions.length ? ` (${comp.conditions.length})` : ''}`],
+              ] as const
+            ).map(([id, name]) => (
+              <button key={id} type="button" role="radio" aria-checked={view === id} onClick={() => setView(id)}>
+                {name}
+              </button>
+            ))}
           </div>
-          <dl className="comp-facts">
-            <dt>Proficiency</dt>
-            <dd>
-              {signed(pb)}
-              {isFormula(comp.pb) || /\{/.test(comp.pb) ? ' (yours)' : ''}
-            </dd>
-            {comp.skills && (
-              <>
-                <dt>Skills</dt>
-                <dd>{comp.skills}</dd>
-              </>
-            )}
-            {comp.senses && (
-              <>
-                <dt>Senses</dt>
-                <dd>{comp.senses}</dd>
-              </>
-            )}
-            {comp.languages && (
-              <>
-                <dt>Languages</dt>
-                <dd>{comp.languages}</dd>
-              </>
-            )}
-            {(isFormula(comp.ac) || isFormula(comp.maxHp)) && (
-              <>
-                <dt>Scales with you</dt>
-                <dd>
-                  AC {describeFormula(comp.ac)} · HP {describeFormula(comp.maxHp)}
-                </dd>
-              </>
-            )}
-          </dl>
-          {[...traits, ...usable].map((a) => (
-            <div key={a.id} className="comp-entry">
-              <b>{a.name}.</b> <small className="hint">{KINDS.find((k) => k.id === a.kind)?.name}</small>
-              <RulesText text={a.text || actionSummary(a, c) || '—'} />
+          {view === 'sheet' && <CompanionSheet comp={comp} idx={idx} pb={pb} traits={traits} usable={usable} onEdit={() => setEditing(true)} />}
+          {view === 'gear' && <CompanionGear comp={comp} idx={idx} />}
+          {view === 'conditions' && (
+            <div className="chips">
+              {CONDITIONS.map((x) => (
+                <button key={x.id} type="button" className="chip" aria-pressed={comp.conditions.includes(x.id)} title={x.summary} onClick={() => toggleCondition(x.id)}>
+                  {x.name}
+                </button>
+              ))}
+              <p className="hint" style={{ margin: 0, flexBasis: '100%' }}>
+                Its conditions work on its rolls like yours do on yours: Poisoned or Frightened give Disadvantage, Invisible gives Advantage on attacks, and Paralyzed, Stunned, Petrified or Unconscious fail its Strength and Dexterity saves.
+              </p>
             </div>
-          ))}
-          {comp.notes && <RulesText text={comp.notes} className="hint" />}
-          <p className="hint" style={{ margin: 0 }}>
-            {comp.source}. Tap a modifier for a check; your Advantage chip applies to its rolls.
-          </p>
-          <div className="row">
-            <button type="button" className="btn small" onClick={() => setEditing(true)}>
-              Edit
-            </button>
-            <ConfirmButton label="Remove companion" onConfirm={() => update((d) => void d.companions.splice(idx, 1))} />
-          </div>
+          )}
         </div>
       )}
       {expanded && editing && <CompanionEditor comp={comp} idx={idx} onDone={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+const mathLine = (b: { total: number; parts: { label: string; value: number }[] }) => b.parts.map((p) => `${p.label} ${signed(p.value)}`).join(', ');
+
+function CompanionSheet({ comp, idx, pb, traits, usable, onEdit }: { comp: Companion; idx: number; pb: number; traits: CompanionAction[]; usable: CompanionAction[]; onEdit: () => void }) {
+  const { char: c, update } = useChar();
+  const t = useTable();
+  return (
+    <>
+      <div className="comp-abilities">
+        {ABILITIES.map((a) => {
+          const m = abilityMod(comp.abilities[a]);
+          const save = m + (comp.saves.includes(a) ? pb : 0);
+          return (
+            <div key={a} className="comp-ability">
+              <span className="k">{a.toUpperCase()}</span>
+              <button type="button" className="v" onClick={(e) => t.companionTest(comp, `${ABILITY_NAMES[a]} check`, m, e.currentTarget, { type: 'check', ability: a })} title={`${ABILITY_NAMES[a]} check`}>
+                {signed(m)}
+              </button>
+              <small>{comp.abilities[a]}</small>
+              <button type="button" className={`save${comp.saves.includes(a) ? ' prof' : ''}`} onClick={(e) => t.companionTest(comp, `${ABILITY_NAMES[a]} save`, save, e.currentTarget, { type: 'save', ability: a })} title={`${ABILITY_NAMES[a]} save`}>
+                Save {signed(save)}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <dl className="comp-facts">
+        <dt>Proficiency</dt>
+        <dd>
+          {signed(pb)}
+          {isFormula(comp.pb) || /\{/.test(comp.pb) ? ' (yours)' : ''}
+        </dd>
+        <dt>Speed</dt>
+        <dd>{comp.speed}</dd>
+        {comp.skills && (
+          <>
+            <dt>Skills</dt>
+            <dd>{comp.skills}</dd>
+          </>
+        )}
+        {comp.senses && (
+          <>
+            <dt>Senses</dt>
+            <dd>{comp.senses}</dd>
+          </>
+        )}
+        {comp.languages && (
+          <>
+            <dt>Languages</dt>
+            <dd>{comp.languages}</dd>
+          </>
+        )}
+        {(isFormula(comp.ac) || isFormula(comp.maxHp)) && (
+          <>
+            <dt>Scales with you</dt>
+            <dd>
+              AC {describeFormula(comp.ac)} · HP {describeFormula(comp.maxHp)}
+            </dd>
+          </>
+        )}
+      </dl>
+      {[...traits, ...usable].map((a) => (
+        <div key={a.id} className="comp-entry">
+          <b>{a.name}.</b> <small className="hint">{KINDS.find((k) => k.id === a.kind)?.name}</small>
+          <RulesText text={a.text || actionSummary(a, c) || '—'} />
+        </div>
+      ))}
+      {comp.notes && <RulesText text={comp.notes} className="hint" />}
+      <p className="hint" style={{ margin: 0 }}>
+        {comp.source}. Tap a modifier for a check; your Advantage chip and its own conditions apply to its rolls. Using one of its actions marks that part of its turn.
+      </p>
+      <div className="row">
+        <button type="button" className="btn small" onClick={onEdit}>
+          Edit
+        </button>
+        <ConfirmButton label="Remove companion" onConfirm={() => update((d) => void d.companions.splice(idx, 1))} />
+      </div>
+    </>
+  );
+}
+
+/** Its gear: armor or barding it wears, weapons it wields, and what it carries. */
+function CompanionGear({ comp, idx }: { comp: Companion; idx: number }) {
+  const { char: c, update } = useChar();
+  const [adding, setAdding] = useState<'list' | 'paste' | null>(null);
+  const [name, setName] = useState('');
+  const [editingWeapon, setEditingWeapon] = useState<string | null>(null);
+  const set = (fn: (k: Companion) => void) => update((d) => fn(d.companions[idx]));
+  const ac = companionAc(comp, c);
+  const carried = carriedWeight(comp);
+  const cap = carryingCapacity(comp);
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {adding && <AddItemDialog mode="any" start={adding} companionId={comp.id} onClose={() => setAdding(null)} />}
+      <div className="row">
+        <button type="button" className="btn small" onClick={() => setAdding('list')}>
+          Item list
+        </button>
+        <button type="button" className="btn small ghost" onClick={() => setAdding('paste')}>
+          Paste a stat block
+        </button>
+      </div>
+
+      <h4 style={{ margin: 0 }}>Armor</h4>
+      <p className="hint" style={{ margin: 0 }}>
+        {ac.worn ? (
+          <>
+            Wearing {ac.worn}: AC {ac.total} ({mathLine(ac)}).{' '}
+            <button type="button" className="btn small ghost" onClick={() => set((k) => void (k.armor = null))}>
+              Take it off
+            </button>
+          </>
+        ) : (
+          <>AC {ac.total} from its stat block. Wear armor or barding from the item list (“Wear”) to have its AC worked out from it.</>
+        )}
+      </p>
+
+      <h4 style={{ margin: 0 }}>Weapons it wields</h4>
+      {comp.weapons.length === 0 && <p className="hint" style={{ margin: 0 }}>None. Its natural attacks are under its actions; a creature with hands can wield weapons from the item list.</p>}
+      {comp.weapons.map((w, wi) => (
+        <div key={w.id} className="item" style={{ padding: '8px 10px', display: 'grid', gap: 6 }}>
+          <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
+            <span>
+              <b>{w.name}</b> <small className="hint">{mathLine(companionWeaponAttack(comp, w, c))}</small>
+            </span>
+            <span className="row" style={{ gap: 4, flexWrap: 'nowrap' }}>
+              <button type="button" className="btn small ghost" aria-expanded={editingWeapon === w.id} onClick={() => setEditingWeapon(editingWeapon === w.id ? null : w.id)}>
+                Edit
+              </button>
+              <ConfirmButton label="Remove" onConfirm={() => set((k) => void k.weapons.splice(wi, 1))} />
+            </span>
+          </div>
+          {editingWeapon === w.id && (
+            <div className="grid-2">
+              <TextField label="Name" id={`cw-name-${w.id}`} value={w.name} onChange={(v) => set((k) => void (k.weapons[wi].name = v))} />
+              <SelectField
+                label="Attacks with"
+                id={`cw-ab-${w.id}`}
+                value={w.ability}
+                options={[{ id: 'auto', name: 'Usual (STR, or DEX)' }, ...ABILITIES.map((a) => ({ id: a, name: ABILITY_NAMES[a] }))]}
+                onChange={(v) => set((k) => void (k.weapons[wi].ability = v as typeof w.ability))}
+              />
+              <TextField label="Damage dice" id={`cw-dice-${w.id}`} value={w.damage[0]?.dice ?? ''} onChange={(v) => set((k) => void (k.weapons[wi].damage[0].dice = v))} />
+              <SelectField label="Damage type" id={`cw-type-${w.id}`} value={w.damage[0]?.type ?? 'bludgeoning'} options={DAMAGE_TYPES.map((d) => ({ id: d, name: d.charAt(0).toUpperCase() + d.slice(1) }))} onChange={(v) => set((k) => void (k.weapons[wi].damage[0].type = v))} />
+              <NumField label="Magic +" id={`cw-magic-${w.id}`} value={w.magicBonus} onChange={(n) => set((k) => void (k.weapons[wi].magicBonus = n))} />
+              <Check label="Proficient" id={`cw-prof-${w.id}`} checked={w.proficient} onChange={(b) => set((k) => void (k.weapons[wi].proficient = b))} />
+            </div>
+          )}
+        </div>
+      ))}
+
+      <h4 style={{ margin: 0 }}>
+        Carrying · {carried} of {cap} lb
+      </h4>
+      {carried > cap && <p className="hint" style={{ margin: 0, color: 'var(--warn)' }}>That’s more than a {comp.size.toLowerCase()} creature with Strength {comp.abilities.str} can carry ({cap} lb).</p>}
+      <div className="list">
+        {comp.inventory.map((it, ii) => (
+          <div key={it.id} className="row" style={{ flexWrap: 'nowrap' }}>
+            <input className="input" style={{ flex: 1, minWidth: 0 }} value={it.name} aria-label="Item name" onChange={(e) => set((k) => void (k.inventory[ii].name = e.target.value))} title={it.description || undefined} />
+            <NumField value={it.qty} min={0} ariaLabel="Quantity" className="ac" onChange={(n) => set((k) => void (k.inventory[ii].qty = n))} />
+            <NumField value={it.weight} min={0} step={0.1} ariaLabel="Weight each (lb)" className="ac" onChange={(n) => set((k) => void (k.inventory[ii].weight = n))} />
+            <button type="button" className="btn small ghost icon" aria-label={`Remove ${it.name}`} onClick={() => set((k) => void k.inventory.splice(ii, 1))}>
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+      <form
+        className="row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!name.trim()) return;
+          set((k) => void k.inventory.push({ id: uid(), name: name.trim(), qty: 1, weight: 0, notes: '' }));
+          setName('');
+        }}
+      >
+        <input className="input" style={{ flex: 1, minWidth: 0 }} placeholder={`Give ${comp.name} an item`} value={name} aria-label={`New item for ${comp.name}`} onChange={(e) => setName(e.target.value)} />
+        <button type="submit" className="btn small">
+          Add
+        </button>
+      </form>
+      <p className="hint" style={{ margin: 0 }}>Columns: name, quantity, weight each (lb). It can carry 15 × its Strength, halved if Tiny and doubled for each size above Medium.</p>
     </div>
   );
 }

@@ -11,7 +11,8 @@ import { centerOf, fx, perform, performAction, sound, throwPhases, weaponLook, t
 import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/types';
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type StandardActionId } from '../systems/dnd5e/data';
 import { evalFormula } from '../systems/dnd5e/formula';
-import type { CastingTime, Character, Companion, CompanionAction, CustomDie, Feature, Spell, Weapon } from '../systems/dnd5e/model';
+import { emptyTurn, type CastingTime, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type Spell, type Weapon } from '../systems/dnd5e/model';
+import { compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
 import {
   effectDice,
   incapacitatedBy,
@@ -305,10 +306,50 @@ export function useTableState(char: Character, update: Update) {
     [push, spendTime, modeFor],
   );
 
-  /** A companion uses only the Advantage you set by hand: your own conditions aren't its conditions. */
-  const manualMode = (): Mode => {
-    const a = takeAdv();
-    return { adv: a, note: a === 'adv' ? 'Advantage: your choice' : a === 'dis' ? 'Disadvantage: your choice' : '', extra: '', autoFail: null };
+  /** The companion as it is now (the button may hold an older copy). */
+  const liveCompanion = (comp: Companion) => charRef.current.companions.find((k) => k.id === comp.id) ?? comp;
+
+  /**
+   * A companion's roll: the Advantage you set by hand plus its own conditions (yours aren't
+   * its), cancelling as the rules say. Your effects like Bless don't carry over to it.
+   */
+  const companionMode = (comp: Companion, kind: TestKind): Mode => {
+    const manual = takeAdv();
+    const m = rollMode(comp, kind);
+    const advWhy = [...(manual === 'adv' ? ['your choice'] : []), ...m.adv];
+    const disWhy = [...(manual === 'dis' ? ['your choice'] : []), ...m.dis];
+    const adv: Advantage = advWhy.length && disWhy.length ? 'normal' : advWhy.length ? 'adv' : disWhy.length ? 'dis' : 'normal';
+    const note =
+      advWhy.length && disWhy.length
+        ? `Advantage (${advWhy.join(', ')}) and Disadvantage (${disWhy.join(', ')}) cancel out`
+        : adv === 'adv'
+          ? `Advantage: ${advWhy.join(', ')}`
+          : adv === 'dis'
+            ? `Disadvantage: ${disWhy.join(', ')}`
+            : '';
+    return { adv, note, extra: '', autoFail: m.autoFail };
+  };
+
+  const TURN_PART: Partial<Record<CompanionAction['kind'] | CastingTime, 'action' | 'bonus' | 'reaction'>> = { action: 'action', bonus: 'bonus', reaction: 'reaction' };
+  const TURN_NAME = { action: 'Action', bonus: 'Bonus Action', reaction: 'Reaction' } as const;
+
+  /**
+   * Marks what a companion used this turn, and says (rather than blocks) when it couldn't:
+   * it already used that part of its turn, or a condition stops it acting.
+   */
+  const spendCompanion = (comp: Companion, kind: CompanionAction['kind'] | CastingTime): string => {
+    const live = liveCompanion(comp);
+    const part = TURN_PART[kind];
+    const warnings: string[] = [];
+    const by = incapacitatedBy(live);
+    if (by && kind !== 'trait') warnings.push(`${by}: it can't take actions`);
+    if (part && live.turn[part]) warnings.push(`It already used its ${TURN_NAME[part]} this turn`);
+    if (part)
+      update((d) => {
+        const k = d.companions.find((x) => x.id === comp.id);
+        if (k) k.turn[part] = true;
+      });
+    return warnings.join(' · ');
   };
 
   /** One of a companion's actions: an attack, a saving-throw effect, or a rule to read. */
@@ -316,6 +357,7 @@ export function useTableState(char: Character, update: Update) {
     (comp: Companion, action: CompanionAction, originEl?: Element | null) => {
       const c = charRef.current;
       const title = `${comp.name}: ${action.name}`;
+      const warn = spendCompanion(comp, action.kind);
       const from = centerOf(originEl);
       const type = action.damageType || 'bludgeoning';
       const element = type as FxElement;
@@ -323,7 +365,7 @@ export function useTableState(char: Character, update: Update) {
       const damage = dice && isValid(dice) ? [{ dice, type, known: [] as Part[] }] : [];
       if (action.attack) {
         const toHit = evalFormula(action.toHit, c) ?? 0;
-        const mode = manualMode();
+        const mode = companionMode(liveCompanion(comp), { type: 'attack' });
         const res = attackOnce({ total: toHit, parts: [{ label: 'Attack bonus', value: toHit }] }, mode, damage, 0, { orb: false });
         const to = fx.defaultTarget(from);
         const phases = [phaseOf([res.attackRow])];
@@ -333,7 +375,7 @@ export function useTableState(char: Character, update: Update) {
           from,
           () => {
             perform({ element, shape: action.attack === 'ranged' ? 'bolt' : 'touch', from: action.attack === 'ranged' ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
-            push({ title, subtitle: [action.reach, mode.note].filter(Boolean).join(' · ') || undefined, lines: res.lines, element });
+            push({ title, subtitle: [warn, action.reach, mode.note].filter(Boolean).join(' · ') || undefined, lines: res.lines, element });
           },
           { element, headline: 'CRITICAL!' },
           { look: weaponLook(action.name, type, action.attack === 'ranged'), element },
@@ -348,7 +390,7 @@ export function useTableState(char: Character, update: Update) {
         if (dc !== null) verdict = { text: `DC ${dc}`, tone: 'info', note: `${ABBR(action.save)} save` };
       }
       if (!damage.length) {
-        push({ title, lines: lines.length ? lines : [{ label: action.kind === 'trait' ? 'Trait' : 'Used', total: 0, detail: action.text || action.name, kind: 'info' }] });
+        push({ title, subtitle: warn || undefined, lines: lines.length ? lines : [{ label: action.kind === 'trait' ? 'Trait' : 'Used', total: 0, detail: action.text || action.name, kind: 'info' }] });
         return;
       }
       const r = roll(damage[0].dice);
@@ -359,7 +401,7 @@ export function useTableState(char: Character, update: Update) {
         from,
         () => {
           perform({ element, shape: /cone|breath/i.test(action.text) ? 'cone' : 'burst', from, to: fx.defaultTarget(from), power: 1, outcome: 'hit', label: `${dealt} ${type}` });
-          push({ title, lines, element });
+          push({ title, subtitle: warn || undefined, lines, element });
         },
         {},
         { look: 'orb', element },
@@ -368,16 +410,60 @@ export function useTableState(char: Character, update: Update) {
     [push],
   );
 
-  /** A companion's ability check or saving throw. */
+  /** A companion's ability check or saving throw, with its conditions (a Paralyzed companion fails STR and DEX saves). */
   const companionTest = useCallback(
-    (comp: Companion, what: string, bonus: number, originEl?: Element | null) => {
-      const mode = manualMode();
-      const r = roll(d20Expr(bonus, mode.adv));
+    (comp: Companion, what: string, bonus: number, originEl?: Element | null, kind: TestKind = { type: 'check', ability: 'str' }) => {
+      const mode = companionMode(liveCompanion(comp), kind);
       const title = `${comp.name}: ${what}`;
+      if (mode.autoFail) {
+        push({ title, lines: [{ label: what, total: 0, detail: `Fails automatically: ${mode.autoFail}`, kind: 'info' }] });
+        return;
+      }
+      const r = roll(d20Expr(bonus, mode.adv));
       const entry = { title, subtitle: mode.note || undefined, lines: [{ label: what, total: r.total, detail: describe(r), kind: 'd20' as const, nat: natOf(r) }] };
       stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () => push(entry), { headline: 'NATURAL 20!' });
     },
     [push],
+  );
+
+  /** An attack with a weapon the companion wields: its own modifier and Proficiency Bonus, struck hit by hit like yours. */
+  const companionWeapon = useCallback(
+    (comp: Companion, w: Weapon, originEl?: Element | null) => {
+      const c = charRef.current;
+      const live = liveCompanion(comp);
+      const mode = companionMode(live, { type: 'attack' });
+      const ability = compWeaponAbility(live, w);
+      const mod = compMod(live, ability);
+      const damage = w.damage.map((d, i) => ({ ...d, known: i === 0 ? [{ label: ABBR(ability), value: mod }, { label: 'MAGIC', value: w.magicBonus }] : [] }));
+      const element = (w.damage[0]?.type ?? 'bludgeoning') as FxElement;
+      const res = attackOnce(companionWeaponAttack(live, w, c), mode, damage, mod + w.magicBonus, { orb: false });
+      const warn = spendCompanion(comp, 'action');
+      const from = centerOf(originEl);
+      const to = fx.defaultTarget(from);
+      const phases = [phaseOf([res.attackRow])];
+      if (res.hits.length) phases.push(phaseOf([counted(res.hits, res.dealt, unitOf(w.damage.map((d) => d.type)), undefined, res.outcome === 'crit')]));
+      stage(
+        phases,
+        from,
+        () => {
+          perform({ element, shape: w.ranged ? 'bolt' : 'touch', from: w.ranged ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
+          push({ title: `${comp.name}: ${w.name}`, subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined, lines: res.lines, element });
+        },
+        { element, headline: 'CRITICAL!' },
+        { look: weaponLook(w.name, w.damage[0]?.type ?? '', w.ranged), element },
+      );
+    },
+    [push],
+  );
+
+  /** A companion's turn starts over (its own initiative, or a new round). */
+  const companionNewTurn = useCallback(
+    (comp: Companion) =>
+      update((d) => {
+        const k = d.companions.find((x) => x.id === comp.id);
+        if (k) k.turn = emptyTurn();
+      }),
+    [update],
   );
 
   /** Spell slots the spell can be cast with right now, lowest first. */
@@ -572,6 +658,8 @@ export function useTableState(char: Character, update: Update) {
     const ended = charRef.current.effects.filter((e) => e.rounds !== null && e.rounds <= 1).map((e) => e.name);
     update((d) => {
       d.turn = { action: false, bonus: false, reaction: false, movementUsed: 0, dashes: 0 };
+      // Companions act on your turn (or right after it), so theirs starts over too.
+      d.companions.forEach((k) => void (k.turn = emptyTurn()));
       d.effects = d.effects.flatMap((e) => (e.rounds === null ? [e] : e.rounds <= 1 ? [] : [{ ...e, rounds: e.rounds - 1 }]));
     });
     sound.click();
@@ -685,6 +773,8 @@ export function useTableState(char: Character, update: Update) {
           if (f.recharge === 'short' || (kind === 'long' && f.recharge === 'long')) f.usesSpent = 0;
         });
         d.turn = { action: false, bonus: false, reaction: false, movementUsed: 0, dashes: 0 };
+      // Companions act on your turn (or right after it), so theirs starts over too.
+      d.companions.forEach((k) => void (k.turn = emptyTurn()));
         if (kind === 'long') {
           d.hp.current = maxHp(c).total;
           d.hp.temp = 0;
@@ -729,6 +819,8 @@ export function useTableState(char: Character, update: Update) {
       note,
       companionAct,
       companionTest,
+      companionWeapon,
+      companionNewTurn,
       latest,
       dismissLatest: () => setLatest(null),
       clearLog: () => setLog([]),
@@ -753,7 +845,7 @@ export function useTableState(char: Character, update: Update) {
       rest,
       preview,
     }),
-    [log, note, companionAct, companionTest, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
+    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
   );
 }
 
