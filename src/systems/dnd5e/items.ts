@@ -154,7 +154,13 @@ export function weaponFromResolved(r: Resolved): Weapon | null {
 
 /** An inventory entry for what was resolved, with the catalog's weight and text. */
 export function inventoryFromResolved(r: Resolved, items: ItemDef[] = []): Omit<Item, 'id'> {
-  const base = r.weapon ? items.find((d) => d.kind === 'weapon' && norm(d.name) === norm(r.weapon!.name)) : r.armor ? items.find((d) => d.kind === 'armor' && norm(d.name).startsWith(norm(r.armor!.name))) : undefined;
+  const base = r.weapon
+    ? items.find((d) => d.kind === 'weapon' && norm(d.name) === norm(r.weapon!.name))
+    : r.armor
+      ? items.find((d) => d.kind === 'armor' && norm(d.name).startsWith(norm(r.armor!.name)))
+      : r.shield
+        ? items.find((d) => d.kind === 'armor' && d.armor?.category === 'shield' && !d.template)
+        : undefined;
   return { name: r.name, qty: 1, weight: r.def?.weight ?? base?.weight ?? 0, notes: '', description: description(r.def) };
 }
 

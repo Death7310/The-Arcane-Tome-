@@ -8,7 +8,7 @@ import type { FieldPosition } from '../../import/extract';
 import { ABILITIES, ARMOR, CLASSES, DAMAGE_TYPES, SKILLS, WEAPONS, classById, type Ability, type DamageType, type SkillId } from './data';
 import { inventoryFromResolved, parseItemText, resolveItem, weaponFromResolved } from './items';
 import { blankCharacter, blankFeature, blankSpell, blankWeapon, uid, type CastingTime, type Character, type ProfLevel, type Spell } from './model';
-import { abilityMod, armorClass, maxHp, proficiencyBonus, weaponAttack } from './rules';
+import { abilityMod, armorClass, inventoryWeight, maxHp, proficiencyBonus, weaponAttack } from './rules';
 import { SPELL_LIBRARY, spellFromDef, tunedSpells } from './spells';
 import type { Catalog } from './srd';
 
@@ -48,7 +48,13 @@ export interface Draft {
   /** As the sheet wrote them: the name, and the attack bonus and damage if it gave them. */
   weapons: { name: string; magic?: number; attack?: number; damage?: string; notes?: string }[];
   features: { name: string; description: string; source?: string; uses?: number; recharge?: 'short' | 'long' }[];
-  items: { name: string; qty: number; weight?: number }[];
+  /**
+   * `weight` is as the source wrote it: a sheet's inventory row gives the whole stack's weight
+   * (10 rations, 20 lb); the AI format gives one item's (`weightEach`).
+   */
+  items: { name: string; qty: number; weight?: number; weightEach?: boolean }[];
+  /** The total weight the sheet says you carry, to check the items against. */
+  carried?: number;
   currency: Partial<Record<Coin, number>>;
   languages?: string;
   proficiencies?: string;
@@ -660,6 +666,8 @@ export function readText(text: string, fields: Record<string, string> = {}, opts
   d.features = readFeatures(sections).filter((f) => !spellSet.has(norm(f.name)));
   const inv = readItems(sections, fields, kv);
   d.items = inv.items;
+  const carried = get(kv, 'weightcarried', 'totalweight', 'carriedweight', 'carryingweight') ?? /\bweight carried\b\s*[:=]?\s*(\d+(?:\.\d+)?)/i.exec(all)?.[1];
+  if (carried && /\d/.test(carried)) d.carried = Number(/(\d+(?:\.\d+)?)/.exec(carried)![1]);
   d.currency = inv.currency;
   d.armorHints.push(...sections.filter((s) => (ITEM_SECTION.test(s.title) || /armou?r/i.test(s.title)) && !/proficienc/i.test(s.title)).flatMap((s) => s.lines), ...d.items.map((i) => i.name), get(kv, 'armor', 'armour') ?? '');
   d.shield = [d.acNote ?? '', ...d.armorHints].some((h) => /\bshield\b(?!\s+(?:spell|of faith))/i.test(h));
@@ -692,7 +700,7 @@ Reply with only the JSON, using exactly these keys, and leave out anything the c
   "languages": "", "proficiencies": "", "notes": ""
 }
 
-Include every spell, weapon, item and feature on every page of the sheet, each once. Write magic items by their full name (e.g. "Flame Tongue Longsword").
+Include every spell, weapon, item and feature on every page of the sheet, each once. Write magic items by their full name (e.g. "Flame Tongue Longsword"). An item's "weight" is the weight of one of it in pounds (10 rations: "qty": 10, "weight": 2).
 
 Character:
 `;
@@ -752,7 +760,7 @@ export function readAiJson(data: Record<string, unknown>): Draft {
   }
   for (const e of Array.isArray(data.equipment) ? data.equipment : []) {
     const o = (typeof e === 'string' ? { name: e } : e) as Record<string, unknown>;
-    if (str(o?.name)) d.items.push({ name: str(o.name)!, qty: num(o.qty) ?? 1, weight: num(o.weight) || undefined });
+    if (str(o?.name)) d.items.push({ name: str(o.name)!, qty: num(o.qty) ?? 1, weight: num(o.weight) || undefined, weightEach: true });
   }
   for (const [k, v] of Object.entries((data.coins ?? {}) as Record<string, unknown>)) {
     if (['cp', 'sp', 'ep', 'gp', 'pp'].includes(k) && num(v) !== undefined) d.currency[k as Coin] = num(v)!;
@@ -903,13 +911,17 @@ export function buildCharacter(d: Draft, catalog?: Catalog): ImportResult {
   }
 
   // Items keep the sheet's names and counts, with the catalog's weight and description where it knows them.
+  // The inventory stores the weight of one item (the total is count × weight), so a sheet's
+  // weight for a whole stack is divided by the count.
   for (const i of d.items) {
     const r = resolveItem(i.name, items);
     const base = inventoryFromResolved(r, items);
-    c.inventory.push({ ...base, id: uid(), name: i.name, qty: i.qty, weight: i.weight ?? base.weight });
+    c.inventory.push({ ...base, id: uid(), name: i.name, qty: i.qty, weight: unitWeight(i, base.weight) });
     if (r.armor && r.armor.id === c.armor.armorId && r.bonus) c.armor.magicBonus = r.bonus;
   }
-  if (c.inventory.length) found.push(`${c.inventory.length} item${c.inventory.length === 1 ? '' : 's'}`);
+  if (c.inventory.length) found.push(`${c.inventory.length} item${c.inventory.length === 1 ? '' : 's'} (${inventoryWeight(c)} lb)`);
+  if (d.carried !== undefined && c.inventory.length && Math.abs(inventoryWeight(c) - d.carried) > 1)
+    warnings.push(`Your sheet says you carry ${d.carried} lb; the items add up to ${inventoryWeight(c)} lb. On the Gear page, each item’s weight box is the weight of one: check any item with a count above 1.`);
   Object.assign(c.currency, d.currency);
   if (d.languages) c.languages = d.languages;
   if (d.proficiencies) c.proficiencies = d.proficiencies;
@@ -935,6 +947,19 @@ export const importFromText = (text: string, fields: Record<string, string> = {}
   buildCharacter(readText(text, fields, { ...opts, spellNames: opts.spellNames ?? (opts.catalog ? new Set(opts.catalog.spells.map((x) => norm(x.name))) : undefined) }), opts.catalog);
 
 const signedText = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+
+/**
+ * The weight of one item. A sheet's inventory row gives the stack's weight (D&D Beyond: 10
+ * rations, 20 lb), so it's divided by the count. Where the rules know the item's weight, that
+ * decides which reading fits ("20 lb" for 10 rations is the stack; "2 lb" is one each).
+ */
+export function unitWeight(i: { qty: number; weight?: number; weightEach?: boolean }, known: number): number {
+  const w = i.weight;
+  if (w === undefined || !(w > 0)) return known;
+  if (i.qty <= 1) return w;
+  const each = known > 0 ? Math.abs(w - known) <= Math.abs(w - known * i.qty) : !!i.weightEach;
+  return each ? w : Math.round((w / i.qty) * 10000) / 10000;
+}
 
 const CASTING: [RegExp, CastingTime, string][] = [
   [/^1?\s*(?:BA\b|bonus)/i, 'bonus', 'Bonus Action'],

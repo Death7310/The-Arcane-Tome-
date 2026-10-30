@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { itemName, parseItemText, resolveItem, weaponFromResolved } from './items';
+import { inventoryFromResolved, itemName, parseItemText, resolveItem, weaponFromResolved } from './items';
 import type { ItemDef } from './srd';
 import srdItems from './srd/items.json';
 
@@ -33,6 +33,7 @@ describe('finding items by name', () => {
   it('knows armor, shields and gear', () => {
     expect(resolveItem('Mithral Chain Shirt', ITEMS)).toMatchObject({ armor: { id: 'chain_shirt' }, def: { name: 'Mithral {base}' } });
     expect(resolveItem('Shield +1', ITEMS)).toMatchObject({ shield: true, bonus: 1 });
+    expect(inventoryFromResolved(resolveItem('Shield', ITEMS), ITEMS).weight).toBe(6);
     expect(resolveItem('Plate Armor', ITEMS).armor?.id).toBe('plate');
     expect(resolveItem('Leather pouch', ITEMS).armor).toBeUndefined();
     const bag = resolveItem('Bag of Holding', ITEMS);

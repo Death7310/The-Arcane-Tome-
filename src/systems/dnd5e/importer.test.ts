@@ -1,8 +1,8 @@
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { docxText } from '../../import/extract';
-import { buildCharacter, importFromText, looksLikeAiJson, readAiJson } from './importer';
-import { armorClass, maxHp } from './rules';
+import { buildCharacter, importFromText, looksLikeAiJson, readAiJson, unitWeight } from './importer';
+import { armorClass, inventoryWeight, maxHp } from './rules';
 import type { Catalog, ItemDef, SpellDef } from './srd';
 import srdItems from './srd/items.json';
 import srdSpells from './srd/spells.json';
@@ -268,6 +268,18 @@ describe('importing a multi-page D&D Beyond-style export', () => {
     'Eq Qty4': '2',
     'Eq Name5': 'Rope',
     'Eq Name6': 'Rope',
+    // D&D Beyond gives each row's whole weight: 10 rations weigh 20 lb.
+    'Eq Name7': 'Rations',
+    'Eq Qty7': '10',
+    'Eq Weight7': '20 lb.',
+    'Eq Name8': 'Glowcap Mushrooms',
+    'Eq Qty8': '4',
+    'Eq Weight8': '2 lb.',
+    // A sheet that writes one torch's weight: the rules' 1 lb each shows it's per item.
+    'Eq Name9': 'Torch',
+    'Eq Qty9': '5',
+    'Eq Weight9': '1 lb.',
+    'Weight Carried': '51 lb.',
     GP: '35',
   };
   // Spell rows sit under their heading on page 3, top to bottom.
@@ -313,11 +325,36 @@ describe('importing a multi-page D&D Beyond-style export', () => {
       ['Arrows', 20],
       ['Potion of Healing', 2],
       ['Rope', 1],
+      ['Rations', 10],
+      ['Glowcap Mushrooms', 4],
+      ['Torch', 5],
     ]);
     expect(c.inventory.find((i) => i.name === 'Shortsword')!.weight).toBe(2);
     expect(c.inventory.find((i) => i.name === 'Potion of Healing')!.description).toMatch(/regain Hit Points/);
     expect(c.armor.armorId).toBe('studded');
     expect(c.currency.gp).toBe(35);
+  });
+
+  it('stores each item’s own weight, so the total matches the sheet', () => {
+    const w = Object.fromEntries(c.inventory.map((i) => [i.name, i.weight]));
+    expect(w).toMatchObject({ Rations: 2, 'Glowcap Mushrooms': 0.5, Torch: 1, Arrows: 0.05, 'Dragon Wing Shortbow': 2 });
+    expect(inventoryWeight(c)).toBe(51);
+    expect(found.join(' ')).toMatch(/9 items \(51 lb\)/);
+    expect(warnings.join(' ')).not.toMatch(/you carry/);
+  });
+
+  it('warns when the items don’t add up to what the sheet says is carried', () => {
+    const r = importFromText('', { ...fields, 'Weight Carried': '148.5' }, { positions, catalog });
+    expect(r.warnings.join(' ')).toMatch(/says you carry 148.5 lb; the items add up to 51 lb/);
+  });
+
+  it('works out one item’s weight from a stack', () => {
+    expect(unitWeight({ qty: 10, weight: 20 }, 0)).toBe(2);
+    expect(unitWeight({ qty: 10, weight: 2, weightEach: true }, 0)).toBe(2);
+    expect(unitWeight({ qty: 10, weight: 20 }, 2)).toBe(2);
+    expect(unitWeight({ qty: 10, weight: 2 }, 2)).toBe(2);
+    expect(unitWeight({ qty: 1, weight: 7 }, 0)).toBe(7);
+    expect(unitWeight({ qty: 3 }, 4)).toBe(4);
   });
 
   it('splits languages from the other proficiencies', () => {
