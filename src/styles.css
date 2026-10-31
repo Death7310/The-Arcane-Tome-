@@ -725,3 +725,14 @@ button.stat:hover { border-color: var(--gilt); }
 .chip.cond-on { border-color: var(--warn); color: var(--warn); }
 .companion.down { border-color: var(--bad); }
 .companion .seg { justify-self: start; }
+
+/* Spells by source (Ranger, Warlock, a feat) and your own versions of spells. */
+.spell-tag { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); font: 600 11px/1.6 var(--font-body); vertical-align: 1px; }
+.seg.spell-sources { flex-wrap: wrap; margin-top: 8px; }
+.seg.spell-sources small { opacity: 0.7; margin-left: 2px; }
+.spell-source-math { white-space: normal; overflow-wrap: anywhere; }
+.spell-version { display: grid; gap: 8px; padding: 10px; border: 1px dashed var(--line); border-radius: var(--radius); }
+
+/* Forms with grouped parts (the feat writer). */
+.fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px 10px; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.fieldset legend { padding: 0 4px; font: 600 12.5px/1 var(--font-body); color: var(--muted); }

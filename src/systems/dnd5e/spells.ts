@@ -89,7 +89,13 @@ export function tunedSpells(defs: SpellDef[]): SpellDef[] {
 }
 
 /** A character's copy of a spell from the rules. */
-export function spellFromDef(d: SpellDef, id: string): Spell {
+export function spellFromDef(d: SpellDef, id: string, grantedBy = ''): Spell {
   const { srd: _srd, classes: _classes, source: _source, ...rest } = d;
-  return blankSpell({ ...rest, id });
+  return blankSpell({ ...rest, id, grantedBy, basedOn: d.name });
+}
+
+/** A sheet spell as a rules entry, for saving an edited spell to your library under a new name. */
+export function spellDefFromSpell(s: Spell, name: string, classes: string[] = []): SpellDef {
+  const { id: _id, prepared: _prepared, abilityOverride: _ability, grantedBy: _from, basedOn: _base, ...rest } = s;
+  return { ...rest, name, classes };
 }

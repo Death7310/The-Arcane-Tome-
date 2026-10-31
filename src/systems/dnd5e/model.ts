@@ -112,6 +112,13 @@ export interface Spell {
   scaling: Scaling;
   /** Overrides the character's spellcasting ability for this spell (racial spells). */
   abilityOverride: Ability | null;
+  /**
+   * What gives you the spell: a class id ("ranger", "warlock"), "feat:Shadow-Touched", or ""
+   * when it isn't set. A class's spells use that class's spellcasting ability.
+   */
+  grantedBy: string;
+  /** The spell it was made from (its name in the rules), so an edited copy can be reset. */
+  basedOn: string;
   element: Element;
   shape: Shape;
   description: string;
@@ -373,6 +380,8 @@ export function blankSpell(partial: Partial<Spell> = {}): Spell {
     upcastInstances: 0,
     scaling: 'none',
     abilityOverride: null,
+    grantedBy: '',
+    basedOn: '',
     element: 'arcane',
     shape: 'bolt',
     description: '',

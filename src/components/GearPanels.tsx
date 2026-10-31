@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { ELEMENTS, SHAPES } from '../fx/types';
+import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, allClasses } from '../systems/dnd5e/data';
 import { blankFeature, uid, type Feature, type UsesFormula } from '../systems/dnd5e/model';
 import { inventoryWeight, resolveTokens, usesMax } from '../systems/dnd5e/rules';
+import type { FeatDef } from '../systems/dnd5e/srd';
+import { FeatLibraryDialog, featNeedingSpells } from './Feats';
 import { AddItemDialog } from './Items';
 import { LanguagesField } from './Languages';
 import { RulesText } from './RulesText';
@@ -24,30 +27,39 @@ const usesKind = (u: UsesFormula | null): string => (u === null ? 'none' : typeo
 export function FeaturesPanel() {
   const { char: c, update } = useChar();
   const t = useTable();
+  const cat = useCatalog();
   const [open, setOpen] = useState<string | null>(null);
+  const [feats, setFeats] = useState<{ setup?: FeatDef } | null>(null);
   return (
     <Panel
       title="Features & traits"
       tab="stats"
       actions={
-        <button
-          type="button"
-          className="btn small"
-          onClick={() => {
-            const f = blankFeature({ id: uid() });
-            update((d) => void d.features.push(f));
-            setOpen(f.id);
-          }}
-        >
-          Add
-        </button>
+        <>
+          <button type="button" className="btn small" onClick={() => setFeats({})} title="Browse, take, paste or write feats">
+            Feats
+          </button>
+          <button
+            type="button"
+            className="btn small"
+            onClick={() => {
+              const f = blankFeature({ id: uid() });
+              update((d) => void d.features.push(f));
+              setOpen(f.id);
+            }}
+          >
+            Add
+          </button>
+        </>
       }
     >
+      {feats && <FeatLibraryDialog setup={feats.setup} onClose={() => setFeats(null)} />}
       <div className="list">
         {c.features.length === 0 && <p className="hint">Species traits, class features and feats go here. Level up adds your class features for you.</p>}
         {orderFeatures(c).map(({ f, idx }) => {
           const max = usesMax(c, f);
           const usable = max !== null || f.roll.trim() !== '';
+          const setup = cat ? featNeedingSpells(c, cat.feats, f) : null;
           return (
             <div className={`item el-${f.element}`} key={f.id}>
               <div className="item-head">
@@ -82,6 +94,14 @@ export function FeaturesPanel() {
                   ) : (
                     <Pips total={max} spent={Math.min(max, f.usesSpent)} label={`${f.name} use`} onChange={(v) => update((d) => void (d.features[idx].usesSpent = Math.max(0, Math.min(max, v))))} />
                   )}
+                </div>
+              )}
+              {setup && (
+                <div className="row" style={{ padding: '0 10px 8px' }}>
+                  <button type="button" className="btn small" onClick={() => setFeats({ setup })}>
+                    Set up its spells
+                  </button>
+                  <span className="hint">{f.name} gives spells your sheet doesn’t have yet.</span>
                 </div>
               )}
               {open === f.id && (f.origin ? <RulesFeature f={f} idx={idx} /> : <FeatureEditor f={f} idx={idx} />)}

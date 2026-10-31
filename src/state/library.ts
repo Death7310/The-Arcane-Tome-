@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { slug, type ReadResult, type Section } from '../systems/dnd5e/rulesdoc';
-import type { Catalog, SpellDef } from '../systems/dnd5e/srd';
+import type { Catalog, FeatDef, ItemDef, SpellDef } from '../systems/dnd5e/srd';
 import { setLibraryContent } from './catalog';
 
 export interface Pack {
@@ -148,32 +148,50 @@ export async function restoreLibrary(raw: string): Promise<number> {
   return n;
 }
 
+type Kind = 'spells' | 'feats' | 'items';
+type Entry = { name: string; source?: string };
+
+const emptyRead = (): ReadResult => ({ sections: [], classes: [], subclasses: [], feats: [], spells: [], creatures: [], items: [], notes: [] });
+
 /**
- * Adds spells to the library pack with this name, making it if there isn't one. A spell the
- * pack already has (by name) is replaced, so importing the same document twice doesn't
- * double it up. Returns how many were new.
+ * Adds entries (spells, feats or items) to the library pack with this name, making it if
+ * there isn't one. An entry the pack already has (by name) is replaced, so importing the
+ * same document twice doesn't double it up.
  */
-export async function addSpellsToLibrary(packName: string, spells: SpellDef[], source: string): Promise<{ added: number; replaced: number }> {
+async function addToLibrary<T extends Entry>(kind: Kind, packName: string, entries: T[], source: string, rename: (e: T, pack: string) => T): Promise<{ added: number; replaced: number }> {
   const packs = await listPacks();
   const existing = packs.find((p) => p.name.trim().toLowerCase() === packName.trim().toLowerCase());
   const name = existing?.name ?? packName.trim();
-  const named = spells.map((sp) => ({ ...sp, source: name, srd: `${slug(name)}:${slug(sp.name)}` }));
-  const old = existing?.content.spells ?? [];
-  const replaced = old.filter((sp) => named.some((n) => slug(n.name) === slug(sp.name))).length;
-  const pack: Pack = existing
-    ? { ...existing, content: { ...existing.content, spells: [...old.filter((sp) => !named.some((n) => slug(n.name) === slug(sp.name))), ...named] } }
-    : { ...packFrom(name, source, { sections: [], classes: [], subclasses: [], feats: [], spells: named, creatures: [], items: [], notes: [] }) };
+  const named = entries.map((e) => rename(e, name));
+  const old = ((existing?.content[kind] ?? []) as unknown as T[]);
+  const same = (a: T) => named.some((n) => slug(n.name) === slug(a.name));
+  const replaced = old.filter(same).length;
+  const list = [...old.filter((e) => !same(e)), ...named];
+  const pack: Pack = existing ? { ...existing, content: { ...existing.content, [kind]: list } } : packFrom(name, source, { ...emptyRead(), [kind]: named });
   await putPack(pack);
   applyPacks(await listPacks());
   return { added: named.length - replaced, replaced };
 }
 
-/** Takes one spell out of a library pack (by the pack's name, which is the spell's source). */
-export async function removeLibrarySpell(packName: string, spellName: string): Promise<boolean> {
+/** Takes one entry out of a library pack (by the pack's name, which is the entry's source). */
+async function removeFromLibrary(kind: Kind, packName: string, entryName: string): Promise<boolean> {
   const packs = await listPacks();
   const pack = packs.find((p) => p.name === packName);
-  if (!pack?.content.spells?.some((sp) => sp.name === spellName)) return false;
-  await putPack({ ...pack, content: { ...pack.content, spells: pack.content.spells.filter((sp) => sp.name !== spellName) } });
+  const list = (pack?.content[kind] ?? []) as Entry[];
+  if (!pack || !list.some((e) => e.name === entryName)) return false;
+  await putPack({ ...pack, content: { ...pack.content, [kind]: list.filter((e) => e.name !== entryName) } });
   applyPacks(await listPacks());
   return true;
 }
+
+export const addSpellsToLibrary = (packName: string, spells: SpellDef[], source: string) =>
+  addToLibrary('spells', packName, spells, source, (sp, name) => ({ ...sp, source: name, srd: `${slug(name)}:${slug(sp.name)}` }));
+export const removeLibrarySpell = (packName: string, spellName: string) => removeFromLibrary('spells', packName, spellName);
+
+export const addFeatsToLibrary = (packName: string, feats: FeatDef[], source: string) =>
+  addToLibrary('feats', packName, feats, source, (f, name) => ({ ...f, source: name, id: `${slug(name)}:${slug(f.name)}` }));
+export const removeLibraryFeat = (packName: string, featName: string) => removeFromLibrary('feats', packName, featName);
+
+export const addItemsToLibrary = (packName: string, items: ItemDef[], source: string) =>
+  addToLibrary('items', packName, items, source, (it, name) => ({ ...it, source: name, id: `pack:${slug(name)}:${slug(it.name)}` }));
+export const removeLibraryItem = (packName: string, itemName: string) => removeFromLibrary('items', packName, itemName);

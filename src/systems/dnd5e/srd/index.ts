@@ -6,7 +6,7 @@
 // Homebrew from your rules library has the same shape, so leveling, the spell list and
 // companions treat your own classes, spells and creatures exactly like the official ones.
 
-import type { CastingTime, Companion, Spell } from '../model';
+import type { CastingTime, Companion, Spell, Weapon } from '../model';
 import type { Ability } from '../data';
 
 /** Values that change with class level, as change points: [[1, 2], [3, 3], [6, 4]…]. */
@@ -68,6 +68,18 @@ export interface SubclassDef {
   source?: string;
 }
 
+/** The spells a feat grants: fixed ones, ones you choose, and how they're cast. */
+export interface FeatSpells {
+  /** Spells it always gives, by name ("Invisibility"). */
+  fixed: string[];
+  /** Spells you pick: how many, of what level (0 = cantrips), from which schools or class lists (empty: any). */
+  choose: { count: number; level: number; schools: string[]; lists: string[] }[];
+  /** Each can be cast once per Long Rest without a spell slot. */
+  freeCast: boolean;
+  /** Their spellcasting ability: the one the feat raises, your choice of INT/WIS/CHA, or a set one. */
+  ability: 'raised' | 'choose' | Ability;
+}
+
 export interface FeatDef {
   id: string;
   name: string;
@@ -78,6 +90,8 @@ export interface FeatDef {
   /** Abilities it can raise by 1 (half-feats and boons). */
   abilities: Ability[];
   text: string;
+  /** Spells it grants, when it does (read from its text when not given). */
+  spells?: FeatSpells;
   source?: string;
 }
 
@@ -118,7 +132,7 @@ export interface CreatureDef {
 }
 
 /** A spell from the rules: the sheet's Spell, minus the per-character fields. */
-export type SpellDef = Omit<Spell, 'id' | 'prepared' | 'abilityOverride'> & { srd?: string; classes?: string[]; source?: string };
+export type SpellDef = Omit<Spell, 'id' | 'prepared' | 'abilityOverride' | 'grantedBy' | 'basedOn'> & { srd?: string; classes?: string[]; source?: string };
 
 export interface ItemWeaponStats {
   dice: string;
@@ -170,6 +184,10 @@ export interface ItemDef {
   weapon?: ItemWeaponStats;
   armor?: ItemArmorStats;
   template?: ItemTemplate;
+  /** For an item saved from a pasted stat block: that stat block, re-read whenever it's added. */
+  paste?: string;
+  /** For a weapon saved from your Attacks: the weapon exactly as you set it up. */
+  sheetWeapon?: Omit<Weapon, 'id'>;
   source?: string;
 }
 

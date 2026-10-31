@@ -13,6 +13,7 @@ import { uid } from '../systems/dnd5e/model';
 import { slug } from '../systems/dnd5e/rulesdoc';
 import { spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
 import { readSpellText, spellForClass, SPELLS_AI_PROMPT } from '../systems/dnd5e/spellimport';
+import { sourceOptions } from '../systems/dnd5e/spellsource';
 import type { SpellDef } from '../systems/dnd5e/srd';
 import { RulesText } from './RulesText';
 import { ConfirmButton, Dialog, Panel } from './ui';
@@ -37,6 +38,9 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
   const [source, setSource] = useState('all');
   const [open, setOpen] = useState<string | null>(null);
   const [shown, setShown] = useState(pageSize);
+  // Which of your classes (or feats) a spell is added for, so it's cast with that class's ability.
+  const sourceList = sourceOptions(c);
+  const [addAs, setAddAs] = useState('');
   const known = new Set(c.spells.map((s) => s.name.toLowerCase()));
   const all = useMemo(() => (cat ? tunedSpells(cat.spells) : []), [cat]);
   const sources = useMemo(() => [...new Set(all.map((s) => s.source ?? SRD))], [all]);
@@ -52,6 +56,14 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
       .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [all, q, level, cls, school, source, mine.join()]);
+  /** The source a spell is added for: the one you chose, the class list you're looking at, or the one class of yours that has it. */
+  const sourceFor = (s: SpellDef): string => {
+    if (addAs) return addAs;
+    if (sourceList.some((x) => x.id === cls)) return cls;
+    const casters = sourceList.filter((x) => !x.id.startsWith('feat:'));
+    const hits = casters.filter((x) => spellForClass(s, x.id));
+    return (hits.length === 1 ? hits[0] : casters.length === 1 ? casters[0] : undefined)?.id ?? '';
+  };
   const className = (k: string) => cat?.classes.find((x) => x.id === k || x.id.endsWith(`:${k}`))?.name ?? title(k);
   const reset = () => setShown(pageSize);
 
@@ -96,6 +108,19 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
         )}
         <span className="hint">{cat ? `${list.length} spell${list.length === 1 ? '' : 's'}` : 'Loading spells…'}</span>
       </div>
+      {sourceList.length > 1 && (
+        <label className="row add-as" style={{ marginTop: 8, gap: 6 }}>
+          <span className="hint">Add as</span>
+          <select className="input" style={{ width: 'auto' }} value={addAs} aria-label="Add spells as" onChange={(e) => setAddAs(e.target.value)}>
+            <option value="">{sourceList.some((x) => x.id === cls) ? `${sourceList.find((x) => x.id === cls)!.name} (the list you’re viewing)` : 'The class whose list has it'}</option>
+            {sourceList.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.id.startsWith('feat:') ? `${x.name} (feat)` : `${x.name} spell`}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="lib">
         {list.slice(0, shown).map((s) => {
           const id = `${s.source}:${s.name}`;
@@ -116,7 +141,7 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
                 </span>
                 <span className="chip">{ELEMENTS.find((e) => e.id === s.element)?.name}</span>
               </button>
-              <button type="button" className="btn small" disabled={have} onClick={(e) => (update((d) => void d.spells.push(spellFromDef(s, uid()))), t.preview(s.element, s.shape, s.level, e.currentTarget))}>
+              <button type="button" className="btn small" disabled={have} onClick={(e) => (update((d) => void d.spells.push(spellFromDef(s, uid(), sourceFor(s)))), t.preview(s.element, s.shape, s.level, e.currentTarget))}>
                 {have ? 'On sheet' : 'Add'}
               </button>
               {open === id && (

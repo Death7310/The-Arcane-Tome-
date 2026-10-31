@@ -212,10 +212,26 @@ export function defaultSpellAbility(c: Character): Ability | null {
   return null;
 }
 
-export const spellAbility = (c: Character, spell?: Spell): Ability | null =>
-  spell?.abilityOverride ?? c.spellcasting.ability ?? defaultSpellAbility(c);
+/** The class a spell comes from, when it comes from one of your classes. */
+export const spellClass = (c: Character, spell?: Pick<Spell, 'grantedBy'>): string | null => {
+  const id = spell?.grantedBy;
+  if (!id || id.startsWith('feat:')) return null;
+  return c.classes.some((k) => k.classId === id) ? id : null;
+};
 
-export function spellAttack(c: Character, spell?: Spell): Breakdown {
+/**
+ * A spell's casting ability: its own override (a feat's chosen ability), else the ability of
+ * the class it comes from (Wisdom for a Ranger's spells, Charisma for a Warlock's), else
+ * the one set for the whole sheet, else your first spellcasting class's.
+ */
+export function spellAbility(c: Character, spell?: Pick<Spell, 'abilityOverride' | 'grantedBy'>): Ability | null {
+  if (spell?.abilityOverride) return spell.abilityOverride;
+  const cls = spellClass(c, spell);
+  const fromClass = cls ? classById(cls).spellAbility : null;
+  return fromClass || c.spellcasting.ability || defaultSpellAbility(c);
+}
+
+export function spellAttack(c: Character, spell?: Pick<Spell, 'abilityOverride' | 'grantedBy'>): Breakdown {
   const a = spellAbility(c, spell) ?? 'int';
   return sum([
     { label: `${ABILITY_NAMES[a]} modifier`, value: mod(c, a) },
@@ -225,7 +241,7 @@ export function spellAttack(c: Character, spell?: Spell): Breakdown {
   ]);
 }
 
-export function spellSaveDc(c: Character, spell?: Spell): Breakdown {
+export function spellSaveDc(c: Character, spell?: Pick<Spell, 'abilityOverride' | 'grantedBy'>): Breakdown {
   const a = spellAbility(c, spell) ?? 'int';
   return sum([
     { label: 'Base', value: 8 },

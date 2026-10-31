@@ -20,6 +20,7 @@ export const PANELS = {
   companions: ['combat'],
   skills: ['stats'],
   features: ['stats'],
+  feats: ['stats'],
   spells: ['magic'],
   compendium: ['magic'],
   inventory: ['gear'],
@@ -63,14 +64,14 @@ export const BUILT_IN_PAGES = [
 ] as const;
 
 const DEFAULT_COLUMNS: PanelKey[][] = [
-  ['identity', 'abilities', 'glance', 'languages'],
+  ['identity', 'abilities', 'glance', 'languages', 'feats'],
   ['vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
   ['spells', 'compendium', 'features', 'inventory', 'notes'],
 ];
 
 /** The built-in pages' panels, in phone order. */
 const DEFAULT_PAGE_PANELS: Record<string, PanelKey[]> = {
-  stats: ['identity', 'abilities', 'skills', 'features', 'glance'],
+  stats: ['identity', 'abilities', 'skills', 'features', 'glance', 'feats'],
   combat: ['glance', 'vitals', 'conditions', 'turn', 'attacks', 'companions'],
   magic: ['spells', 'compendium'],
   gear: ['inventory', 'notes'],

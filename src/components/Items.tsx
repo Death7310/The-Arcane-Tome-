@@ -6,11 +6,12 @@ import { useMemo, useState } from 'react';
 import { useChar } from '../state/character';
 import { useCatalog } from '../state/catalog';
 import { WEAPONS, ARMOR } from '../systems/dnd5e/data';
-import { armorFromResolved, inventoryFromResolved, itemName, itemSummary, parseItemText, resolveItem, weaponFromResolved, type ParsedItem } from '../systems/dnd5e/items';
+import { addItemsToLibrary, removeLibraryItem } from '../state/library';
+import { armorFromResolved, inventoryFromResolved, itemDefFromParsed, itemName, itemSummary, parseItemText, resolveItem, weaponFromResolved, type ParsedItem } from '../systems/dnd5e/items';
 import { uid, type Character, type Companion, type Item, type Weapon } from '../systems/dnd5e/model';
 import type { ItemDef } from '../systems/dnd5e/srd';
 import { RulesText } from './RulesText';
-import { Dialog } from './ui';
+import { ConfirmButton, Dialog } from './ui';
 
 type Kind = 'all' | 'weapon' | 'armor' | 'gear' | 'tool' | 'magic';
 const KINDS: { id: Kind; name: string }[] = [
@@ -93,8 +94,25 @@ export function AddItemDialog({ mode, onClose, start = 'list', companionId }: { 
       if (inv && mode === 'any') addToInventory(h, inv);
     });
 
+  /** Adds what a pasted stat block was read into: a weapon to Attacks, the rest to the inventory. */
+  const addParsed = (p: ParsedItem, wearIt: boolean) => {
+    if (p.weapon) addWeapon(p.weapon, p.item);
+    else
+      update((d) => {
+        addToInventory(holder(d), p.item);
+        if (wearIt && p.armor) putOn(d, p.armor);
+      });
+    done(p.name);
+  };
+
   /** Adds a catalog entry, made from `base` when it's a magic item built on a base weapon or armor. */
   const addDef = (def: ItemDef, wearIt = false) => {
+    // Saved from a paste: read its stat block again, so it comes out exactly as it did then.
+    if (def.paste) return addParsed(parseItemText(def.paste, items), wearIt);
+    if (def.sheetWeapon) {
+      addWeapon({ ...structuredClone(def.sheetWeapon), id: uid() }, { name: def.name, qty: 1, weight: def.weight ?? 0, notes: '', description: def.text });
+      return done(def.name);
+    }
     const baseName = def.name.includes('{base}') ? bases[def.id] || def.template?.bases[0] || defaultBase(def) : undefined;
     const r = resolveItem(itemName(def, baseName), items);
     if (!r.def) r.def = def.kind === 'weapon' || def.kind === 'armor' ? undefined : def;
@@ -186,6 +204,9 @@ export function AddItemDialog({ mode, onClose, start = 'list', companionId }: { 
                         Wear
                       </button>
                     )}
+                    {open === d.id && d.source && d.source !== 'SRD 5.2.1' && (
+                      <ConfirmButton label="Remove" confirmLabel="Remove from library?" className="btn small ghost" onConfirm={() => void removeLibraryItem(d.source!, d.name).then((ok) => ok && setAdded(`${itemName(d)} removed from ${d.source}.`))} />
+                    )}
                   </div>
                 </div>
               );
@@ -204,14 +225,9 @@ export function AddItemDialog({ mode, onClose, start = 'list', companionId }: { 
           mode={mode}
           items={items}
           wearing={comp ? !!comp.armor : c.armor.armorId !== 'none'}
-          onAdd={(p, wearIt) => {
-            if (p.weapon) addWeapon(p.weapon, p.item);
-            else
-              update((d) => {
-                addToInventory(holder(d), p.item);
-                if (wearIt && p.armor) putOn(d, p.armor);
-              });
-            done(p.name);
+          onAdd={(p, wearIt, saveAs) => {
+            addParsed(p, wearIt);
+            if (saveAs) void addItemsToLibrary(saveAs.pack, [{ ...itemDefFromParsed(p, 'pasted', saveAs.pack), paste: saveAs.text }], 'pasted text').then(() => setAdded(`${p.name} added${comp ? ` to ${comp.name}` : ''}, and saved to your item library (${saveAs.pack}).`));
           }}
         />
       )}
@@ -227,10 +243,12 @@ function defaultBase(d: ItemDef): string | undefined {
   return t.applies === 'weapon' ? 'Longsword' : t.applies === 'shield' ? 'Shield' : t.applies === 'armor' ? 'Chain Mail' : 'Arrows';
 }
 
-function PasteItem({ mode, items, wearing, onAdd }: { mode: 'weapon' | 'any'; items: ItemDef[]; wearing: boolean; onAdd: (p: ParsedItem, wear: boolean) => void }) {
+function PasteItem({ mode, items, wearing, onAdd }: { mode: 'weapon' | 'any'; items: ItemDef[]; wearing: boolean; onAdd: (p: ParsedItem, wear: boolean, saveAs: { pack: string; text: string } | null) => void }) {
   const [text, setText] = useState('');
   const [parsed, setParsed] = useState<ParsedItem | null>(null);
   const [wearIt, setWearIt] = useState(!wearing);
+  const [keep, setKeep] = useState(true);
+  const [pack, setPack] = useState('My items');
   return (
     <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
       <label className="field" htmlFor="item-paste">
@@ -269,8 +287,17 @@ function PasteItem({ mode, items, wearing, onAdd }: { mode: 'weapon' | 'any'; it
               <input type="checkbox" checked={wearIt} onChange={(e) => setWearIt(e.target.checked)} /> Wear it (sets your armor in Vitals)
             </label>
           )}
+          <label className="row" style={{ gap: 6 }}>
+            <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} /> Also save it to my item library, in
+            <input className="input" style={{ width: 130 }} value={pack} onChange={(e) => setPack(e.target.value)} aria-label="Library list to save it in" disabled={!keep} />
+          </label>
           <div className="row" style={{ marginTop: 6 }}>
-            <button type="button" className="btn small primary" disabled={mode === 'weapon' && parsed.kind !== 'weapon'} onClick={() => (onAdd(parsed, wearIt), setText(''), setParsed(null))}>
+            <button
+              type="button"
+              className="btn small primary"
+              disabled={mode === 'weapon' && parsed.kind !== 'weapon'}
+              onClick={() => (onAdd(parsed, wearIt, keep && pack.trim() ? { pack: pack.trim(), text } : null), setText(''), setParsed(null))}
+            >
               {parsed.kind === 'weapon' ? (mode === 'any' ? 'Add to Attacks and inventory' : 'Add to Attacks') : 'Add to inventory'}
             </button>
           </div>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { inventoryFromResolved, itemName, parseItemText, resolveItem, weaponFromResolved } from './items';
+import { inventoryFromResolved, itemDefFromWeapon, itemName, itemSummary, parseItemText, resolveItem, weaponFromResolved } from './items';
+import { blankWeapon } from './model';
 import type { ItemDef } from './srd';
 import srdItems from './srd/items.json';
 
@@ -126,5 +127,16 @@ While wearing this cloak you have Resistance to Fire damage.`,
     ]);
     expect(p.weapon!.notes).toMatch(/Very rare · requires attunement/);
     expect(parseItemText('Rope', ITEMS)).toMatchObject({ kind: 'item', item: { name: 'Rope' } });
+  });
+});
+
+describe('weapons saved from your Attacks', () => {
+  it('keep every part of the weapon, and list its bonus and extra damage', () => {
+    const w = blankWeapon({ id: 'x', name: 'Dragon Wing Shortbow', damage: [{ dice: '1d6', type: 'piercing' }, { dice: '1d6', type: 'fire' }], ranged: true, magicBonus: 1, properties: 'Ammunition (80/320), Two-Handed', mastery: 'Vex', notes: 'Rare, requires attunement.' });
+    const def = itemDefFromWeapon(w, 2);
+    const { id: _id, ...rest } = w;
+    expect(def.sheetWeapon).toEqual(rest);
+    expect(def).toMatchObject({ name: 'Dragon Wing Shortbow', kind: 'weapon', weight: 2, template: { attackBonus: 1, damageBonus: 1, extraDamage: [{ dice: '1d6', type: 'fire' }] } });
+    expect(itemSummary(def)).toMatch(/1d6 piercing.*\+1 to hit and damage.*\+1d6 fire/);
   });
 });

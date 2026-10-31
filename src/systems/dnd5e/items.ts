@@ -479,3 +479,20 @@ export function readItemBlocks(lines: string[], source: string, slug: (s: string
   });
   return out;
 }
+
+/** A weapon from your Attacks as a library entry: added again, it comes back exactly as it is now. */
+export function itemDefFromWeapon(w: Weapon, weight = 0): ItemDef {
+  const { id: _id, ...weapon } = w;
+  const [first, ...extra] = w.damage;
+  return {
+    id: 'sheet-weapon',
+    name: w.name,
+    kind: 'weapon',
+    category: `${w.ranged ? 'Ranged' : 'Melee'} weapon`,
+    ...(weight ? { weight } : {}),
+    text: w.notes,
+    weapon: { dice: first?.dice ?? '1d4', type: first?.type ?? 'bludgeoning', category: 'martial', ranged: w.ranged, finesse: w.finesse, properties: w.properties, mastery: w.mastery },
+    ...(w.magicBonus || extra.length ? { template: { applies: 'weapon' as const, bases: [], ...(w.magicBonus ? { attackBonus: w.magicBonus, damageBonus: w.magicBonus } : {}), ...(extra.length ? { extraDamage: extra.map((d) => ({ dice: d.dice, type: d.type })) } : {}) } } : {}),
+    sheetWeapon: weapon,
+  };
+}

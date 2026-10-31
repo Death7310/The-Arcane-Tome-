@@ -3,7 +3,8 @@ import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ARMOR, DAMAGE_TYPES, STANDARD_ACTIONS, UNARMORED_DEFENSES, WEAPONS, type Ability, type DamageType } from '../systems/dnd5e/data';
 import { blankWeapon, uid, type Weapon } from '../systems/dnd5e/model';
-import { parseItemText } from '../systems/dnd5e/items';
+import { itemDefFromWeapon, parseItemText } from '../systems/dnd5e/items';
+import { addItemsToLibrary } from '../state/library';
 import { useCatalog } from '../state/catalog';
 import { AddItemDialog } from './Items';
 import { armorClass, armorWarnings, hitDice, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
@@ -287,6 +288,7 @@ export function AttacksPanel() {
                     </button>
                     <ConfirmButton label="Delete weapon" onConfirm={() => update((d) => void d.weapons.splice(idx, 1))} />
                   </div>
+                  <SaveWeapon weapon={w} />
                 </div>
               )}
             </div>
@@ -390,6 +392,39 @@ function FillFromText({ weapon, onApply }: { weapon: Weapon; onApply: (w: Weapon
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Saves a weapon as you've set it up to your item library, to add again or to another character. */
+function SaveWeapon({ weapon: w }: { weapon: Weapon }) {
+  const { char: c } = useChar();
+  const [pack, setPack] = useState('My items');
+  const [message, setMessage] = useState('');
+  const weight = c.inventory.find((i) => i.name.toLowerCase() === w.name.toLowerCase())?.weight ?? 0;
+  return (
+    <div className="row">
+      <button
+        type="button"
+        className="btn small ghost"
+        disabled={!w.name.trim() || !pack.trim()}
+        onClick={async () => {
+          try {
+            const r = await addItemsToLibrary(pack.trim(), [itemDefFromWeapon(w, weight)], 'your Attacks');
+            setMessage(`${r.replaced ? 'Updated' : 'Saved'} ${w.name} in ${pack.trim()}: find it in the item list.`);
+          } catch (err) {
+            setMessage((err as Error).message);
+          }
+        }}
+      >
+        Save to my item library
+      </button>
+      <input className="input" style={{ width: 120 }} value={pack} onChange={(e) => setPack(e.target.value)} aria-label="Library list to save the weapon in" />
+      {message && (
+        <span className="hint" role="status">
+          {message}
+        </span>
+      )}
     </div>
   );
 }

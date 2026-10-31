@@ -52,18 +52,19 @@ describe('reading a saved layout', () => {
 describe('moving panels', () => {
   it('drops a panel into another column at a position', () => {
     const l = movePanel(defaultLayout(), 'spells', 0, 1);
-    expect(l.columns[0]).toEqual(['identity', 'spells', 'abilities', 'glance', 'languages']);
+    expect(l.columns[0]).toEqual(['identity', 'spells', 'abilities', 'glance', 'languages', 'feats']);
     expect(l.columns[2]).not.toContain('spells');
   });
 
   it('steps up and down through the columns, skipping panels that aren’t on screen', () => {
-    // With only the Stats page's panels on screen, Skills steps up past the combat panels.
+    // With only the Stats page's panels on screen, Skills steps up past the combat panels,
+    // to just above the Feat library (the last Stats panel in the first column).
     const stats = defaultLayout().pages.find((p) => p.id === 'stats')!.panels;
     const up = stepPanel(defaultLayout(), 'skills', -1, (k) => stats.includes(k));
-    expect(up.columns[0]).toEqual(['identity', 'abilities', 'skills', 'glance', 'languages']);
+    expect(up.columns[0]).toEqual(['identity', 'abilities', 'glance', 'languages', 'skills', 'feats']);
     expect(up.columns[1]).not.toContain('skills');
     const down = stepPanel(defaultLayout(), 'identity', 1);
-    expect(down.columns[0]).toEqual(['abilities', 'identity', 'glance', 'languages']);
+    expect(down.columns[0]).toEqual(['abilities', 'identity', 'glance', 'languages', 'feats']);
     expect(stepPanel(defaultLayout(), 'identity', -1)).toEqual(defaultLayout());
   });
 
@@ -115,7 +116,7 @@ describe('pages', () => {
 
   it('orders each page on its own, skipping tiles that aren’t on screen', () => {
     let l = stepInPage(defaultLayout(), 'stats', 'glance', -1);
-    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills', 'glance', 'features']);
+    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills', 'glance', 'features', 'feats']);
     expect(page(l, 'combat').panels[0]).toBe('glance');
     l = placeInPage(l, 'stats', 'features', 'identity');
     expect(page(l, 'stats').panels[0]).toBe('features');
@@ -169,7 +170,8 @@ describe('pages', () => {
       ['gear', 'Gear', false],
       ['languages', 'Languages', false],
     ]);
-    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills']);
+    // The Feat library (added in a later version) comes back on its usual page.
+    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills', 'feats']);
     expect(pagesOf(l, 'features')).toEqual(['p1']);
     const reset = resetLayout(l);
     expect(reset.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Magic', 'Gear', 'Languages', 'Homebrew']);
