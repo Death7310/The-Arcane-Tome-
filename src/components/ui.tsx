@@ -227,3 +227,44 @@ export function ConfirmButton(props: { label: string; confirmLabel?: string; onC
     </button>
   );
 }
+
+/**
+ * Copies text to the clipboard. Where the device won't allow it, shows the text to select
+ * and copy by hand instead.
+ */
+export function CopyTextButton(props: { getText: () => string; label?: string; title?: string; className?: string }) {
+  const [status, setStatus] = useState('');
+  const [manual, setManual] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className={props.className ?? 'btn small'}
+        title={props.title}
+        onClick={async () => {
+          const t = props.getText();
+          try {
+            await navigator.clipboard.writeText(t);
+            setStatus('Copied.');
+            setManual(null);
+          } catch {
+            setManual(t);
+          }
+        }}
+      >
+        {props.label ?? 'Copy as text'}
+      </button>
+      {status && (
+        <span className="hint" role="status">
+          {status}
+        </span>
+      )}
+      {manual !== null && (
+        <label className="field" style={{ flexBasis: '100%' }}>
+          <span>This device won’t let the app copy: select all of this and copy it yourself</span>
+          <textarea className="input" readOnly value={manual} style={{ minHeight: 160 }} onFocus={(e) => e.currentTarget.select()} />
+        </label>
+      )}
+    </>
+  );
+}

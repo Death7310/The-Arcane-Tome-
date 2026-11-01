@@ -12,11 +12,11 @@ import { useTable } from '../state/table';
 import { uid } from '../systems/dnd5e/model';
 import { slug } from '../systems/dnd5e/rulesdoc';
 import { spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
-import { readSpellText, spellForClass, SPELLS_AI_PROMPT } from '../systems/dnd5e/spellimport';
+import { readSpellText, spellForClass, spellToText, SPELLS_AI_PROMPT } from '../systems/dnd5e/spellimport';
 import { sourceOptions } from '../systems/dnd5e/spellsource';
 import type { SpellDef } from '../systems/dnd5e/srd';
 import { RulesText } from './RulesText';
-import { ConfirmButton, Dialog, Panel } from './ui';
+import { ConfirmButton, CopyTextButton, Dialog, Panel } from './ui';
 
 const SRD = 'SRD 5.2.1';
 const SCHOOLS = ['Abjuration', 'Conjuration', 'Divination', 'Enchantment', 'Evocation', 'Illusion', 'Necromancy', 'Transmutation'];
@@ -156,6 +156,7 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
                     <button type="button" className="btn small ghost" onClick={(e) => t.preview(s.element, s.shape, s.level, e.currentTarget)}>
                       Preview effect
                     </button>
+                    <CopyTextButton getText={() => spellToText(s)} className="btn small ghost" title="Copy the whole spell as text, to share it or paste it as a new spell" />
                     {own && <ConfirmButton label="Remove from my library" confirmLabel="Tap again to remove it" onConfirm={() => void removeLibrarySpell(s.source!, s.name)} />}
                   </div>
                 </div>

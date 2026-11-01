@@ -143,7 +143,8 @@ export function spellMechanics(desc: string, level: number, range: string) {
     damage,
     healing,
     upcastDice: upcast ? upcast[1] : '',
-    scaling: level === 0 && damage.length && /Cantrip Upgrade|increases by \d+d\d+ when you reach (?:levels? )?5/i.test(desc) ? 'cantrip_dice' : 'none',
+    // Eldritch Blast's "two beams at level 5" adds beams; most cantrips add dice.
+    scaling: level === 0 && damage.length && /\b(?:two|more|additional) (?:beams|rays|bolts)\b[^.]*\b(?:level|5th)/i.test(desc) ? 'cantrip_beams' : level === 0 && damage.length && /Cantrip Upgrade|increases by \d+d\d+ when you reach (?:levels? )?5/i.test(desc) ? 'cantrip_dice' : 'none',
     element,
     shape,
   } as const;

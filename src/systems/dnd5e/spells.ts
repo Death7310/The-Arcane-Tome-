@@ -4,6 +4,7 @@
 // are short paraphrases written for this app; check your rulebook for full text.
 
 import { blankSpell, type Spell } from './model';
+import type { SpellPart } from './spellimport';
 import type { SpellDef } from './srd';
 
 type Entry = Partial<Spell> & Pick<Spell, 'name' | 'level' | 'school'>;
@@ -98,4 +99,51 @@ export function spellFromDef(d: SpellDef, id: string, grantedBy = ''): Spell {
 export function spellDefFromSpell(s: Spell, name: string, classes: string[] = []): SpellDef {
   const { id: _id, prepared: _prepared, abilityOverride: _ability, grantedBy: _from, basedOn: _base, ...rest } = s;
   return { ...rest, name, classes };
+}
+
+/**
+ * Fills a spell on your sheet from a pasted one, changing only what the paste actually gave
+ * (a description alone leaves the range, level and the rest as they were). Keeps the spell's
+ * place on the sheet: its id, prepared state, source and ability. Returns what changed.
+ */
+export function fillSpell(x: Spell, d: SpellDef, parts: Set<SpellPart>): string[] {
+  const changed: string[] = [];
+  const put = <K extends keyof Spell>(k: K, v: Spell[K], label: string) => {
+    if (JSON.stringify(x[k]) === JSON.stringify(v)) return;
+    x[k] = v;
+    if (!changed.includes(label)) changed.push(label);
+  };
+  if (d.name) put('name', d.name, 'name');
+  if (d.description) put('description', d.description, 'description');
+  if (parts.has('level')) put('level', d.level, 'level');
+  if (parts.has('school')) put('school', d.school, 'school');
+  if (parts.has('time')) {
+    put('castingTime', d.castingTime, 'casting time');
+    put('castingTimeText', d.castingTimeText, 'casting time');
+  }
+  if (parts.has('time') || parts.has('level')) put('ritual', d.ritual, 'ritual');
+  if (parts.has('range')) put('range', d.range, 'range');
+  if (parts.has('components')) put('components', d.components, 'components');
+  if (parts.has('duration')) {
+    put('duration', d.duration, 'duration');
+    put('concentration', d.concentration, 'concentration');
+  }
+  if (parts.has('roll')) {
+    put('resolution', d.resolution, 'roll');
+    put('saveAbility', d.saveAbility, 'roll');
+    put('halfOnSave', d.halfOnSave, 'roll');
+  }
+  if (parts.has('damage')) put('damage', d.damage, 'damage');
+  if (parts.has('healing')) put('healing', d.healing, 'healing');
+  if (parts.has('upcast')) put('upcastDice', d.upcastDice, 'upcasting');
+  if (parts.has('count')) {
+    put('instances', d.instances, 'attacks/rays');
+    put('upcastInstances', d.upcastInstances, 'attacks/rays');
+  }
+  if (parts.has('scaling')) put('scaling', d.scaling, 'cantrip scaling');
+  if (parts.has('look') || parts.has('damage') || parts.has('healing')) {
+    put('element', d.element, 'look');
+    put('shape', d.shape, 'look');
+  }
+  return changed;
 }

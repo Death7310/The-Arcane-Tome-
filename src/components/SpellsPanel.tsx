@@ -4,16 +4,18 @@ import { ELEMENTS, SHAPES, type Element } from '../fx/types';
 import { useChar } from '../state/character';
 import { ordinal, useTable, type SlotChoice } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, type Ability, type DamageType } from '../systems/dnd5e/data';
-import { blankSpell, uid, type Spell } from '../systems/dnd5e/model';
+import { blankSpell, uid, type Character, type Spell } from '../systems/dnd5e/model';
 import { defaultSpellAbility, pactSlots, planSpell, signed, spellAbility, spellAttack, spellSaveDc, spellSlots } from '../systems/dnd5e/rules';
 import { useCatalog } from '../state/catalog';
 import { spellCounts } from '../systems/dnd5e/leveling';
 import { RulesText } from './RulesText';
-import { Check, ConfirmButton, Dialog, NumField, Panel, Pips, SelectField, TextField, mathText } from './ui';
+import { Check, ConfirmButton, CopyTextButton, Dialog, NumField, Panel, Pips, SelectField, TextField, mathText } from './ui';
 import { SpellBrowser, SpellImport } from './SpellBrowser';
 import { freeCastName } from '../systems/dnd5e/featimport';
 import { inferSources, sourceName, sourceOptions } from '../systems/dnd5e/spellsource';
-import { spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
+import { fillSpell, spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
+import { describeSpellDef, readPastedSpells, spellToText, type SpellPart } from '../systems/dnd5e/spellimport';
+import type { SpellDef } from '../systems/dnd5e/srd';
 import { addSpellsToLibrary } from '../state/library';
 import { ABILITY_NAMES as ABILITY_LONG } from '../systems/dnd5e/data';
 
@@ -326,6 +328,7 @@ function SpellEditor({ spell: s }: { spell: Spell }) {
           <button type="button" className="btn small" onClick={() => setEditing(true)}>
             Edit spell
           </button>
+          <CopySpellText spell={s} />
           <ConfirmButton label="Remove" onConfirm={() => update((d) => void (d.spells = d.spells.filter((x) => x.id !== s.id)))} />
         </div>
       </div>
@@ -335,6 +338,7 @@ function SpellEditor({ spell: s }: { spell: Spell }) {
   const badDice = [...s.damage.map((d) => d.dice), s.healing, s.upcastDice].filter((x) => x.trim() && !isValid(x.replace(/\{\w+\}/g, '1')));
   return (
     <div className="item-body">
+      <FillSpellFromText spell={s} set={set} />
       <div className="grid-2">
         <TextField label="Name" id={`sp-name-${s.id}`} value={s.name} onChange={(v) => set((x) => void (x.name = v))} />
         <NumField label="Level (0 = cantrip)" id={`sp-lvl-${s.id}`} value={s.level} min={0} max={9} onChange={(n) => set((x) => void (x.level = n))} />
@@ -516,14 +520,17 @@ function SpellVersion({ spell: s, set }: { spell: Spell; set: (fn: (sp: Spell) =
 
 function SpellLibrary({ onClose }: { onClose: () => void }) {
   const { update } = useChar();
-  const [tab, setTab] = useState<'list' | 'import'>('list');
+  const [tab, setTab] = useState<'list' | 'paste' | 'import'>('list');
   const [message, setMessage] = useState('');
   return (
     <Dialog title="Add a spell" onClose={onClose}>
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <div className="seg" role="radiogroup" aria-label="How to add">
+        <div className="seg wrap" role="radiogroup" aria-label="How to add">
           <button type="button" role="radio" aria-checked={tab === 'list'} onClick={() => setTab('list')}>
             Spell list
+          </button>
+          <button type="button" role="radio" aria-checked={tab === 'paste'} onClick={() => setTab('paste')}>
+            Paste a spell
           </button>
           <button type="button" role="radio" aria-checked={tab === 'import'} onClick={() => setTab('import')}>
             Import spells
@@ -546,7 +553,9 @@ function SpellLibrary({ onClose }: { onClose: () => void }) {
         </p>
       )}
       <div style={{ marginTop: 10 }}>
-        {tab === 'list' ? (
+        {tab === 'paste' ? (
+          <PasteSpells onDone={(m) => (setMessage(m), setTab('list'))} />
+        ) : tab === 'list' ? (
           <>
             <SpellBrowser pageSize={150} />
             <p className="hint">
@@ -582,5 +591,196 @@ function SpellCounts() {
       {many && ` (${allowed.map((x) => `${x.className}: ${x.cantrips ?? 0} + ${x.prepared ?? 0}`).join(', ')})`}
       {fromFeats > 0 && ` · plus ${fromFeats} from feats, which don’t count`}
     </p>
+  );
+}
+
+/** The classes a sheet spell is on, for its text: the class it's from, else its original's list. */
+function spellClasses(s: Spell, cat: ReturnType<typeof useCatalog>, c: Character): string[] {
+  if (s.grantedBy && !s.grantedBy.startsWith('feat:') && c.classes.some((k) => k.classId === s.grantedBy)) return [s.grantedBy];
+  return cat?.spells.find((d) => d.name.toLowerCase() === (s.basedOn || s.name).toLowerCase())?.classes ?? [];
+}
+
+/** Copies a spell as text (a rulebook-style entry plus its exact numbers), to share or paste back. */
+function CopySpellText({ spell: s }: { spell: Spell }) {
+  const { char: c } = useChar();
+  const cat = useCatalog();
+  return <CopyTextButton getText={() => spellToText(s, spellClasses(s, cat, c))} title="Copy the whole spell as text: paste it into Add spell → Paste a spell (here or in someone else's app), or anywhere else" />;
+}
+
+/** Things a pasted spell left out, worth a look before adding it. */
+const missing = (parts: Set<SpellPart>) =>
+  (
+    [
+      ['level', 'level'],
+      ['time', 'casting time'],
+      ['range', 'range'],
+      ['components', 'components'],
+      ['duration', 'duration'],
+    ] as const
+  )
+    .filter(([k]) => !parts.has(k))
+    .map(([, name]) => name);
+
+/** Paste a spell (or several), from a book, D&D Beyond, a friend or your own notes, and add it. */
+function PasteSpells({ onDone }: { onDone: (message: string) => void }) {
+  const { char: c, update } = useChar();
+  const sources = sourceOptions(c);
+  const casters = sources.filter((x) => !x.id.startsWith('feat:'));
+  const [text, setText] = useState('');
+  const [found, setFound] = useState<ReturnType<typeof readPastedSpells> | null>(null);
+  const [addAs, setAddAs] = useState(casters.length === 1 ? casters[0].id : 'auto');
+  const [keep, setKeep] = useState(true);
+  const [pack, setPack] = useState('My spells');
+  const [error, setError] = useState('');
+  /** Where each spell comes from: your choice, else the one class of yours that it lists. */
+  const sourceFor = (d: SpellDef) => (addAs !== 'auto' ? addAs : (casters.find((k) => d.classes?.includes(k.id))?.id ?? ''));
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <label className="field" htmlFor="spell-paste-one">
+        <span>Paste a spell, as much of it as you have: its name, level, casting time, range and description. Several at once work too.</span>
+        <textarea
+          id="spell-paste-one"
+          className="input"
+          style={{ minHeight: 170 }}
+          value={text}
+          onChange={(e) => (setText(e.target.value), setFound(null))}
+          placeholder={'Grave Hook\nLevel 1 Necromancy (Warlock)\nCasting Time: Action\nRange: 60 feet\nComponents: V, S\nDuration: Instantaneous\nMake a ranged spell attack… 2d8 Necrotic damage…'}
+        />
+      </label>
+      <div className="row">
+        <button
+          type="button"
+          className="btn small primary"
+          disabled={!text.trim()}
+          onClick={() => {
+            const r = readPastedSpells(text);
+            setFound(r);
+            setError(r.length ? '' : 'Nothing to read there.');
+          }}
+        >
+          Read it
+        </button>
+      </div>
+      {error && <p className="hint" style={{ color: 'var(--bad)', margin: 0 }}>{error}</p>}
+      {found && found.length > 0 && (
+        <div className="note good" style={{ display: 'grid', gap: 8 }}>
+          {found.map(({ def, parts }, i) => (
+            <div key={i} style={{ display: 'grid', gap: 4 }}>
+              <label className="field">
+                <span>Name</span>
+                <input className="input" value={def.name} aria-label={`Name of spell ${i + 1}`} onChange={(e) => setFound((f) => f && f.map((x, j) => (j === i ? { ...x, def: { ...x.def, name: e.target.value } } : x)))} />
+              </label>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                {describeSpellDef(def).map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              {missing(parts).length > 0 && (
+                <p className="hint" style={{ margin: 0, color: 'var(--warn)' }}>
+                  Not in the text: {missing(parts).join(', ')}. It’s added with defaults; set them with Edit spell.
+                </p>
+              )}
+            </div>
+          ))}
+          <div className="grid-2">
+            <label className="field">
+              <span>It’s a spell from</span>
+              <select value={addAs} onChange={(e) => setAddAs(e.target.value)} aria-label="Where the spell comes from">
+                <option value="auto">The class of mine it lists</option>
+                {sources.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                  </option>
+                ))}
+                <option value="">Not set</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Save it in my spell library as</span>
+              <input className="input" value={pack} onChange={(e) => setPack(e.target.value)} disabled={!keep} aria-label="Library list to save the spell in" />
+            </label>
+          </div>
+          <Check label="Also save it to my spell library, to use again or on another character" checked={keep} onChange={setKeep} />
+          <div className="row">
+            <button
+              type="button"
+              className="btn small primary"
+              disabled={found.some((f) => !f.def.name.trim())}
+              onClick={async () => {
+                const defs = found.map((f) => f.def);
+                update((d) => {
+                  for (const def of defs) d.spells.push(spellFromDef(def, uid(), sourceFor(def)));
+                });
+                let saved = '';
+                if (keep && pack.trim()) {
+                  // A spell that names no class is filed under the class it's added as.
+                  const filed = defs.map((def) => (def.classes?.length || !sourceFor(def) || sourceFor(def).startsWith('feat:') ? def : { ...def, classes: [sourceFor(def)] }));
+                  await addSpellsToLibrary(pack.trim(), filed, 'pasted text').then(
+                    () => (saved = `, and saved to ${pack.trim()}`),
+                    (e: Error) => (saved = `; it couldn’t be saved to the library (${e.message})`),
+                  );
+                }
+                setText('');
+                setFound(null);
+                onDone(`${defs.map((d) => d.name).join(', ')} added to your spells${saved}.`);
+              }}
+            >
+              Add {found.length === 1 ? 'it' : `all ${found.length}`} to my spells
+            </button>
+          </div>
+        </div>
+      )}
+      <p className="hint" style={{ margin: 0 }}>
+        Copied a spell from this app (Copy as text)? It pastes back exactly, your changes included: its dice, extra damage, rays and animation.
+      </p>
+    </div>
+  );
+}
+
+/** Pastes a spell's text into a spell you already have: whatever the text gives replaces what's there. */
+function FillSpellFromText({ spell: s, set }: { spell: Spell; set: (fn: (sp: Spell) => void) => void }) {
+  const [text, setText] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  if (text === null)
+    return (
+      <div className="row">
+        <button type="button" className="btn small ghost" onClick={() => (setText(''), setNote(''))}>
+          Fill in from pasted text
+        </button>
+        {note && (
+          <span className="hint" role="status">
+            {note}
+          </span>
+        )}
+      </div>
+    );
+  return (
+    <div className="note" style={{ display: 'grid', gap: 6 }}>
+      <label className="field" htmlFor={`sp-paste-${s.id}`}>
+        <span>Paste the spell (all of it, or just a description): what it gives fills in the fields below</span>
+        <textarea id={`sp-paste-${s.id}`} className="input" style={{ minHeight: 130 }} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+      </label>
+      <div className="row">
+        <button
+          type="button"
+          className="btn small primary"
+          disabled={!text.trim()}
+          onClick={() => {
+            const [r] = readPastedSpells(text, s.name);
+            if (!r) return setNote('Nothing to read there.');
+            const preview = structuredClone(s);
+            const changed = fillSpell(preview, r.def, r.parts);
+            set((x) => void fillSpell(x, r.def, r.parts));
+            setNote(changed.length ? `Filled in: ${changed.join(', ')}.` : 'Nothing new in that text.');
+            setText(null);
+          }}
+        >
+          Fill it in
+        </button>
+        <button type="button" className="btn small ghost" onClick={() => setText(null)}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
