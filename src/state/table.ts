@@ -6,7 +6,7 @@
 // HP change and the spell or attack effect are revealed once the dice come to rest.
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
-import { describe, isValid, naturalD20, roll, rollDie, withModifier, type RollResult } from '../engine/dice';
+import { describe, isValid, naturalD20, rollDie, safeRoll, withModifier, type RollResult } from '../engine/dice';
 import { centerOf, fx, perform, performAction, sound, throwPhases, weaponLook, type DicePhase, type StrikeLook, type Verdict } from '../fx';
 import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/types';
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type StandardActionId } from '../systems/dnd5e/data';
@@ -178,7 +178,7 @@ export function useTableState(char: Character, update: Update) {
         });
         return;
       }
-      const r = roll(d20Expr(b.total, mode.adv) + mode.extra);
+      const r = safeRoll(d20Expr(b.total, mode.adv) + mode.extra);
       const entry = {
         title,
         subtitle: [subtitle, mode.note].filter(Boolean).join(' · ') || undefined,
@@ -191,7 +191,7 @@ export function useTableState(char: Character, update: Update) {
 
   const freeRoll = useCallback(
     (expression: string, label?: string, originEl?: Element | null, element?: FxElement) => {
-      const r = roll(expression);
+      const r = safeRoll(expression);
       const single = naturalD20(r) !== undefined;
       const entry = {
         title: label ?? expression,
@@ -236,7 +236,7 @@ export function useTableState(char: Character, update: Update) {
     dmgBonus: number,
     look: { element?: FxElement; orb: boolean },
   ) => {
-    const atk = roll(d20Expr(toHit.total, mode.adv) + mode.extra);
+    const atk = safeRoll(d20Expr(toHit.total, mode.adv) + mode.extra);
     const nat = naturalD20(atk);
     const ac = acRef.current;
     // Without a target AC the app can't know whether it hit ('none'): damage is still rolled,
@@ -259,7 +259,7 @@ export function useTableState(char: Character, update: Update) {
     let dealt = 0;
     if (outcome !== 'miss') {
       damage.forEach((d, i) => {
-        const r = roll(i === 0 ? withModifier(d.dice, dmgBonus) : d.dice, { critical: outcome === 'crit' });
+        const r = safeRoll(i === 0 ? withModifier(d.dice, dmgBonus) : d.dice, { critical: outcome === 'crit' });
         dealt += Math.max(0, r.total);
         lines.push({ label: `${capital(d.type)} damage${unknown ? ' (if it hits)' : ''}`, total: Math.max(0, r.total), detail: describe(r), kind: 'damage', outcome });
         hits.push({ r, known: d.known, element: d.type as FxElement, orb: look.orb });
@@ -393,7 +393,7 @@ export function useTableState(char: Character, update: Update) {
         push({ title, subtitle: warn || undefined, lines: lines.length ? lines : [{ label: action.kind === 'trait' ? 'Trait' : 'Used', total: 0, detail: action.text || action.name, kind: 'info' }] });
         return;
       }
-      const r = roll(damage[0].dice);
+      const r = safeRoll(damage[0].dice);
       const dealt = Math.max(0, r.total);
       lines.push({ label: `${capital(type)} damage`, total: dealt, detail: describe(r), kind: 'damage' });
       stage(
@@ -419,7 +419,7 @@ export function useTableState(char: Character, update: Update) {
         push({ title, lines: [{ label: what, total: 0, detail: `Fails automatically: ${mode.autoFail}`, kind: 'info' }] });
         return;
       }
-      const r = roll(d20Expr(bonus, mode.adv));
+      const r = safeRoll(d20Expr(bonus, mode.adv));
       const entry = { title, subtitle: mode.note || undefined, lines: [{ label: what, total: r.total, detail: describe(r), kind: 'd20' as const, nat: natOf(r) }] };
       stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () => push(entry), { headline: 'NATURAL 20!' });
     },
@@ -534,7 +534,7 @@ export function useTableState(char: Character, update: Update) {
         for (let i = 0; i < plan.instances; i++) {
           let dealt = 0;
           damage.forEach((d) => {
-            const r = roll(d.dice);
+            const r = safeRoll(d.dice);
             dealt += Math.max(0, r.total);
             const half = spell.resolution === 'save' && spell.halfOnSave ? ` (save: ${Math.floor(Math.max(0, r.total) / 2)})` : '';
             lines.push({ label: `${plan.instances > 1 ? `#${i + 1} ` : ''}${capital(d.type)} damage${half}`, total: Math.max(0, r.total), detail: describe(r), kind: 'damage' });
@@ -544,7 +544,7 @@ export function useTableState(char: Character, update: Update) {
           effects.push(() => perform({ element: spell.element, shape: spell.shape, from, to: target, power, outcome: 'hit', label: plan.damage.length ? `${dealt} ${typeOf}` : undefined, delayMs: i * stagger }));
         }
       } else if (spell.resolution === 'heal') {
-        const r = roll(plan.healing || '0');
+        const r = safeRoll(plan.healing || '0');
         healing = Math.max(0, r.total);
         lines.push({ label: 'Healing', total: healing, detail: describe(r), kind: 'healing' });
         amounts.push({ r, known: tokenParts(spell.healing, c, spell), element: 'healing', orb: true });
@@ -599,7 +599,7 @@ export function useTableState(char: Character, update: Update) {
         push({ title: f.name, subtitle: f.source || undefined, lines: [{ label: 'Used', total: 0, detail: f.description || f.name, kind: 'info' }], element: f.element });
         return;
       }
-      const r = roll(resolveTokens(f.roll, c));
+      const r = safeRoll(resolveTokens(f.roll, c));
       const total = Math.max(0, r.total);
       const kind = f.rollKind === 'healing' ? 'healing' : f.rollKind === 'damage' ? 'damage' : 'dice';
       const entry = {
@@ -711,7 +711,7 @@ export function useTableState(char: Character, update: Update) {
 
   const deathSave = useCallback(
     (originEl?: Element | null) => {
-      const r = roll('1d20');
+      const r = safeRoll('1d20');
       const nat = naturalD20(r);
       const c = charRef.current;
       let detail: string;
@@ -745,7 +745,7 @@ export function useTableState(char: Character, update: Update) {
       const k = c.classes.find((x) => classById(x.classId).hitDie === die && x.hitDiceUsed < x.level);
       if (!k) return;
       const con = Math.floor((c.abilities.con - 10) / 2);
-      const r = roll(withModifier(`1d${die}`, con));
+      const r = safeRoll(withModifier(`1d${die}`, con));
       const gained = Math.max(0, r.total);
       const max = maxHp(c).total;
       const origin = centerOf(originEl);

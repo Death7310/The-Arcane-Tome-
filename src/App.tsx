@@ -14,6 +14,7 @@ import { AdvChip, ResultCard } from './components/Results';
 import { SpellsPanel } from './components/SpellsPanel';
 import { SpellCompendiumPanel } from './components/SpellBrowser';
 import { FeatLibraryPanel } from './components/Feats';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { AbilitiesPanel, GlancePanel, IdentityPanel, SkillsPanel } from './components/StatsPanels';
 import { fx, setDiceSpeed, setTally, sound } from './fx';
 import { CharacterContext } from './state/character';
@@ -45,6 +46,26 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   languages: LanguagesPanel,
   compendium: SpellCompendiumPanel,
   feats: FeatLibraryPanel,
+};
+
+/** Panel names for the message shown if one runs into an error. */
+const PANEL_NAMES: Record<PanelId, string> = {
+  identity: 'Character',
+  abilities: 'Abilities',
+  glance: 'At a glance',
+  vitals: 'Vitals',
+  conditions: 'Conditions',
+  turn: 'Turn',
+  attacks: 'Attacks',
+  companions: 'Companions',
+  skills: 'Skills',
+  spells: 'Spellcasting',
+  features: 'Features & traits',
+  inventory: 'Inventory',
+  notes: 'Notes',
+  languages: 'Languages',
+  compendium: 'Spell compendium',
+  feats: 'Feat library',
 };
 
 function initialState(): Saved {
@@ -316,14 +337,18 @@ export default function App() {
                     const tile = char.tiles.find((t) => tileKey(t.id) === id);
                     return tile ? (
                       <PanelSlot key={id} api={arranger.slot(id)}>
-                        <TilePanel tile={tile} onDelete={() => deleteTile(tile.id)} />
+                        <ErrorBoundary name={tile.title || 'This tile'}>
+                          <TilePanel tile={tile} onDelete={() => deleteTile(tile.id)} />
+                        </ErrorBoundary>
                       </PanelSlot>
                     ) : null;
                   }
                   const View = PANEL_VIEWS[id as PanelId];
                   return (
                     <PanelSlot key={id} api={arranger.slot(id)}>
-                      <View />
+                      <ErrorBoundary name={PANEL_NAMES[id as PanelId] ?? 'This panel'}>
+                        <View />
+                      </ErrorBoundary>
                     </PanelSlot>
                   );
                 })}

@@ -736,3 +736,7 @@ button.stat:hover { border-color: var(--gilt); }
 /* Forms with grouped parts (the feat writer). */
 .fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px 10px; margin: 0; display: grid; gap: 8px; min-width: 0; }
 .fieldset legend { padding: 0 4px; font: 600 12.5px/1 var(--font-body); color: var(--muted); }
+
+/* A panel that ran into an error (see ErrorBoundary). */
+.crash { display: grid; gap: 6px; border-left: 3px solid var(--bad); padding-left: 10px; }
+.crash p { margin: 0; }

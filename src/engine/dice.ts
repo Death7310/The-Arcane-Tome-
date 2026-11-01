@@ -51,6 +51,8 @@ export interface RollResult {
   total: number;
   /** Present only when at least one term counts successes. */
   successes?: number;
+  /** Set when the expression couldn't be read (a half-typed "1d"): nothing was rolled. */
+  unreadable?: string;
 }
 
 const MAX_DICE = 500;
@@ -227,8 +229,21 @@ export function roll(expression: string, opts: RollOptions = {}): RollResult {
   return rollTerms(parse(expression), opts);
 }
 
+/**
+ * Rolls dice typed by a person, which may be unfinished or mistyped ("1d", "2d6+"): instead of
+ * throwing, an unreadable expression rolls nothing (total 0) and says so.
+ */
+export function safeRoll(expression: string, opts: RollOptions = {}): RollResult {
+  try {
+    return roll(expression, opts);
+  } catch {
+    return { expression, terms: [], total: 0, unreadable: expression };
+  }
+}
+
 /** "2d6 [3, 5] + 3" — a human-readable account of a roll. */
 export function describe(result: RollResult): string {
+  if (result.unreadable !== undefined) return `Can’t read “${result.unreadable}”: nothing rolled. Use dice like 1d6, 2d8+3 or 1d10+{MOD}.`;
   return result.terms
     .map((tr, idx) => {
       const t = tr.term;
@@ -245,7 +260,7 @@ export function describe(result: RollResult): string {
 
 /** Returns the expression with `extra` added `times` times, merging same-size dice: ("8d6", "1d6", 2) → "10d6". */
 export function addDice(base: string, extra: string, times = 1): string {
-  if (!extra || times <= 0) return base;
+  if (!extra || times <= 0 || !isValid(base) || !isValid(extra)) return base;
   const terms = parse(base);
   const add = parse(extra);
   for (let k = 0; k < times; k++) {
@@ -267,6 +282,8 @@ export function addDice(base: string, extra: string, times = 1): string {
 
 /** Multiplies every dice count: ("1d10", 3) → "3d10". Used for cantrip scaling. */
 export function multiplyDice(expression: string, factor: number): string {
+  // Unfinished dice ("1d") are left as typed rather than thrown on.
+  if (!isValid(expression)) return expression;
   const terms = parse(expression);
   for (const t of terms) if (t.kind === 'dice') t.count *= factor;
   return format(terms);
