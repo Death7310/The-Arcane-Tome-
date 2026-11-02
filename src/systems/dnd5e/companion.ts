@@ -5,8 +5,8 @@
 
 import { ARMOR, type Ability } from './data';
 import { evalFormula } from './formula';
-import type { Character, Companion, Weapon } from './model';
-import { abilityMod, type Breakdown } from './rules';
+import type { Character, Companion, CompanionAction, Weapon } from './model';
+import { abilityMod, incapacitatedBy, resolveTokens, totalLevel, type Breakdown } from './rules';
 
 type Part = Breakdown['parts'][number];
 
@@ -69,3 +69,64 @@ export function carryingCapacity(k: Companion): number {
 }
 
 export const carriedWeight = (k: Companion): number => Math.round(k.inventory.reduce((a, i) => a + i.qty * i.weight, 0) * 100) / 100;
+
+// ── Reactions that add damage to a hit (Infused Strikes) ────────────────────
+
+const TYPES = 'acid|bludgeoning|cold|fire|force|lightning|necrotic|piercing|poison|psychic|radiant|slashing|thunder';
+
+/**
+ * Whether an action adds its damage to someone else's hit, and its dice and type as written.
+ * Set by hand (boost), or read from a reaction's text: "When another creature … hits … the
+ * attack deals an extra 1d6 damage …". The type may be blank when the text leaves it to a
+ * choice (a drake's Draconic Essence).
+ */
+export function boostOf(a: CompanionAction): { dice: string; type: string } | null {
+  if (a.boost === false) return null;
+  const text = a.text.replace(/\s+/g, ' ');
+  const read = new RegExp(`\\bextra\\s+(\\d+d\\d+(?:\\s*[+-]\\s*\\d+)?)(?:\\s+(${TYPES}))?\\s+damage`, 'i').exec(text);
+  const fromText = a.kind === 'reaction' && /\bhits?\b/i.test(text) && !!read;
+  if (!a.boost && !fromText) return null;
+  const dice = a.damage.trim() || read?.[1] || '';
+  if (!dice) return null;
+  return { dice, type: a.damageType || read?.[2]?.toLowerCase() || '' };
+}
+
+/** Your level that an action's level steps count: one class's, or your character level. */
+export const ownerLevel = (owner: Character, levelOf = '') =>
+  levelOf ? owner.classes.filter((k) => k.classId === levelOf).reduce((n, k) => n + k.level, 0) : totalLevel(owner);
+
+/**
+ * An action's damage dice as they stand at your level, with your numbers filled in: its level
+ * step if one applies, else its damage dice (or, for a boost, the dice its text names).
+ */
+export function actionDice(a: CompanionAction, owner: Character): string {
+  const level = ownerLevel(owner, a.levelOf);
+  const step = [...(a.levelDice ?? [])].filter((x) => x.dice.trim() && x.level <= level).sort((x, y) => x.level - y.level).at(-1);
+  const base = step?.dice ?? (a.damage.trim() || boostOf(a)?.dice || '');
+  return base ? resolveTokens(base, owner).replace(/\s+/g, '') : '';
+}
+
+export interface Boost {
+  comp: Companion;
+  action: CompanionAction;
+  dice: string;
+  type: string;
+  /** Why it can't be used right now, if it can't (its reaction is spent, it's incapacitated, at 0 HP). */
+  blocked: string;
+}
+
+/** Every reaction your companions could add to a hit, except the attacker's own. */
+export function availableBoosts(owner: Character, attackerId = ''): Boost[] {
+  const out: Boost[] = [];
+  for (const comp of owner.companions) {
+    if (comp.id === attackerId) continue;
+    for (const action of comp.actions) {
+      const b = boostOf(action);
+      if (!b) continue;
+      const by = incapacitatedBy(comp);
+      const blocked = comp.hp <= 0 ? 'at 0 HP' : by ? by : comp.turn.reaction ? 'reaction used' : '';
+      out.push({ comp, action, dice: actionDice(action, owner), type: b.type, blocked });
+    }
+  }
+  return out;
+}

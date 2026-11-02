@@ -3,11 +3,11 @@ import { centerOf, performCondition } from '../fx';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
-import { ABILITIES, ABILITY_NAMES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, type Ability, type ConditionId } from '../systems/dnd5e/data';
-import { carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, walkSpeed } from '../systems/dnd5e/companion';
+import { ABILITIES, ABILITY_NAMES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
+import { actionDice, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, ownerLevel, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, evalFormula, isFormula } from '../systems/dnd5e/formula';
 import { blankCompanion, blankCompanionAction, uid, type Character, type Companion, type CompanionAction } from '../systems/dnd5e/model';
-import { abilityMod, resolveTokens, signed } from '../systems/dnd5e/rules';
+import { abilityMod, signed } from '../systems/dnd5e/rules';
 import { COMPANION_AI_PROMPT, companionFromCreature, parseStatBlock } from '../systems/dnd5e/statblock';
 import { AddItemDialog } from './Items';
 import { RulesText } from './RulesText';
@@ -28,7 +28,10 @@ function actionSummary(a: CompanionAction, c: Character): string {
   const parts: string[] = [];
   if (a.attack) parts.push(signed(num(a.toHit, c)));
   if (a.save) parts.push(`DC ${evalFormula(a.dc, c) ?? '?'} ${a.save.toUpperCase()}`);
-  if (a.damage) parts.push(`${resolveTokens(a.damage, c).replace(/\s+/g, '')} ${a.damageType}`.trim());
+  const b = boostOf(a);
+  const dice = actionDice(a, c);
+  if (dice) parts.push(`${b ? '+' : ''}${dice} ${a.damageType || b?.type || (b ? 'damage' : '')}`.trim());
+  if (b) parts.push('adds to a hit');
   return parts.join(' · ');
 }
 
@@ -452,7 +455,7 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
         <NumField label="Temp HP" id={`ce-temp-${comp.id}`} value={comp.tempHp} min={0} onChange={(n) => set((k) => void (k.tempHp = n))} />
         <TextField label="CR" id={`ce-cr-${comp.id}`} value={comp.cr} onChange={(v) => set((k) => void (k.cr = v))} />
       </div>
-      <div className="grid-3" style={{ gridTemplateColumns: 'repeat(6, minmax(0, 1fr))' }}>
+      <div className="ce-abilities">
         {ABILITIES.map((a) => (
           <NumField key={a} label={a.toUpperCase()} ariaLabel={ABILITY_NAMES[a]} id={`ce-${a}-${comp.id}`} value={comp.abilities[a]} min={1} max={30} onChange={(n) => set((k) => void (k.abilities[a] = n))} />
         ))}
@@ -493,8 +496,14 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
             )}
             {a.attack && <TextField label="Reach / range" id={`ca-reach-${a.id}`} value={a.reach} onChange={(v) => setAction(j, (x) => void (x.reach = v))} />}
             <TextField label="Damage dice" id={`ca-dmg-${a.id}`} value={a.damage} placeholder="1d8 + {PB}" onChange={(v) => setAction(j, (x) => void (x.damage = v))} />
-            {a.damage && (
-              <SelectField label="Damage type" id={`ca-type-${a.id}`} value={a.damageType || 'bludgeoning'} options={DAMAGE_TYPES.map((d) => ({ id: d, name: d.charAt(0).toUpperCase() + d.slice(1) }))} onChange={(v) => setAction(j, (x) => void (x.damageType = v))} />
+            {(a.damage || boostOf(a)) && (
+              <SelectField
+                label={boostOf(a) && !a.damageType ? 'Damage type (choose: e.g. its Draconic Essence)' : 'Damage type'}
+                id={`ca-type-${a.id}`}
+                value={a.damageType || boostOf(a)?.type || ''}
+                options={[...(a.damageType || boostOf(a)?.type ? [] : [{ id: '', name: 'Choose…' }]), ...DAMAGE_TYPES.map((d) => ({ id: d, name: d.charAt(0).toUpperCase() + d.slice(1) }))]}
+                onChange={(v) => setAction(j, (x) => void (x.damageType = v))}
+              />
             )}
             <SelectField
               label="Saving throw"
@@ -511,6 +520,7 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
             )}
           </div>
           <TextField label="What it does" id={`ca-text-${a.id}`} multiline value={a.text} onChange={(v) => setAction(j, (x) => void (x.text = v))} />
+          <BoostSettings a={a} owner={c} set={(fn) => setAction(j, fn)} />
           <ConfirmButton label="Remove" onConfirm={() => set((k) => void k.actions.splice(j, 1))} />
         </div>
       ))}
@@ -682,5 +692,58 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
         </div>
       )}
     </Dialog>
+  );
+}
+
+/**
+ * Whether a reaction adds its damage to a hit (Infused Strikes), and dice that change with your
+ * level, for actions like it (or any action whose dice grow as you do).
+ */
+function BoostSettings({ a, owner, set }: { a: CompanionAction; owner: Character; set: (fn: (x: CompanionAction) => void) => void }) {
+  const b = boostOf(a);
+  const fromText = !!b && a.boost === undefined;
+  const steps = a.levelDice ?? [];
+  const classes = owner.classes.filter((k, i, all) => all.findIndex((x) => x.classId === k.classId) === i);
+  return (
+    <div className="note" style={{ display: 'grid', gap: 6 }}>
+      <Check
+        label="Adds its damage to a hit: offered on attack results, using its reaction (like a drake’s Infused Strikes)"
+        id={`ca-boost-${a.id}`}
+        checked={!!b}
+        onChange={(on) => set((x) => void ((x.boost = on), on && x.kind !== 'reaction' && (x.kind = 'reaction')))}
+      />
+      {fromText && <p className="hint" style={{ margin: 0 }}>Read from its text: +{b!.dice}{b!.type ? ` ${b!.type}` : ''} on a hit.{!b!.type && ' Choose its damage type above.'}</p>}
+      {b && !a.damage.trim() && !fromText && <p className="hint" style={{ margin: 0, color: 'var(--warn)' }}>Give it damage dice above (Infused Strikes: 1d6).</p>}
+      <span className="hint">Dice that change with your level (optional): from that level on, they replace the damage dice.</span>
+      {steps.length > 0 && (
+        <label className="field">
+          <span>Count levels in</span>
+          <select value={a.levelOf ?? ''} onChange={(e) => set((x) => void (x.levelOf = e.target.value))} aria-label="Whose level the steps count">
+            <option value="">My character level ({ownerLevel(owner)})</option>
+            {classes.map((k) => (
+              <option key={k.classId} value={k.classId}>
+                My {classById(k.classId).name} level ({ownerLevel(owner, k.classId)})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {steps.map((st, i) => (
+        <div className="row" key={i}>
+          <span>From level</span>
+          <input className="input" type="number" min={1} max={20} style={{ width: 70 }} value={st.level} aria-label="From level" onChange={(e) => set((x) => void (x.levelDice![i].level = Math.max(1, Math.min(20, Number(e.target.value) || 1))))} />
+          <input className="input" style={{ width: 110 }} value={st.dice} placeholder="1d10" aria-label="Dice from that level" onChange={(e) => set((x) => void (x.levelDice![i].dice = e.target.value))} />
+          <button type="button" className="btn small ghost" onClick={() => set((x) => void x.levelDice!.splice(i, 1))}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <div className="row">
+        <button type="button" className="btn small ghost" onClick={() => set((x) => void (x.levelDice = [...(x.levelDice ?? []), { level: Math.min(20, ownerLevel(owner, x.levelOf) + 1), dice: '' }]))}>
+          Add dice for a higher level
+        </button>
+        {steps.length > 0 && <span className="hint">Now: {actionDice(a, owner) || '—'}</span>}
+      </div>
+    </div>
   );
 }

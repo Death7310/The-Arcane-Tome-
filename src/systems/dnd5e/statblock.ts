@@ -54,6 +54,14 @@ export function readAction(name: string, text: string, kind: CompanionAction['ki
     const dmg = /\b(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*\)?\s*(Acid|Bludgeoning|Cold|Fire|Force|Lightning|Necrotic|Piercing|Poison|Psychic|Radiant|Slashing|Thunder) damage/i.exec(t);
     if (dmg) (a.damage = dmg[1]), (a.damageType = dmg[2].toLowerCase());
   }
+  // A reaction that adds damage to someone else's hit: "When another creature … hits …, the
+  // attack deals an extra 1d6 damage of the type …" (a Drakewarden drake's Infused Strikes).
+  const extra = /\bextra\s+(\d+d\d+(?:\s*[+-]\s*\d+)?)(?:\s+(Acid|Bludgeoning|Cold|Fire|Force|Lightning|Necrotic|Piercing|Poison|Psychic|Radiant|Slashing|Thunder))?\s+damage/i.exec(t);
+  if (kind === 'reaction' && !a.attack && extra && /\bhits?\b/i.test(t)) {
+    a.boost = true;
+    a.damage = extra[1].replace(/\s+/g, '');
+    a.damageType = extra[2]?.toLowerCase() ?? '';
+  }
   const save24 = /(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) Saving Throw:\s*DC\s*([^,.]+)/i.exec(t);
   const save14 = /DC\s*(\d+|equals? your spell save DC)\s+(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/i.exec(t);
   if (save24) (a.save = ABILITY_WORD[save24[1].toLowerCase()]), (a.dc = tokenize(save24[2]));

@@ -160,6 +160,15 @@ export interface CompanionAction {
   /** Save DC: a number or a formula, e.g. "{SPELLDC}". */
   dc: string;
   text: string;
+  /**
+   * A reaction that adds its damage to another creature's hit, like a Drakewarden drake's
+   * Infused Strikes: offered on your attack results. Unset means "read it from the text".
+   */
+  boost?: boolean;
+  /** Its dice from a level of yours on: the last step at or below your level replaces the damage dice. */
+  levelDice?: { level: number; dice: string }[];
+  /** Whose level the steps count: a class id ("ranger"), or "" for your character level. */
+  levelOf?: string;
 }
 
 /**

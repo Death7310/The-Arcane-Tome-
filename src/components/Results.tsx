@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
+import { multiplyDice } from '../engine/dice';
+import { useChar } from '../state/character';
 import { useTable, type Advantage, type RollEntry } from '../state/table';
+import { availableBoosts } from '../systems/dnd5e/companion';
 
 export function EntryView({ e, onApplyHealing }: { e: RollEntry; onApplyHealing?: (n: number, el: HTMLElement) => void }) {
   return (
@@ -34,16 +37,52 @@ export function EntryView({ e, onApplyHealing }: { e: RollEntry; onApplyHealing?
   );
 }
 
+/**
+ * On a weapon hit: your companions' reactions that add damage to it (a drake's Infused
+ * Strikes), as buttons. Each rolls its dice (doubled on a critical hit) into this result.
+ */
+export function BoostButtons({ e }: { e: RollEntry }) {
+  const t = useTable();
+  const { char: c } = useChar();
+  if (!e.boost) return null;
+  const boosts = availableBoosts(c, e.boost.attacker).filter((b) => !e.boost!.used.includes(`${b.comp.id}:${b.action.id}`));
+  if (!boosts.length) return null;
+  return (
+    <div className="row boosts">
+      {boosts.map((b) => {
+        const dice = e.boost!.crit ? multiplyDice(b.dice, 2) : b.dice;
+        return (
+          <button
+            key={`${b.comp.id}:${b.action.id}`}
+            type="button"
+            className={`btn small boost el-${b.type || 'arcane'}`}
+            disabled={!!b.blocked}
+            title={b.blocked ? `${b.comp.name} can’t: ${b.blocked}` : `${b.comp.name} uses its reaction: ${b.action.text}`}
+            onClick={(ev) => t.boostHit(e.id, b.comp, b.action, ev.currentTarget)}
+          >
+            {b.comp.name}: {b.action.name} +{dice}
+            {b.type ? ` ${b.type}` : ''}
+            {b.blocked ? ` (${b.blocked})` : ''}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ResultCard() {
   const t = useTable();
+  const { char: c } = useChar();
   const e = t.latest;
   const [hover, setHover] = useState(false);
+  // A hit a companion can still add to stays up longer, so there's time to decide.
+  const offering = !!e?.boost && availableBoosts(c, e.boost.attacker).some((b) => !b.blocked && !e.boost!.used.includes(`${b.comp.id}:${b.action.id}`));
   useEffect(() => {
     if (!e || hover) return;
-    const ms = Math.min(14000, 6000 + e.lines.length * 900);
+    const ms = Math.min(14000, 6000 + e.lines.length * 900) + (offering ? 8000 : 0);
     const id = setTimeout(t.dismissLatest, ms);
     return () => clearTimeout(id);
-  }, [e, hover, t.dismissLatest]);
+  }, [e, hover, offering, t.dismissLatest]);
   if (!e) return null;
   return (
     <div
@@ -66,6 +105,7 @@ export function ResultCard() {
           t.dismissLatest();
         }}
       />
+      <BoostButtons e={e} />
     </div>
   );
 }

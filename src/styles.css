@@ -740,3 +740,11 @@ button.stat:hover { border-color: var(--gilt); }
 /* A panel that ran into an error (see ErrorBoundary). */
 .crash { display: grid; gap: 6px; border-left: 3px solid var(--bad); padding-left: 10px; }
 .crash p { margin: 0; }
+
+/* A companion's reaction offered on a hit (Infused Strikes). */
+.boosts { margin-top: 8px; }
+.btn.boost { border-color: color-mix(in srgb, var(--el, var(--gilt)) 70%, transparent); background: color-mix(in srgb, var(--el, var(--gilt)) 16%, var(--surface-2)); }
+
+/* A companion's ability scores in its editor: six across, three across on a phone so two digits fit. */
+.ce-abilities { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 520px) { .ce-abilities { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

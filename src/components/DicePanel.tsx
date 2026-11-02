@@ -6,7 +6,7 @@ import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { blankCustomDie, type CustomDie } from '../systems/dnd5e/model';
 import { resolveTokens } from '../systems/dnd5e/rules';
-import { AdvSegment, EntryView } from './Results';
+import { AdvSegment, BoostButtons, EntryView } from './Results';
 import { ConfirmButton, NumField, Panel, SelectField, TextField } from './ui';
 
 const STANDARD = [4, 6, 8, 10, 12, 20, 100] as const;
@@ -294,8 +294,12 @@ function HistoryPanel() {
     >
       {t.log.length === 0 && <p className="hint" style={{ margin: 0 }}>Nothing rolled yet. Rolls from every page show up here.</p>}
       <div className="history">
-        {t.log.slice(0, 40).map((e) => (
-          <EntryView key={e.id} e={e} />
+        {t.log.slice(0, 40).map((e, i) => (
+          <div key={e.id}>
+            <EntryView e={e} />
+            {/* The latest hit can still take a companion's reaction (Infused Strikes) from here. */}
+            {i === 0 && <BoostButtons e={e} />}
+          </div>
         ))}
       </div>
     </Panel>

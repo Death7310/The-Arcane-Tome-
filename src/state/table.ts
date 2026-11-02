@@ -12,7 +12,7 @@ import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/t
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type StandardActionId } from '../systems/dnd5e/data';
 import { evalFormula } from '../systems/dnd5e/formula';
 import { emptyTurn, type CastingTime, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type Spell, type Weapon } from '../systems/dnd5e/model';
-import { compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { actionDice, boostOf, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
 import {
   effectDice,
   incapacitatedBy,
@@ -56,6 +56,12 @@ export interface RollEntry {
   element?: FxElement;
   /** Total healing the reader can apply to themselves from this entry. */
   healing?: number;
+  /**
+   * A weapon hit a companion's reaction can add damage to (Infused Strikes): whether it was a
+   * critical hit (the extra dice double), who attacked (a companion can't boost its own hit),
+   * and which reactions were already added ("companionId:actionId").
+   */
+  boost?: { crit: boolean; attacker: string; used: string[] };
 }
 
 export type SlotChoice = { kind: 'slot'; level: number } | { kind: 'pact'; level: number } | { kind: 'free'; level: number };
@@ -101,6 +107,8 @@ function stage(phases: DicePhase[], origin: Point, present: () => void, crit: Cr
 
 export function useTableState(char: Character, update: Update) {
   const [log, setLog] = useState<RollEntry[]>([]);
+  const logRef = useRef(log);
+  logRef.current = log;
   const [latest, setLatest] = useState<RollEntry | null>(null);
   const [adv, setAdv] = useState<Advantage>('normal');
   const [targetAc, setTargetAc] = useState<number | null>(null);
@@ -297,6 +305,7 @@ export function useTableState(char: Character, update: Update) {
             subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
             lines: res.lines,
             element,
+            ...(res.outcome !== 'miss' ? { boost: { crit: res.outcome === 'crit', attacker: '', used: [] } } : {}),
           });
         },
         { element, headline: 'CRITICAL!' },
@@ -359,9 +368,9 @@ export function useTableState(char: Character, update: Update) {
       const title = `${comp.name}: ${action.name}`;
       const warn = spendCompanion(comp, action.kind);
       const from = centerOf(originEl);
-      const type = action.damageType || 'bludgeoning';
+      const type = action.damageType || boostOf(action)?.type || 'bludgeoning';
       const element = type as FxElement;
-      const dice = action.damage ? resolveTokens(action.damage, c).replace(/\s+/g, '') : '';
+      const dice = actionDice(action, c);
       const damage = dice && isValid(dice) ? [{ dice, type, known: [] as Part[] }] : [];
       if (action.attack) {
         const toHit = evalFormula(action.toHit, c) ?? 0;
@@ -375,7 +384,13 @@ export function useTableState(char: Character, update: Update) {
           from,
           () => {
             perform({ element, shape: action.attack === 'ranged' ? 'bolt' : 'touch', from: action.attack === 'ranged' ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
-            push({ title, subtitle: [warn, action.reach, mode.note].filter(Boolean).join(' · ') || undefined, lines: res.lines, element });
+            push({
+              title,
+              subtitle: [warn, action.reach, mode.note].filter(Boolean).join(' · ') || undefined,
+              lines: res.lines,
+              element,
+              ...(res.outcome !== 'miss' ? { boost: { crit: res.outcome === 'crit', attacker: comp.id, used: [] } } : {}),
+            });
           },
           { element, headline: 'CRITICAL!' },
           { look: weaponLook(action.name, type, action.attack === 'ranged'), element },
@@ -447,13 +462,51 @@ export function useTableState(char: Character, update: Update) {
         from,
         () => {
           perform({ element, shape: w.ranged ? 'bolt' : 'touch', from: w.ranged ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
-          push({ title: `${comp.name}: ${w.name}`, subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined, lines: res.lines, element });
+          push({
+            title: `${comp.name}: ${w.name}`,
+            subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
+            lines: res.lines,
+            element,
+            ...(res.outcome !== 'miss' ? { boost: { crit: res.outcome === 'crit', attacker: comp.id, used: [] } } : {}),
+          });
         },
         { element, headline: 'CRITICAL!' },
         { look: weaponLook(w.name, w.damage[0]?.type ?? '', w.ranged), element },
       );
     },
     [push],
+  );
+
+  /**
+   * A companion's reaction added to a hit already rolled (a drake's Infused Strikes): rolls its
+   * dice, twice as many on a critical hit, adds the damage to that hit's result, and spends the
+   * companion's reaction.
+   */
+  const boostHit = useCallback(
+    (entryId: number, comp: Companion, action: CompanionAction, originEl?: Element | null) => {
+      const c = charRef.current;
+      const entry = logRef.current.find((e) => e.id === entryId);
+      const key = `${comp.id}:${action.id}`;
+      if (!entry?.boost || entry.boost.used.includes(key)) return;
+      const b = boostOf(action);
+      const dice = actionDice(action, c);
+      const type = b?.type ?? '';
+      const warn = spendCompanion(comp, 'reaction');
+      const r = safeRoll(dice, { critical: entry.boost.crit });
+      const dealt = Math.max(0, r.total);
+      const line: RollLine = {
+        label: `${comp.name}: ${action.name}${type ? ` (${capital(type)})` : ''}`,
+        total: dealt,
+        detail: [describe(r), entry.boost.crit && !r.unreadable ? 'dice doubled for the critical hit' : '', warn].filter(Boolean).join(' · '),
+        kind: 'damage',
+      };
+      const next: RollEntry = { ...entry, lines: [...entry.lines, line], boost: { ...entry.boost, used: [...entry.boost.used, key] } };
+      setLog((l) => l.map((e) => (e.id === entryId ? next : e)));
+      setLatest(next);
+      const from = centerOf(originEl);
+      perform({ element: (type || 'arcane') as FxElement, shape: 'burst', from, to: fx.defaultTarget(from), power: 0, outcome: 'hit', label: `+${dealt}${type ? ` ${type}` : ''}` });
+    },
+    [],
   );
 
   /** A companion's turn starts over (its own initiative, or a new round). */
@@ -821,6 +874,7 @@ export function useTableState(char: Character, update: Update) {
       companionTest,
       companionWeapon,
       companionNewTurn,
+      boostHit,
       latest,
       dismissLatest: () => setLatest(null),
       clearLog: () => setLog([]),
@@ -845,7 +899,7 @@ export function useTableState(char: Character, update: Update) {
       rest,
       preview,
     }),
-    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
+    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
   );
 }
 
