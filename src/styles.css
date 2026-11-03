@@ -773,3 +773,56 @@ button.stat:hover { border-color: var(--gilt); }
   .ability .score-edit input { width: 34px; }
 }
 @media (max-width: 340px) { .abilities { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Abilities: the score reads as text until Edit, and the Edit / Play button sits bottom left. */
+.ability .score-view { font: 700 15px/1 var(--font-data); padding: 5px 10px; border-radius: 99px; background: var(--bg); border: 1px solid transparent; min-width: 44px; text-align: center; }
+.ability .prof-dot:disabled { cursor: default; opacity: 1; }
+.abilities-foot { margin-top: 10px; align-items: flex-start; flex-wrap: nowrap; }
+.abilities-foot .btn { flex: none; min-width: 64px; }
+
+/* Enemies: one compact line each; the target in gold. */
+.enemy-list { display: grid; gap: 8px; }
+.enemy { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); overflow: hidden; }
+.enemy.target { border-color: var(--gilt); box-shadow: 0 0 0 2px color-mix(in srgb, var(--gilt) 55%, transparent), 0 0 14px color-mix(in srgb, var(--gilt) 30%, transparent); }
+.enemy.status-down { opacity: 0.55; }
+.enemy-line { display: grid; gap: 2px; width: 100%; padding: 9px 12px; background: none; border: 0; text-align: left; color: inherit; cursor: pointer; }
+.enemy-line b { font-size: 15px; }
+.enemy-line small { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.enemy.status-bloodied .enemy-line b::after { content: ' ●'; color: var(--warn); }
+.enemy.status-badly .enemy-line b::after { content: ' ●'; color: var(--bad); }
+.target-tag { color: var(--gilt); font-weight: 700; }
+.enemy-card { display: grid; gap: 12px; padding: 4px 12px 12px; border-top: 1px solid var(--line); }
+.enemy-card h4 { margin: 4px 0 6px; font: 600 12.5px/1.2 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.enemy-card details summary { cursor: pointer; }
+.hit-log { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+.hit-log li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.party-damage { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.enemy-pick { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); margin-bottom: 4px; }
+
+/* Your target, above your attacks and spells. */
+.target-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 10px; margin-bottom: 10px; border: 1px dashed var(--line); border-radius: var(--radius); }
+.target-strip.on { border: 1px solid var(--gilt); background: color-mix(in srgb, var(--gilt) 8%, transparent); }
+.target-strip label { display: flex; align-items: center; gap: 6px; font: 600 12.5px/1 var(--font-body); color: var(--muted); }
+.target-strip select { min-height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); padding: 0 8px; font-weight: 700; }
+.target-strip small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.popover.aim { border-bottom: 0; }
+.target-actions .hint { margin-right: 2px; }
+.move-roll { display: inline-flex; align-items: center; gap: 6px; }
+.move-roll select { min-height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); }
+
+/* Initiative. */
+.fight-setup { display: grid; gap: 6px; }
+.fight-row { display: flex; align-items: center; gap: 8px; }
+.fight-row > span, .fight-row > b { flex: 1; min-width: 0; }
+.fight-row .input { width: 72px; flex: none; }
+.fight-row .input[aria-label="Party member's name"] { flex: 1; width: auto; }
+.fight-order { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; }
+.fight-order li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+.fight-order li.now { border-color: var(--gilt); background: color-mix(in srgb, var(--gilt) 14%, var(--surface-2)); }
+.fight-order li.out { opacity: 0.5; text-decoration: line-through; }
+.fight-order li.target { box-shadow: inset 3px 0 0 var(--gilt); }
+.fight-order .init { font: 700 15px/1 var(--font-data); min-width: 26px; text-align: center; }
+.fight-name { flex: 1; min-width: 0; display: grid; gap: 1px; text-align: left; background: none; border: 0; color: inherit; padding: 0; }
+.fight-name:disabled { cursor: default; opacity: 1; }
+.fight-name small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-tag { font: 700 11px/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--gilt); }

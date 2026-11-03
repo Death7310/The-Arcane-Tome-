@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { isValid } from '../engine/dice';
 import { centerOf, performCondition, performEffect, performEnd } from '../fx';
 import { useChar } from '../state/character';
-import { CONDITIONS, EFFECT_PRESETS, type ConditionId } from '../systems/dnd5e/data';
+import { useTable } from '../state/table';
+import { CONDITIONS, EFFECT_PRESETS, INCAPACITATING, type ConditionId } from '../systems/dnd5e/data';
+import { endConcentration } from '../systems/dnd5e/enemies';
 import { blankEffect, type Effect } from '../systems/dnd5e/model';
 import { Check, ConfirmButton, NumField, Panel, TextField } from './ui';
 
@@ -19,6 +21,7 @@ export function effectSummary(e: Effect): string {
 
 export function ConditionsPanel() {
   const { char: c, update } = useChar();
+  const t = useTable();
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Effect>(() => blankEffect({ name: '' }));
   const active = CONDITIONS.filter((k) => c.conditions.includes(k.id));
@@ -26,7 +29,14 @@ export function ConditionsPanel() {
   const toggle = (id: ConditionId, el: HTMLElement) => {
     const ending = c.conditions.includes(id);
     performCondition(id, centerOf(el), CONDITIONS.find((k) => k.id === id)!.name, ending);
-    update((d) => void (d.conditions = ending ? d.conditions.filter((x) => x !== id) : [...d.conditions, id]));
+    const spell = c.spellcasting.concentratingOn;
+    // Becoming Incapacitated (Stunned, Paralyzed…) ends concentration, and the marks it held.
+    const breaks = !ending && !!spell && INCAPACITATING.includes(id);
+    update((d) => {
+      d.conditions = ending ? d.conditions.filter((x) => x !== id) : [...d.conditions, id];
+      if (breaks) endConcentration(d);
+    });
+    if (breaks) t.note('Concentration ends', `${CONDITIONS.find((k) => k.id === id)!.name}: you can't concentrate, so ${spell} ends.`);
   };
   const setExhaustion = (n: number) => {
     const at = centerOf(document.getElementById('exhaustion'));

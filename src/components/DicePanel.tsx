@@ -6,7 +6,7 @@ import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { blankCustomDie, type CustomDie } from '../systems/dnd5e/model';
 import { resolveTokens } from '../systems/dnd5e/rules';
-import { AdvSegment, BoostButtons, EntryView } from './Results';
+import { AdvSegment, EntryActions, EntryView } from './Results';
 import { ConfirmButton, NumField, Panel, SelectField, TextField } from './ui';
 
 const STANDARD = [4, 6, 8, 10, 12, 20, 100] as const;
@@ -298,7 +298,7 @@ function HistoryPanel() {
           <div key={e.id}>
             <EntryView e={e} />
             {/* The latest hit can still take a companion's reaction (Infused Strikes) from here. */}
-            {i === 0 && <BoostButtons e={e} />}
+            {i === 0 && <EntryActions e={e} />}
           </div>
         ))}
       </div>

@@ -91,6 +91,12 @@ export function boostOf(a: CompanionAction): { dice: string; type: string } | nu
   return { dice, type: a.damageType || read?.[2]?.toLowerCase() || '' };
 }
 
+/** The damage type a companion's action deals: its own, else the companion's element (its essence). */
+export const actionType = (comp: Pick<Companion, 'essence'>, a: CompanionAction): string => a.damageType || boostOf(a)?.type || (boostOf(a) ? comp.essence : '') || '';
+
+/** Whether a companion has an element to choose: a reaction that adds to hits, or a Draconic Essence trait. */
+export const hasEssence = (comp: Companion): boolean => comp.actions.some((a) => boostOf(a) || /draconic essence/i.test(a.text)) || /draconic essence/i.test(comp.notes);
+
 /** Your level that an action's level steps count: one class's, or your character level. */
 export const ownerLevel = (owner: Character, levelOf = '') =>
   levelOf ? owner.classes.filter((k) => k.classId === levelOf).reduce((n, k) => n + k.level, 0) : totalLevel(owner);
@@ -125,7 +131,7 @@ export function availableBoosts(owner: Character, attackerId = ''): Boost[] {
       if (!b) continue;
       const by = incapacitatedBy(comp);
       const blocked = comp.hp <= 0 ? 'at 0 HP' : by ? by : comp.turn.reaction ? 'reaction used' : '';
-      out.push({ comp, action, dice: actionDice(action, owner), type: b.type, blocked });
+      out.push({ comp, action, dice: actionDice(action, owner), type: b.type || comp.essence, blocked });
     }
   }
   return out;

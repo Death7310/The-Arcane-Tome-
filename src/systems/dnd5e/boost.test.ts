@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { safeRoll } from '../../engine/dice';
-import { actionDice, availableBoosts, boostOf } from './companion';
+import { actionDice, actionType, availableBoosts, boostOf } from './companion';
 import { blankCharacter, blankCompanion, blankCompanionAction, emptyTurn } from './model';
 import { parseStatBlock, readAction } from './statblock';
 
@@ -86,5 +86,18 @@ Infused Strikes. ${INFUSED}`)!;
     const inf = k.actions.find((x) => x.name === 'Infused Strikes')!;
     expect(inf).toMatchObject({ kind: 'reaction', boost: true, damage: '1d6' });
     expect(boostOf(k.actions.find((x) => x.name === 'Bite')!)).toBeNull();
+  });
+});
+
+describe('a companion’s element (Draconic Essence)', () => {
+  it('is used by its Infused Strikes when the reaction names no type', () => {
+    const c = ranger(4);
+    const artex = blankCompanion({ id: 'a', name: 'Artex', hp: 25, essence: 'poison', actions: [blankCompanionAction({ id: 'i', name: 'Infused Strikes', kind: 'reaction', text: INFUSED })] });
+    c.companions = [artex];
+    expect(availableBoosts(c)[0]).toMatchObject({ dice: '1d6', type: 'poison' });
+    expect(actionType(artex, artex.actions[0])).toBe('poison');
+    // A type on the reaction itself still wins.
+    artex.actions[0].damageType = 'cold';
+    expect(availableBoosts(c)[0].type).toBe('cold');
   });
 });

@@ -61,16 +61,16 @@ error inside one panel), and two-digit ability scores cut off in the companion e
 
 ### Make it more effective at the table
 
-9. **One-tap concentration saves (S).** Taking damage while concentrating already shows "DC N
+9. ✅ **Done (3 November): one-tap concentration saves (S).** Taking damage while concentrating already shows "DC N
    Constitution save". A button there that rolls the save (with your save bonus and conditions)
    and ends the spell on a failure would save a step every fight.
-10. **The drake's Bite essence damage (S–M).** At 7th level the Bite adds 1d6 of the essence type,
+10. **The drake's Bite essence damage (S–M).** (Partly done: the essence is now one setting on the companion. The Bite's extra damage waits until Ranger 7.) At 7th level the Bite adds 1d6 of the essence type,
     and at 15th 2d6. Companion actions hold one damage type, so the Bite rolls only its piercing
     damage. A second damage part on companion actions would cover this, and other multi-type attacks.
 11. **Where each ability score comes from (M).** Show a score as base + increases (Level up's
     Ability Score Improvements and feats like Shadow-Touched, which the sheet already records) +
     hand edits. That makes a mismatch with your PDF obvious, like a WIS that should be 17.
-12. **Targets and an initiative order (L).** Add foes from the SRD creature list (or a quick name +
+12. ✅ **Done (3 November): targets and an initiative order (L).** Add foes from the SRD creature list (or a quick name +
     AC + HP) as targets. Attacks would then use the chosen target's AC and subtract damage from its HP.
     A turn order covering you, your companions and the foes would advance your and your companions' turns automatically.
 13. **Undo (M).** An "undo last change" for slips like a wrong HP edit, quicker than a save point.

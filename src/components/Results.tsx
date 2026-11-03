@@ -66,11 +66,92 @@ export function BoostButtons({ e }: { e: RollEntry }) {
               {b.blocked ? ` (${b.blocked})` : ''}
             </button>
             {/* No element chosen yet: pick it right here before rolling. */}
-            {!b.type && <ElementPicker companionId={b.comp.id} action={b.action} compact />}
+            {!b.type && <ElementPicker companionId={b.comp.id} compact />}
           </span>
         );
       })}
     </div>
+  );
+}
+
+/** Damage taken while concentrating: the save to keep the spell, one tap away. */
+function ConcentrationButton({ e }: { e: RollEntry }) {
+  const t = useTable();
+  if (!e.concentration || e.concentration.done) return null;
+  return (
+    <div className="row boosts">
+      <button type="button" className="btn small primary" onClick={(ev) => t.concentrationSave(e.id, ev.currentTarget)}>
+        Roll concentration save (DC {e.concentration.dc})
+      </button>
+    </div>
+  );
+}
+
+/**
+ * A roll at enemies, still to settle: the DM's Hit or Miss for an unknown AC, each enemy's
+ * Failed or Saved for a save spell, and moving it to another enemy if it went to the wrong one.
+ */
+function TargetActions({ e }: { e: RollEntry }) {
+  const t = useTable();
+  const { char: c } = useChar();
+  if (!e.targets?.length) return null;
+  const sum = (pieces: { amount: number }[]) => pieces.reduce((a, p) => a + p.amount, 0);
+  return (
+    <>
+      {e.targets.map((r, i) =>
+        r.enemies.map((en) => (
+          <div className="row boosts target-actions" key={`${i}-${en.id}`}>
+            {en.state === 'pending' && r.kind === 'attack' && (
+              <>
+                <span className="hint">
+                  {e.targets!.length > 1 ? `#${i + 1} ` : ''}Did {r.total} hit {en.name}?
+                </span>
+                <button type="button" className="btn small primary" onClick={() => t.settleHit(e.id, i, en.id, true)}>
+                  Hit
+                </button>
+                <button type="button" className="btn small" onClick={() => t.settleHit(e.id, i, en.id, false)}>
+                  Miss
+                </button>
+              </>
+            )}
+            {en.state === 'pending' && r.kind === 'save' && (
+              <>
+                <span className="hint">{en.name}’s save:</span>
+                <button type="button" className="btn small primary" onClick={() => t.settleSave(e.id, i, en.id, false)}>
+                  Failed ({sum(r.pieces)})
+                </button>
+                <button type="button" className="btn small" onClick={() => t.settleSave(e.id, i, en.id, true)}>
+                  Saved ({r.half ? Math.floor(sum(r.pieces) / 2) : 0})
+                </button>
+              </>
+            )}
+            {r.kind === 'attack' && c.enemies.length > 1 && (
+              <label className="move-roll">
+                <span className="hint">{en.state === 'pending' ? 'At' : 'Meant for someone else?'}</span>
+                <select value={en.id} onChange={(ev) => t.moveRoll(e.id, i, en.id, ev.target.value)} aria-label="Move this roll to another enemy">
+                  {c.enemies.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+        )),
+      )}
+    </>
+  );
+}
+
+/** What can still be done from a result: a companion's reaction, a concentration save, a hit's target. */
+export function EntryActions({ e }: { e: RollEntry }) {
+  return (
+    <>
+      <TargetActions e={e} />
+      <BoostButtons e={e} />
+      <ConcentrationButton e={e} />
+    </>
   );
 }
 
@@ -80,13 +161,16 @@ export function ResultCard() {
   const e = t.latest;
   const [hover, setHover] = useState(false);
   // A hit a companion can still add to stays up longer, so there's time to decide.
-  const offering = !!e?.boost && availableBoosts(c, e.boost.attacker).some((b) => !b.blocked && !e.boost!.used.includes(`${b.comp.id}:${b.action.id}`));
+  const offering =
+    (!!e?.boost && availableBoosts(c, e.boost.attacker).some((b) => !b.blocked && !e.boost!.used.includes(`${b.comp.id}:${b.action.id}`))) || (!!e?.concentration && !e.concentration.done) || !!e?.targets?.some((r) => r.enemies.some((x) => x.state === 'pending'));
+  // A roll waiting on the DM (Hit or Miss, an enemy's save) stays up until it's answered or closed.
+  const waiting = !!e?.targets?.some((r) => r.enemies.some((x) => x.state === 'pending'));
   useEffect(() => {
-    if (!e || hover) return;
+    if (!e || hover || waiting) return;
     const ms = Math.min(14000, 6000 + e.lines.length * 900) + (offering ? 8000 : 0);
     const id = setTimeout(t.dismissLatest, ms);
     return () => clearTimeout(id);
-  }, [e, hover, offering, t.dismissLatest]);
+  }, [e, hover, offering, waiting, t.dismissLatest]);
   if (!e) return null;
   return (
     <div
@@ -109,7 +193,7 @@ export function ResultCard() {
           t.dismissLatest();
         }}
       />
-      <BoostButtons e={e} />
+      <EntryActions e={e} />
     </div>
   );
 }

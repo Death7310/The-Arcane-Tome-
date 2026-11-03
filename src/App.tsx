@@ -14,6 +14,8 @@ import { AdvChip, ResultCard } from './components/Results';
 import { SpellsPanel } from './components/SpellsPanel';
 import { SpellCompendiumPanel } from './components/SpellBrowser';
 import { FeatLibraryPanel } from './components/Feats';
+import { EnemiesPanel } from './components/Enemies';
+import { InitiativePanel } from './components/Initiative';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AbilitiesPanel, GlancePanel, IdentityPanel, SkillsPanel } from './components/StatsPanels';
 import { fx, setDiceSpeed, setTally, sound } from './fx';
@@ -47,6 +49,8 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   languages: LanguagesPanel,
   compendium: SpellCompendiumPanel,
   feats: FeatLibraryPanel,
+  enemies: EnemiesPanel,
+  initiative: InitiativePanel,
 };
 
 /** Panel names for the message shown if one runs into an error. */
@@ -67,6 +71,8 @@ const PANEL_NAMES: Record<PanelId, string> = {
   languages: 'Languages',
   compendium: 'Spell compendium',
   feats: 'Feat library',
+  enemies: 'Enemies',
+  initiative: 'Initiative',
 };
 
 function initialState(): Saved {

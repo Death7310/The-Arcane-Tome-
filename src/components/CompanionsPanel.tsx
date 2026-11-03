@@ -4,12 +4,13 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
-import { actionDice, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, ownerLevel, walkSpeed } from '../systems/dnd5e/companion';
+import { actionDice, actionType, boostOf, carriedWeight, hasEssence, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, ownerLevel, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, evalFormula, isFormula } from '../systems/dnd5e/formula';
 import { blankCompanion, blankCompanionAction, uid, type Character, type Companion, type CompanionAction } from '../systems/dnd5e/model';
 import { abilityMod, signed } from '../systems/dnd5e/rules';
 import { COMPANION_AI_PROMPT, companionFromCreature, parseStatBlock } from '../systems/dnd5e/statblock';
 import { AddItemDialog } from './Items';
+import { TargetStrip } from './Enemies';
 import { RulesText } from './RulesText';
 import { Check, ConfirmButton, Dialog, NumField, Panel, SelectField, TextField } from './ui';
 
@@ -24,13 +25,13 @@ const KINDS: { id: CompanionAction['kind']; name: string }[] = [
 const num = (text: string, c: Character, fallback = 0) => evalFormula(text, c) ?? fallback;
 
 /** "+5 · 1d8 + 3 piercing" or "DC 12 CON · 2d6 fire", for an action button. */
-function actionSummary(a: CompanionAction, c: Character): string {
+function actionSummary(a: CompanionAction, c: Character, comp?: Companion): string {
   const parts: string[] = [];
   if (a.attack) parts.push(signed(num(a.toHit, c)));
   if (a.save) parts.push(`DC ${evalFormula(a.dc, c) ?? '?'} ${a.save.toUpperCase()}`);
   const b = boostOf(a);
   const dice = actionDice(a, c);
-  if (dice) parts.push(`${b ? '+' : ''}${dice} ${a.damageType || b?.type || (b ? 'damage' : '')}`.trim());
+  if (dice) parts.push(`${b ? '+' : ''}${dice} ${(comp ? actionType(comp, a) : a.damageType || b?.type) || (b ? 'damage' : '')}`.trim());
   if (b) parts.push('adds to a hit');
   return parts.join(' · ');
 }
@@ -54,6 +55,7 @@ export function CompanionsPanel() {
         </button>
       }
     >
+      {c.companions.length > 0 && <TargetStrip />}
       {c.companions.length === 0 && (
         <p className="hint" style={{ margin: 0 }}>
           Familiars, steeds, drakes, a homunculus, summoned spirits… Add one from the creature list, paste its stat block, or make one up.
@@ -197,14 +199,12 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
           {usable.map((a) => (
             <button key={a.id} type="button" className="cast" onClick={(e) => t.companionAct(comp, a, e.currentTarget)} title={a.text}>
               <span>{a.name}</span>
-              <small>{[a.kind !== 'action' ? KINDS.find((k) => k.id === a.kind)?.name : '', actionSummary(a, c)].filter(Boolean).join(' · ')}</small>
+              <small>{[a.kind !== 'action' ? KINDS.find((k) => k.id === a.kind)?.name : '', actionSummary(a, c, comp)].filter(Boolean).join(' · ')}</small>
             </button>
           ))}
         </div>
       )}
-      {usable.filter((a) => boostOf(a)).map((a) => (
-        <ElementPicker key={a.id} companionId={comp.id} action={a} />
-      ))}
+      {hasEssence(comp) && <ElementPicker companionId={comp.id} />}
 
       {expanded && !editing && (
         <div className="comp-sheet">
@@ -305,7 +305,7 @@ function CompanionSheet({ comp, idx, pb, traits, usable, onEdit }: { comp: Compa
       {[...traits, ...usable].map((a) => (
         <div key={a.id} className="comp-entry">
           <b>{a.name}.</b> <small className="hint">{KINDS.find((k) => k.id === a.kind)?.name}</small>
-          <RulesText text={a.text || actionSummary(a, c) || '—'} />
+          <RulesText text={a.text || actionSummary(a, c, comp) || '—'} />
         </div>
       ))}
       {comp.notes && <RulesText text={comp.notes} className="hint" />}
@@ -501,10 +501,13 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
             <TextField label="Damage dice" id={`ca-dmg-${a.id}`} value={a.damage} placeholder="1d8 + {PB}" onChange={(v) => setAction(j, (x) => void (x.damage = v))} />
             {(a.damage || boostOf(a)) && (
               <SelectField
-                label={boostOf(a) && !a.damageType ? 'Damage type (choose: e.g. its Draconic Essence)' : 'Damage type'}
+                label="Damage type"
                 id={`ca-type-${a.id}`}
-                value={a.damageType || boostOf(a)?.type || ''}
-                options={[...(a.damageType || boostOf(a)?.type ? [] : [{ id: '', name: 'Choose…' }]), ...DAMAGE_TYPES.map((d) => ({ id: d, name: d.charAt(0).toUpperCase() + d.slice(1) }))]}
+                value={a.damageType || (boostOf(a) ? '' : boostOf(a)?.type) || ''}
+                options={[
+                  ...(boostOf(a) ? [{ id: '', name: `Its element (${comp.essence || 'choose it on its card'})` }] : a.damageType ? [] : [{ id: '', name: 'Choose…' }]),
+                  ...DAMAGE_TYPES.map((d) => ({ id: d, name: d.charAt(0).toUpperCase() + d.slice(1) })),
+                ]}
                 onChange={(v) => setAction(j, (x) => void (x.damageType = v))}
               />
             )}
@@ -756,21 +759,30 @@ const ESSENCES = ['acid', 'cold', 'fire', 'lightning', 'poison'] as const;
 const typeName = (d: string) => (d === 'cold' ? 'Cold (ice, frost)' : d.charAt(0).toUpperCase() + d.slice(1));
 
 /**
- * The element of a reaction that adds damage to a hit (a drake's Infused Strikes takes its
- * Draconic Essence), chosen right on the companion card, where it's needed at the table.
+ * A companion's element, chosen once on its card (a drake's Draconic Essence): its reactions
+ * that add to a hit (Infused Strikes) deal this type of damage.
  */
-export function ElementPicker({ companionId, action: a, compact = false }: { companionId: string; action: CompanionAction; compact?: boolean }) {
-  const { update } = useChar();
-  const type = a.damageType || boostOf(a)?.type || '';
+export function ElementPicker({ companionId, compact = false }: { companionId: string; compact?: boolean }) {
+  const { char: c, update } = useChar();
+  const comp = c.companions.find((k) => k.id === companionId);
+  if (!comp) return null;
+  // Older sheets kept the element on the reaction itself.
+  const type = comp.essence || comp.actions.map((x) => (boostOf(x) ? x.damageType : '')).find(Boolean) || '';
+  const draconic = comp.actions.some((x) => /draconic essence/i.test(x.text));
+  const label = draconic ? 'Draconic Essence' : 'Element';
   const set = (v: string) =>
     update((d) => {
-      const x = d.companions.find((k) => k.id === companionId)?.actions.find((y) => y.id === a.id);
-      if (x) x.damageType = v;
+      const k = d.companions.find((x) => x.id === companionId);
+      if (!k) return;
+      k.essence = v;
+      // Its reactions follow the one setting from now on.
+      for (const x of k.actions) if (boostOf(x)) x.damageType = '';
     });
+  const a = { name: comp.name };
   return (
     <label className={`element-pick el-${type || 'arcane'}${compact ? ' compact' : ''}`}>
-      <span>{compact ? 'Element' : `${a.name} element`}</span>
-      <select value={type} onChange={(e) => set(e.target.value)} aria-label={`${a.name}: element (damage type)`}>
+      <span>{compact ? label : `${a.name}: ${label}`}</span>
+      <select value={type} onChange={(e) => set(e.target.value)} aria-label={`${a.name}: ${label} (damage type)`}>
         {!type && <option value="">Choose…</option>}
         <optgroup label="Draconic Essence">
           {ESSENCES.map((d) => (

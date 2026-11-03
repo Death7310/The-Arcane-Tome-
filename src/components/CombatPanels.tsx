@@ -7,6 +7,7 @@ import { itemDefFromWeapon, parseItemText } from '../systems/dnd5e/items';
 import { addItemsToLibrary } from '../state/library';
 import { useCatalog } from '../state/catalog';
 import { AddItemDialog } from './Items';
+import { TargetStrip } from './Enemies';
 import { armorClass, armorWarnings, hitDice, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
 import { Check, ConfirmButton, NumField, Panel, SelectField, TextField, mathText } from './ui';
 import { isValid } from '../engine/dice';
@@ -230,6 +231,7 @@ export function AttacksPanel() {
   const [adding, setAdding] = useState(false);
   return (
     <Panel title="Attacks" tab="combat">
+      <TargetStrip />
       {adding && <AddItemDialog mode="weapon" onClose={() => setAdding(false)} />}
       <div className="list">
         {c.weapons.length === 0 && <p className="hint">No weapons yet. Add one below.</p>}

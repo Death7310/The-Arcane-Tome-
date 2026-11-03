@@ -11,7 +11,9 @@ import { spellCounts } from '../systems/dnd5e/leveling';
 import { RulesText } from './RulesText';
 import { Check, ConfirmButton, CopyTextButton, Dialog, NumField, Panel, Pips, SelectField, TextField, mathText } from './ui';
 import { SpellBrowser, SpellImport } from './SpellBrowser';
+import { TargetStrip } from './Enemies';
 import { freeCastName } from '../systems/dnd5e/featimport';
+import { endConcentration, markFromSpell } from '../systems/dnd5e/enemies';
 import { inferSources, sourceName, sourceOptions } from '../systems/dnd5e/spellsource';
 import { fillSpell, spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
 import { describeSpellDef, readPastedSpells, spellToText, type SpellPart } from '../systems/dnd5e/spellimport';
@@ -63,6 +65,7 @@ export function SpellsPanel() {
         </span>
       }
     >
+      <TargetStrip />
       <div className="grid-3">
         <SelectField
           label="Ability"
@@ -111,7 +114,7 @@ export function SpellsPanel() {
           <span style={{ flex: 1 }}>
             Concentrating on <b>{c.spellcasting.concentratingOn}</b>
           </span>
-          <button type="button" className="btn small" onClick={() => update((d) => void (d.spellcasting.concentratingOn = null))}>
+          <button type="button" className="btn small" onClick={() => update((d) => void endConcentration(d))} title="Ends the spell, and takes its marks off your enemies">
             End
           </button>
         </div>
@@ -205,9 +208,17 @@ function SpellRow({ spell: s, slots, pact, removing, tag }: { spell: Spell; slot
   const [choosing, setChoosing] = useState(false);
   const plan = planSpell(c, s, s.level);
   const choices = t.slotChoices(s, slots, pact);
+  // At enemies: who it's at, starting with your target. Area spells (saves, automatic hits) can take several.
+  const aimable = c.enemies.length > 0 && (s.resolution === 'attack' || s.resolution === 'save' || s.resolution === 'auto' || !!markFromSpell(s));
+  const several = s.resolution === 'save' || s.resolution === 'auto';
+  const [aim, setAim] = useState<string[]>([]);
   const castWith = (choice: SlotChoice, el: HTMLElement) => {
     setChoosing(false);
-    t.cast(s, choice, el);
+    t.cast(s, choice, el, aimable && s.level > 0 ? aim : undefined);
+  };
+  const openChoices = () => {
+    setAim(c.targetId ? [c.targetId] : []);
+    setChoosing((v) => !v);
   };
   // A feat's once-per-Long-Rest casting without a slot (Shadow-Touched, Magic Initiate…).
   const freeIdx = c.features.findIndex((f) => f.name === freeCastName(s.name));
@@ -234,7 +245,7 @@ function SpellRow({ spell: s, slots, pact, removing, tag }: { spell: Spell; slot
             className="cast"
             onClick={(e) => {
               if (s.level === 0) castWith({ kind: 'free', level: 0 }, e.currentTarget);
-              else setChoosing((v) => !v);
+              else openChoices();
             }}
             aria-expanded={s.level > 0 ? choosing : undefined}
           >
@@ -242,6 +253,26 @@ function SpellRow({ spell: s, slots, pact, removing, tag }: { spell: Spell; slot
           </button>
         )}
       </div>
+      {choosing && aimable && (
+        <div className="popover aim" role="group" aria-label={`Cast ${s.name} at`}>
+          <span className="hint">At:</span>
+          {c.enemies.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              className="chip"
+              aria-pressed={aim.includes(e.id)}
+              onClick={() => setAim((a) => (several ? (a.includes(e.id) ? a.filter((x) => x !== e.id) : [...a, e.id]) : [e.id]))}
+            >
+              {e.name}
+            </button>
+          ))}
+          <button type="button" className="chip" aria-pressed={aim.length === 0} onClick={() => setAim([])}>
+            No target
+          </button>
+          {several && <span className="hint">Tap several for an area spell.</span>}
+        </div>
+      )}
       {choosing && (
         <div className="popover" role="group" aria-label={`Cast ${s.name} with`}>
           {choices.map((ch) => (

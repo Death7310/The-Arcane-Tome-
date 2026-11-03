@@ -11,16 +11,21 @@ import { centerOf, fx, perform, performAction, sound, throwPhases, weaponLook, t
 import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/types';
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type StandardActionId } from '../systems/dnd5e/data';
 import { evalFormula } from '../systems/dnd5e/formula';
-import { emptyTurn, type CastingTime, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type Spell, type Weapon } from '../systems/dnd5e/model';
-import { actionDice, boostOf, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { emptyTurn, uid, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type Spell, type Weapon } from '../systems/dnd5e/model';
+import { actionDice, actionType, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
+import type { CreatureDef } from '../systems/dnd5e/srd';
+import { useCatalog } from './catalog';
 import {
   effectDice,
   incapacitatedBy,
+  initiative as initiativeOf,
   maxHp,
   mod as abilityModOf,
   planSpell,
   rollMode,
   resolveTokens,
+  savingThrow,
   signed,
   speed,
   spellAbility,
@@ -62,6 +67,47 @@ export interface RollEntry {
    * and which reactions were already added ("companionId:actionId").
    */
   boost?: { crit: boolean; attacker: string; used: string[] };
+  /** Damage taken while concentrating: the save to keep the spell going, until it's rolled. */
+  concentration?: { dc: number; spell: string; done: boolean };
+  /** What this roll was at: one attack (or one per beam or dart) or one saving-throw spell over several enemies. */
+  targets?: RollTarget[];
+}
+
+/** An attack at an enemy, as the rules see it. */
+interface Vs {
+  id: string;
+  name: string;
+  ac: number | null;
+  adv: string[];
+  dis: string[];
+  autoCrit: string | null;
+  marks: { name: string; dice: string; type: string }[];
+}
+
+/** A part of a roll's damage, before the target's resistances. */
+export interface DamagePiece {
+  amount: number;
+  type: string;
+  what: string;
+  who: 'you' | 'companion';
+  name: string;
+}
+
+/**
+ * A roll at enemies. An attack with an unknown AC waits for the DM's Hit or Miss; a spell with
+ * a saving throw waits for each enemy's Failed or Saved (unless it can't succeed).
+ */
+export interface RollTarget {
+  /** This roll's id in the enemies' damage logs (to move it to another enemy). */
+  key: string;
+  kind: 'attack' | 'save' | 'auto';
+  /** The attack roll's total and natural die, which tell you about an unknown AC. */
+  total?: number;
+  nat?: number;
+  pieces: DamagePiece[];
+  /** Save spells: half damage on a success, or none. */
+  half?: boolean;
+  enemies: { id: string; name: string; state: 'pending' | 'hit' | 'miss' | 'failed' | 'saved' }[];
 }
 
 export type SlotChoice = { kind: 'slot'; level: number } | { kind: 'pact'; level: number } | { kind: 'free'; level: number };
@@ -109,6 +155,10 @@ export function useTableState(char: Character, update: Update) {
   const [log, setLog] = useState<RollEntry[]>([]);
   const logRef = useRef(log);
   logRef.current = log;
+  // The creature list, for enemies whose stats you've chosen to reveal.
+  const cat = useCatalog();
+  const creaturesRef = useRef<CreatureDef[]>([]);
+  creaturesRef.current = cat?.creatures ?? [];
   const [latest, setLatest] = useState<RollEntry | null>(null);
   const [adv, setAdv] = useState<Advantage>('normal');
   const [targetAc, setTargetAc] = useState<number | null>(null);
@@ -150,12 +200,13 @@ export function useTableState(char: Character, update: Update) {
    * cancels out, as the rules say), and the dice effects like Bless add.
    */
   const modeFor = useCallback(
-    (kind: TestKind): Mode => {
+    (kind: TestKind, against: { adv: string[]; dis: string[] } = { adv: [], dis: [] }): Mode => {
       const c = charRef.current;
       const manual = takeAdv();
       const m = rollMode(c, kind);
-      const advWhy = [...(manual === 'adv' ? ['your choice'] : []), ...m.adv];
-      const disWhy = [...(manual === 'dis' ? ['your choice'] : []), ...m.dis];
+      // Your own conditions and effects, plus what your target's conditions add (a Prone foe within 5 feet…).
+      const advWhy = [...(manual === 'adv' ? ['your choice'] : []), ...m.adv, ...against.adv];
+      const disWhy = [...(manual === 'dis' ? ['your choice'] : []), ...m.dis, ...against.dis];
       const adv: Advantage = advWhy.length && disWhy.length ? 'normal' : advWhy.length ? 'adv' : disWhy.length ? 'dis' : 'normal';
       const bonus = effectDice(c, kind);
       const notes: string[] = [];
@@ -193,6 +244,21 @@ export function useTableState(char: Character, update: Update) {
         lines: [{ label: title, total: r.total, detail: describe(r), kind: 'd20' as const, nat: natOf(r) }],
       };
       stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () => push(entry), { headline: 'NATURAL 20!' });
+    },
+    [push, modeFor],
+  );
+
+  /** Rolls your initiative (with any Advantage you have) and returns it, for the turn order. */
+  const rollInitiative = useCallback(
+    (originEl?: Element | null): number => {
+      const c = charRef.current;
+      const b = initiativeOf(c);
+      const mode = modeFor({ type: 'initiative' });
+      const r = safeRoll(d20Expr(b.total, mode.adv) + mode.extra);
+      stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () =>
+        push({ title: 'Initiative', subtitle: mode.note || undefined, lines: [{ label: 'Initiative', total: r.total, detail: describe(r), kind: 'd20', nat: natOf(r) }] }),
+      );
+      return r.total;
     },
     [push, modeFor],
   );
@@ -243,19 +309,27 @@ export function useTableState(char: Character, update: Update) {
     damage: { dice: string; type: string; known: Part[] }[],
     dmgBonus: number,
     look: { element?: FxElement; orb: boolean },
+    vs?: Vs,
   ) => {
     const atk = safeRoll(d20Expr(toHit.total, mode.adv) + mode.extra);
     const nat = naturalD20(atk);
-    const ac = acRef.current;
+    // At an enemy: its AC as you know it (null while unknown). Otherwise the Target AC box.
+    const ac = vs ? vs.ac : acRef.current;
     // Without a target AC the app can't know whether it hit ('none'): damage is still rolled,
     // labelled for the DM to confirm, rather than the attack being assumed to land.
     let outcome: Outcome = nat === 20 ? 'crit' : nat === 1 ? 'miss' : ac !== null ? (atk.total >= ac ? 'hit' : 'miss') : 'none';
+    // A hit from within 5 feet on a Paralyzed or Unconscious foe is a critical hit.
+    if (vs?.autoCrit && outcome === 'hit') outcome = 'crit';
     const unknown = outcome === 'none';
+    const at = vs ? ` vs ${vs.name}` : '';
     const lines: RollLine[] = [
       {
         label: 'Attack',
         total: atk.total,
-        detail: describe(atk) + (ac !== null ? ` vs AC ${ac}` : unknown ? ` · no target AC set: ask your DM whether ${atk.total} hits` : ''),
+        detail:
+          describe(atk) +
+          (ac !== null ? `${at} (AC ${ac})` : unknown ? (vs ? `${at}: its AC isn't known, so tap Hit or Miss once your DM says` : ` · no target AC set: ask your DM whether ${atk.total} hits`) : at) +
+          (vs?.autoCrit && outcome === 'crit' && nat !== 20 ? ` · ${vs.autoCrit}` : ''),
         kind: 'd20',
         nat: natOf(atk),
         outcome,
@@ -265,16 +339,81 @@ export function useTableState(char: Character, update: Update) {
     const attackRow = counted([{ r: atk, known, element: look.element, test: true, orb: look.orb }], atk.total, 'to hit', attackVerdict(outcome, nat, ac));
     const hits: { r: RollResult; known: Part[]; element: FxElement; orb: boolean }[] = [];
     let dealt = 0;
+    const pieces: { amount: number; type: string; what: string }[] = [];
     if (outcome !== 'miss') {
       damage.forEach((d, i) => {
         const r = safeRoll(i === 0 ? withModifier(d.dice, dmgBonus) : d.dice, { critical: outcome === 'crit' });
         dealt += Math.max(0, r.total);
         lines.push({ label: `${capital(d.type)} damage${unknown ? ' (if it hits)' : ''}`, total: Math.max(0, r.total), detail: describe(r), kind: 'damage', outcome });
         hits.push({ r, known: d.known, element: d.type as FxElement, orb: look.orb });
+        pieces.push({ amount: Math.max(0, r.total), type: d.type, what: '' });
       });
+      // Your marks on the target (Hunter's Mark, Hex) add their dice to each hit, doubled on a crit.
+      for (const m of vs?.marks ?? []) {
+        const r = safeRoll(m.dice, { critical: outcome === 'crit' });
+        dealt += Math.max(0, r.total);
+        lines.push({ label: `${m.name} (${capital(m.type)})${unknown ? ' (if it hits)' : ''}`, total: Math.max(0, r.total), detail: describe(r), kind: 'damage', outcome });
+        hits.push({ r, known: [], element: (m.type || 'force') as FxElement, orb: look.orb });
+        pieces.push({ amount: Math.max(0, r.total), type: m.type, what: m.name });
+      }
     }
     if (nat === 1) outcome = 'miss';
-    return { lines, outcome, dealt, attackRow, hits };
+    return { lines, outcome, dealt, attackRow, hits, pieces, total: atk.total, nat };
+  };
+
+  /**
+   * An attack at your current target: its AC (or null when unknown), Advantage or Disadvantage
+   * from its conditions, critical hits it can't avoid, and your marks on it (yours only: a
+   * companion's hits don't carry your Hunter's Mark).
+   */
+  const vsFor = (e: Enemy, ranged: boolean, yours: boolean): Vs => {
+    const a = attackAgainst(e, ranged);
+    return { id: e.id, name: e.name, ac: knownAc(e, creaturesRef.current), adv: a.adv, dis: a.dis, autoCrit: a.autoCrit, marks: yours ? markDamage(e) : [] };
+  };
+  const vsTarget = (c: Character, ranged: boolean, yours: boolean): Vs | undefined => {
+    const e = targetOf(c);
+    return e ? vsFor(e, ranged, yours) : undefined;
+  };
+
+  /** Records damage on an enemy (after its resistances); returns notes on what changed it. */
+  const applyPieces = (enemyId: string, pieces: DamagePiece[], key: string): string => {
+    const e = charRef.current.enemies.find((x) => x.id === enemyId);
+    if (!e) return '';
+    const notes = pieces.map((p) => damageTo(e, p.amount, p.type).note).filter(Boolean);
+    update((d) => {
+      const x = d.enemies.find((y) => y.id === enemyId);
+      if (x) for (const p of pieces) hurt(x, { roll: key, who: p.who, name: p.name, amount: p.amount, type: p.type, what: p.what });
+    });
+    const took = pieces.reduce((a, p) => a + damageTo(e, p.amount, p.type).amount, 0);
+    return `${e.name} takes ${took}${notes.length ? ` (${[...new Set(notes)].join('; ')})` : ''}`;
+  };
+
+  /**
+   * An attack's record at its target: the damage lands now on a hit or crit, waits for the DM's
+   * Hit or Miss when the AC isn't known, and a miss changes nothing.
+   */
+  const atTarget = (
+    vs: Vs,
+    res: { outcome: Outcome; pieces: { amount: number; type: string; what: string }[]; total: number; nat?: number },
+    what: string,
+    who: DamagePiece['who'],
+    name: string,
+  ): { target: RollTarget; lines: RollLine[] } => {
+    const pieces: DamagePiece[] = res.pieces.map((p) => ({ ...p, what: p.what || what, who, name }));
+    const key = uid();
+    const state = res.outcome === 'none' ? 'pending' : res.outcome === 'miss' ? 'miss' : 'hit';
+    const lines: RollLine[] = [];
+    if (state === 'hit' && pieces.length) lines.push({ label: 'Damage dealt', total: 0, text: '✓', detail: applyPieces(vs.id, pieces, key), kind: 'info' });
+    return { target: { key, kind: 'attack', total: res.total, nat: res.nat, pieces, enemies: [{ id: vs.id, name: vs.name, state }] }, lines };
+  };
+
+  /** Adds a line to a result already shown (and brings it back up). */
+  const amend = (entryId: number, fn: (e: RollEntry) => RollEntry) => {
+    const entry = logRef.current.find((e) => e.id === entryId);
+    if (!entry) return;
+    const next = fn(entry);
+    setLog((l) => l.map((e) => (e.id === entryId ? next : e)));
+    setLatest(next);
   };
 
   const label = (outcome: Outcome, dealt: number, type: string) =>
@@ -283,12 +422,13 @@ export function useTableState(char: Character, update: Update) {
   const attack = useCallback(
     (w: Weapon, originEl?: Element | null) => {
       const c = charRef.current;
-      const mode = modeFor({ type: 'attack' });
+      const vs = vsTarget(c, w.ranged, true);
+      const mode = modeFor({ type: 'attack' }, vs);
       const ability = weaponAbility(c, w);
       const mod = abilityModOf(c, ability);
       const damage = w.damage.map((d, i) => ({ ...d, known: i === 0 ? [{ label: ABBR(ability), value: mod }, { label: 'MAGIC', value: w.magicBonus }] : [] }));
       const element = (w.damage[0]?.type ?? 'bludgeoning') as FxElement;
-      const res = attackOnce(weaponAttack(c, w), mode, damage, mod + w.magicBonus, { orb: false });
+      const res = attackOnce(weaponAttack(c, w), mode, damage, mod + w.magicBonus, { orb: false }, vs);
       const warn = actingWarning();
       const from = centerOf(originEl);
       const to = fx.defaultTarget(from);
@@ -300,12 +440,14 @@ export function useTableState(char: Character, update: Update) {
         from,
         () => {
           perform({ element, shape: w.ranged ? 'bolt' : 'touch', from: w.ranged ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
+          const at = vs ? atTarget(vs, res, w.name, 'you', '') : null;
           push({
-            title: w.name,
+            title: vs ? `${w.name} → ${vs.name}` : w.name,
             subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
-            lines: res.lines,
+            lines: at ? [...res.lines, ...at.lines] : res.lines,
             element,
             ...(res.outcome !== 'miss' ? { boost: { crit: res.outcome === 'crit', attacker: '', used: [] } } : {}),
+            ...(at ? { targets: [at.target] } : {}),
           });
         },
         { element, headline: 'CRITICAL!' },
@@ -322,11 +464,11 @@ export function useTableState(char: Character, update: Update) {
    * A companion's roll: the Advantage you set by hand plus its own conditions (yours aren't
    * its), cancelling as the rules say. Your effects like Bless don't carry over to it.
    */
-  const companionMode = (comp: Companion, kind: TestKind): Mode => {
+  const companionMode = (comp: Companion, kind: TestKind, against: { adv: string[]; dis: string[] } = { adv: [], dis: [] }): Mode => {
     const manual = takeAdv();
     const m = rollMode(comp, kind);
-    const advWhy = [...(manual === 'adv' ? ['your choice'] : []), ...m.adv];
-    const disWhy = [...(manual === 'dis' ? ['your choice'] : []), ...m.dis];
+    const advWhy = [...(manual === 'adv' ? ['your choice'] : []), ...m.adv, ...against.adv];
+    const disWhy = [...(manual === 'dis' ? ['your choice'] : []), ...m.dis, ...against.dis];
     const adv: Advantage = advWhy.length && disWhy.length ? 'normal' : advWhy.length ? 'adv' : disWhy.length ? 'dis' : 'normal';
     const note =
       advWhy.length && disWhy.length
@@ -368,14 +510,15 @@ export function useTableState(char: Character, update: Update) {
       const title = `${comp.name}: ${action.name}`;
       const warn = spendCompanion(comp, action.kind);
       const from = centerOf(originEl);
-      const type = action.damageType || boostOf(action)?.type || 'bludgeoning';
+      const type = actionType(liveCompanion(comp), action) || 'bludgeoning';
       const element = type as FxElement;
       const dice = actionDice(action, c);
       const damage = dice && isValid(dice) ? [{ dice, type, known: [] as Part[] }] : [];
       if (action.attack) {
         const toHit = evalFormula(action.toHit, c) ?? 0;
-        const mode = companionMode(liveCompanion(comp), { type: 'attack' });
-        const res = attackOnce({ total: toHit, parts: [{ label: 'Attack bonus', value: toHit }] }, mode, damage, 0, { orb: false });
+        const vs = vsTarget(c, action.attack === 'ranged', false);
+        const mode = companionMode(liveCompanion(comp), { type: 'attack' }, vs);
+        const res = attackOnce({ total: toHit, parts: [{ label: 'Attack bonus', value: toHit }] }, mode, damage, 0, { orb: false }, vs);
         const to = fx.defaultTarget(from);
         const phases = [phaseOf([res.attackRow])];
         if (res.hits.length) phases.push(phaseOf([counted(res.hits, res.dealt, type, undefined, res.outcome === 'crit')]));
@@ -384,12 +527,14 @@ export function useTableState(char: Character, update: Update) {
           from,
           () => {
             perform({ element, shape: action.attack === 'ranged' ? 'bolt' : 'touch', from: action.attack === 'ranged' ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
+            const at = vs ? atTarget(vs, res, action.name, 'companion', comp.name) : null;
             push({
-              title,
+              title: vs ? `${title} → ${vs.name}` : title,
               subtitle: [warn, action.reach, mode.note].filter(Boolean).join(' · ') || undefined,
-              lines: res.lines,
+              lines: at ? [...res.lines, ...at.lines] : res.lines,
               element,
               ...(res.outcome !== 'miss' ? { boost: { crit: res.outcome === 'crit', attacker: comp.id, used: [] } } : {}),
+              ...(at ? { targets: [at.target] } : {}),
             });
           },
           { element, headline: 'CRITICAL!' },
@@ -446,12 +591,13 @@ export function useTableState(char: Character, update: Update) {
     (comp: Companion, w: Weapon, originEl?: Element | null) => {
       const c = charRef.current;
       const live = liveCompanion(comp);
-      const mode = companionMode(live, { type: 'attack' });
+      const vs = vsTarget(c, w.ranged, false);
+      const mode = companionMode(live, { type: 'attack' }, vs);
       const ability = compWeaponAbility(live, w);
       const mod = compMod(live, ability);
       const damage = w.damage.map((d, i) => ({ ...d, known: i === 0 ? [{ label: ABBR(ability), value: mod }, { label: 'MAGIC', value: w.magicBonus }] : [] }));
       const element = (w.damage[0]?.type ?? 'bludgeoning') as FxElement;
-      const res = attackOnce(companionWeaponAttack(live, w, c), mode, damage, mod + w.magicBonus, { orb: false });
+      const res = attackOnce(companionWeaponAttack(live, w, c), mode, damage, mod + w.magicBonus, { orb: false }, vs);
       const warn = spendCompanion(comp, 'action');
       const from = centerOf(originEl);
       const to = fx.defaultTarget(from);
@@ -462,12 +608,14 @@ export function useTableState(char: Character, update: Update) {
         from,
         () => {
           perform({ element, shape: w.ranged ? 'bolt' : 'touch', from: w.ranged ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
+          const at = vs ? atTarget(vs, res, w.name, 'companion', comp.name) : null;
           push({
-            title: `${comp.name}: ${w.name}`,
+            title: `${comp.name}: ${w.name}${vs ? ` → ${vs.name}` : ''}`,
             subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
-            lines: res.lines,
+            lines: at ? [...res.lines, ...at.lines] : res.lines,
             element,
             ...(res.outcome !== 'miss' ? { boost: { crit: res.outcome === 'crit', attacker: comp.id, used: [] } } : {}),
+            ...(at ? { targets: [at.target] } : {}),
           });
         },
         { element, headline: 'CRITICAL!' },
@@ -488,9 +636,8 @@ export function useTableState(char: Character, update: Update) {
       const entry = logRef.current.find((e) => e.id === entryId);
       const key = `${comp.id}:${action.id}`;
       if (!entry?.boost || entry.boost.used.includes(key)) return;
-      const b = boostOf(action);
       const dice = actionDice(action, c);
-      const type = b?.type ?? '';
+      const type = actionType(liveCompanion(comp), action);
       const warn = spendCompanion(comp, 'reaction');
       const r = safeRoll(dice, { critical: entry.boost.crit });
       const dealt = Math.max(0, r.total);
@@ -500,13 +647,126 @@ export function useTableState(char: Character, update: Update) {
         detail: [describe(r), entry.boost.crit && !r.unreadable ? 'dice doubled for the critical hit' : '', warn].filter(Boolean).join(' · '),
         kind: 'damage',
       };
-      const next: RollEntry = { ...entry, lines: [...entry.lines, line], boost: { ...entry.boost, used: [...entry.boost.used, key] } };
+      // At an enemy: the extra damage joins the hit's damage, landing now if it already hit, or
+      // when you tap Hit if the DM hasn't said yet.
+      const t = entry.targets?.[0];
+      const piece: DamagePiece = { amount: dealt, type, what: action.name, who: 'companion', name: comp.name };
+      const lines = [...entry.lines, line];
+      if (t) {
+        for (const en of t.enemies) if (en.state === 'hit') lines.push({ label: 'Damage dealt', total: 0, text: '✓', detail: applyPieces(en.id, [piece], t.key), kind: 'info' });
+      }
+      const next: RollEntry = {
+        ...entry,
+        lines,
+        boost: { ...entry.boost, used: [...entry.boost.used, key] },
+        ...(t && entry.targets ? { targets: [{ ...t, pieces: [...t.pieces, piece] }, ...entry.targets.slice(1)] } : {}),
+      };
       setLog((l) => l.map((e) => (e.id === entryId ? next : e)));
       setLatest(next);
       const from = centerOf(originEl);
       perform({ element: (type || 'arcane') as FxElement, shape: 'burst', from, to: fx.defaultTarget(from), power: 0, outcome: 'hit', label: `+${dealt}${type ? ` ${type}` : ''}` });
     },
     [],
+  );
+
+  /**
+   * The DM's answer to an attack at an enemy whose AC you don't know: a hit lands the damage
+   * (yours, your marks', a companion's reaction), and either way the answer narrows its AC.
+   */
+  const settleHit = useCallback((entryId: number, index: number, enemyId: string, hit: boolean) => {
+    const entry = logRef.current.find((e) => e.id === entryId);
+    const t = entry?.targets?.[index];
+    const en = t?.enemies.find((x) => x.id === enemyId);
+    if (!entry || !t || !en || en.state !== 'pending') return;
+    update((d) => {
+      const x = d.enemies.find((y) => y.id === enemyId);
+      if (x && t.total !== undefined) learnAc(x, t.total, hit, t.nat);
+    });
+    const detail = hit ? applyPieces(enemyId, t.pieces, t.key) : `Missed ${en.name}`;
+    amend(entryId, (e) => ({
+      ...e,
+      lines: [...e.lines, { label: hit ? 'Damage dealt' : 'Missed', total: 0, text: hit ? '✓' : '✕', detail: `${detail}. Noted toward its AC.`, kind: 'info', outcome: hit ? 'hit' : 'miss' }],
+      targets: e.targets?.map((x, i) => (i === index ? { ...t, enemies: t.enemies.map((y) => (y.id === enemyId ? { ...y, state: hit ? 'hit' : 'miss' } : y)) } : x)),
+      // A miss leaves nothing for a companion's reaction to add to.
+      ...(hit ? {} : { boost: undefined }),
+    }));
+  }, []);
+
+  /** A spell's saving throw, as the DM rolled it for one enemy: full damage on a failure, half (or none) on a success. */
+  const settleSave = useCallback((entryId: number, index: number, enemyId: string, saved: boolean) => {
+    const entry = logRef.current.find((e) => e.id === entryId);
+    const t = entry?.targets?.[index];
+    const en = t?.enemies.find((x) => x.id === enemyId);
+    if (!entry || !t || !en || en.state !== 'pending') return;
+    const pieces = saved ? (t.half ? t.pieces.map((p) => ({ ...p, amount: Math.floor(p.amount / 2) })) : []) : t.pieces;
+    const detail = pieces.some((p) => p.amount > 0) ? applyPieces(enemyId, pieces, t.key) : `${en.name} takes no damage`;
+    amend(entryId, (e) => ({
+      ...e,
+      lines: [...e.lines, { label: `${en.name}: ${saved ? 'saved' : 'failed'}`, total: 0, text: saved ? '½' : '✓', detail, kind: 'info' }],
+      targets: e.targets?.map((x, i) => (i === index ? { ...t, enemies: t.enemies.map((y) => (y.id === enemyId ? { ...y, state: saved ? 'saved' : 'failed' } : y)) } : x)),
+    }));
+  }, []);
+
+  /** Moves a roll's damage from one enemy to another (it was meant for Goblin 3, not Goblin 2). */
+  const moveRoll = useCallback((entryId: number, index: number, fromId: string, toId: string) => {
+    const entry = logRef.current.find((e) => e.id === entryId);
+    const t = entry?.targets?.[index];
+    const from = t?.enemies.find((x) => x.id === fromId);
+    const to = charRef.current.enemies.find((x) => x.id === toId);
+    if (!entry || !t || !from || !to || fromId === toId) return;
+    const landed = from.state === 'hit' || from.state === 'failed' || from.state === 'saved';
+    const halved = from.state === 'saved';
+    const pieces = halved ? (t.half ? t.pieces.map((p) => ({ ...p, amount: Math.floor(p.amount / 2) })) : []) : t.pieces;
+    update((d) => {
+      const a = d.enemies.find((y) => y.id === fromId);
+      if (a) a.hits = a.hits.filter((h) => h.roll !== t.key);
+    });
+    const detail = landed && pieces.length ? applyPieces(toId, pieces, t.key) : `Now at ${to.name}`;
+    amend(entryId, (e) => ({
+      ...e,
+      title: e.title.replace(` → ${from.name}`, ` → ${to.name}`),
+      lines: [...e.lines, { label: `Moved to ${to.name}`, total: 0, text: '↪', detail, kind: 'info' }],
+      targets: e.targets?.map((x, i) => (i === index ? { ...t, enemies: t.enemies.map((y) => (y.id === fromId ? { ...y, id: to.id, name: to.name } : y)) } : x)),
+    }));
+  }, []);
+
+  /**
+   * The Constitution save to keep concentrating after taking damage: rolled with your save
+   * bonus and conditions; a failure ends the spell, and its marks come off your enemies.
+   */
+  const concentrationSave = useCallback(
+    (entryId: number, originEl?: Element | null) => {
+      const c = charRef.current;
+      const entry = logRef.current.find((e) => e.id === entryId);
+      const k = entry?.concentration;
+      if (!entry || !k || k.done) return;
+      const finish = (line: RollLine) => {
+        const next: RollEntry = { ...entry, lines: [...entry.lines, line], concentration: { ...k, done: true } };
+        setLog((l) => l.map((e) => (e.id === entryId ? next : e)));
+        setLatest(next);
+      };
+      if (c.spellcasting.concentratingOn !== k.spell) return finish({ label: 'Concentration', total: 0, detail: `You're no longer concentrating on ${k.spell}.`, kind: 'info' });
+      const mode = modeFor({ type: 'save', ability: 'con' });
+      if (mode.autoFail) {
+        update((d) => void endConcentration(d));
+        return finish({ label: `Concentration save (DC ${k.dc})`, total: 0, detail: `${mode.autoFail}: concentration on ${k.spell} ends.`, kind: 'info', outcome: 'miss' });
+      }
+      const r = safeRoll(d20Expr(savingThrow(c, 'con').total, mode.adv) + mode.extra);
+      const kept = r.total >= k.dc;
+      const marked = c.enemies.filter((e) => e.marks.some((m) => m.spell === k.spell)).map((e) => e.name);
+      if (!kept) update((d) => void endConcentration(d));
+      stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () =>
+        finish({
+          label: `Concentration save (DC ${k.dc})`,
+          total: r.total,
+          detail: [describe(r), mode.note, kept ? `You keep ${k.spell}.` : `Failed: ${k.spell} ends${marked.length ? `, and its mark comes off ${marked.join(', ')}` : ''}.`].filter(Boolean).join(' · '),
+          kind: 'd20',
+          nat: natOf(r),
+          outcome: kept ? 'hit' : 'miss',
+        }),
+      );
+    },
+    [modeFor, update],
   );
 
   /** A companion's turn starts over (its own initiative, or a new round). */
@@ -532,8 +792,15 @@ export function useTableState(char: Character, update: Update) {
   }, []);
 
   const cast = useCallback(
-    (spell: Spell, choice: SlotChoice, originEl?: Element | null) => {
+    /** targetIds: the enemies it's at (undefined: your current target; null or []: none). */
+    (spell: Spell, choice: SlotChoice, originEl?: Element | null, targetIds?: string[] | null) => {
       const c = charRef.current;
+      const current = targetOf(c);
+      const chosen = (targetIds === undefined ? (current ? [current.id] : []) : (targetIds ?? [])).map((id) => c.enemies.find((e) => e.id === id)).filter((e): e is Enemy => !!e);
+      const touch = spell.shape === 'touch' || /^touch/i.test(spell.range);
+      const vs = chosen[0] && spell.resolution === 'attack' ? vsFor(chosen[0], !touch, true) : undefined;
+      const targets: RollTarget[] = [];
+      const targetLines: RollLine[] = [];
       const slotLevel = choice.kind === 'free' && spell.level > 0 ? spell.level : choice.level;
       const plan = planSpell(c, spell, slotLevel);
       const from = centerOf(originEl);
@@ -550,7 +817,7 @@ export function useTableState(char: Character, update: Update) {
       let verdict: Verdict | undefined;
       let crit = false;
       let healing: number | undefined;
-      const mode: Mode = spell.resolution === 'attack' ? modeFor({ type: 'attack' }) : { adv: 'normal', note: '', extra: '', autoFail: null };
+      const mode: Mode = spell.resolution === 'attack' ? modeFor({ type: 'attack' }, vs) : { adv: 'normal', note: '', extra: '', autoFail: null };
       const warn = spell.castingTime === 'other' ? '' : actingWarning();
       const levelText = spell.level === 0 ? 'Cantrip' : `${ordinal(slotLevel)}-level ${choice.kind === 'pact' ? 'pact slot' : choice.kind === 'free' ? '(no slot)' : 'slot'}`;
       const ability = spellAbility(c, spell);
@@ -560,7 +827,11 @@ export function useTableState(char: Character, update: Update) {
       update((d) => {
         if (choice.kind === 'slot') d.spellcasting.slotsUsed[choice.level - 1] = (d.spellcasting.slotsUsed[choice.level - 1] ?? 0) + 1;
         if (choice.kind === 'pact') d.spellcasting.pactUsed += 1;
-        if (spell.concentration) d.spellcasting.concentratingOn = spell.name;
+        if (spell.concentration) {
+          // A new concentration spell (even the same one again) ends the old casting, and the marks it put on enemies.
+          endConcentration(d);
+          d.spellcasting.concentratingOn = spell.name;
+        }
       });
       spendTime(spell.castingTime);
 
@@ -569,9 +840,14 @@ export function useTableState(char: Character, update: Update) {
 
       if (spell.resolution === 'attack') {
         for (let i = 0; i < plan.instances; i++) {
-          const res = attackOnce(spellAttack(c, spell), mode, damage, 0, { element: spell.element, orb: true });
+          const res = attackOnce(spellAttack(c, spell), mode, damage, 0, { element: spell.element, orb: true }, vs);
           const prefix = plan.instances > 1 ? `#${i + 1} ` : '';
           res.lines.forEach((l) => lines.push({ ...l, label: prefix + l.label }));
+          if (vs) {
+            const at = atTarget(vs, res, `${spell.name}${plan.instances > 1 ? ` #${i + 1}` : ''}`, 'you', '');
+            targets.push(at.target);
+            at.lines.forEach((l) => targetLines.push({ ...l, label: prefix + l.label }));
+          }
           attackRows.push(plan.instances > 1 ? { ...res.attackRow, row: { ...res.attackRow.row, caption: `${res.attackRow.row.caption} · #${i + 1}` } } : res.attackRow);
           amounts.push(...res.hits);
           amount += res.dealt;
@@ -584,17 +860,37 @@ export function useTableState(char: Character, update: Update) {
           lines.push({ label: `${ABILITY_NAMES[spell.saveAbility]} save`, total: dc, detail: `DC ${dc}${spell.halfOnSave ? ' · half damage on a success' : ' · no damage on a success'}`, kind: 'info' });
           verdict = { text: `DC ${dc}`, tone: 'info', note: `${ABBR(spell.saveAbility)} save${spell.halfOnSave ? ', half' : ''}` };
         }
+        const pieces: DamagePiece[] = [];
         for (let i = 0; i < plan.instances; i++) {
           let dealt = 0;
           damage.forEach((d) => {
             const r = safeRoll(d.dice);
             dealt += Math.max(0, r.total);
+            pieces.push({ amount: Math.max(0, r.total), type: d.type, what: spell.name, who: 'you', name: '' });
             const half = spell.resolution === 'save' && spell.halfOnSave ? ` (save: ${Math.floor(Math.max(0, r.total) / 2)})` : '';
             lines.push({ label: `${plan.instances > 1 ? `#${i + 1} ` : ''}${capital(d.type)} damage${half}`, total: Math.max(0, r.total), detail: describe(r), kind: 'damage' });
             amounts.push({ r, known: d.known, element: d.type as FxElement, orb: true });
           });
           amount += dealt;
           effects.push(() => perform({ element: spell.element, shape: spell.shape, from, to: target, power, outcome: 'hit', label: plan.damage.length ? `${dealt} ${typeOf}` : undefined, delayMs: i * stagger }));
+        }
+        // At enemies: an automatic hit lands on each; a save spell waits for each one's save,
+        // unless it can't succeed (a Stunned foe against a Dexterity save).
+        if (chosen.length && pieces.length) {
+          const key = uid();
+          const enemies = chosen.map((e) => {
+            if (spell.resolution === 'auto') {
+              targetLines.push({ label: 'Damage dealt', total: 0, text: '✓', detail: applyPieces(e.id, pieces, key), kind: 'info' });
+              return { id: e.id, name: e.name, state: 'hit' as const };
+            }
+            const auto = autoFailsSave(e, spell.saveAbility);
+            if (auto) {
+              targetLines.push({ label: `${e.name}: fails`, total: 0, text: '✓', detail: `${auto}. ${applyPieces(e.id, pieces, key)}`, kind: 'info' });
+              return { id: e.id, name: e.name, state: 'failed' as const };
+            }
+            return { id: e.id, name: e.name, state: 'pending' as const };
+          });
+          targets.push({ key, kind: spell.resolution === 'auto' ? 'auto' : 'save', pieces, half: spell.halfOnSave, enemies });
         }
       } else if (spell.resolution === 'heal') {
         const r = safeRoll(plan.healing || '0');
@@ -609,12 +905,21 @@ export function useTableState(char: Character, update: Update) {
         lines.push({ label: spell.castingTimeText || 'Cast', total: 0, detail: spell.description || 'Cast.', kind: 'info' });
       }
 
+      // A marking spell (Hunter's Mark, Hex) goes on the enemies it's at: your hits on them add its dice.
+      const mark = chosen.length ? markFromSpell(spell) : null;
+      if (mark) {
+        update((d) => {
+          for (const e of d.enemies) if (chosen.some((x) => x.id === e.id)) e.marks.push({ ...mark, id: uid() });
+        });
+        targetLines.push({ label: `${spell.name} on ${chosen.map((e) => e.name).join(', ')}`, total: 0, text: '✓', detail: `+${mark.dice} ${mark.type} on each of your hits with an attack roll${mark.spell ? ', while you concentrate' : ''}.`, kind: 'info' });
+      }
       const entry = {
-        title: spell.name,
+        title: chosen.length ? `${spell.name} → ${chosen.map((e) => e.name).join(', ')}` : spell.name,
         subtitle: [warn, levelText, ability ? `${ABILITY_NAMES[ability]} spell` : '', spell.concentration ? 'Concentration' : '', mode.note].filter(Boolean).join(' · '),
-        lines,
+        lines: [...lines, ...targetLines],
         element: spell.element,
         healing,
+        ...(targets.length ? { targets } : {}),
       };
       const present = () => {
         effects.forEach((e) => e());
@@ -729,10 +1034,13 @@ export function useTableState(char: Character, update: Update) {
       rest -= fromTemp;
       const newHp = Math.max(0, c.hp.current - rest);
       const overflow = rest - c.hp.current;
+      const concentrating = c.spellcasting.concentratingOn;
       update((d) => {
         d.hp.temp -= fromTemp;
         d.hp.current = newHp;
         if (c.hp.current === 0 && rest > 0) d.deathSaves.failures = Math.min(3, d.deathSaves.failures + 1);
+        // Falling Unconscious ends concentration (Incapacitated).
+        if (newHp === 0) endConcentration(d);
       });
       fx.hurt(centerOf(originEl), amount);
       sound.hurt(amount);
@@ -741,8 +1049,14 @@ export function useTableState(char: Character, update: Update) {
       if (newHp === 0 && overflow >= max) notes.push('Massive damage: the excess equals or exceeds your HP maximum — instant death.');
       else if (newHp === 0) notes.push('You drop to 0 HP and fall Unconscious. Start making Death Saving Throws.');
       if (c.hp.current === 0 && rest > 0) notes.push('Damage at 0 HP counts as a failed death save.');
-      if (c.spellcasting.concentratingOn) notes.push(`Concentration check: DC ${Math.min(30, Math.max(10, Math.floor(amount / 2)))} Constitution save.`);
-      push({ title: 'Took damage', lines: [{ label: 'Damage', total: amount, detail: notes.join(' ') || `${newHp} HP left.`, kind: 'damage' }] });
+      const keep = concentrating && newHp > 0;
+      if (concentrating && newHp === 0) notes.push(`Unconscious: your concentration on ${concentrating} ends.`);
+      if (keep) notes.push(`You're concentrating on ${concentrating}: make a DC ${concentrationDc(amount)} Constitution save to keep it.`);
+      push({
+        title: 'Took damage',
+        lines: [{ label: 'Damage', total: amount, detail: notes.join(' ') || `${newHp} HP left.`, kind: 'damage' }],
+        ...(keep ? { concentration: { dc: concentrationDc(amount), spell: concentrating, done: false } } : {}),
+      });
     },
     [push, update],
   );
@@ -832,7 +1146,7 @@ export function useTableState(char: Character, update: Update) {
           d.hp.current = maxHp(c).total;
           d.hp.temp = 0;
           d.spellcasting.slotsUsed = d.spellcasting.slotsUsed.map(() => 0);
-          d.spellcasting.concentratingOn = null;
+          endConcentration(d);
           d.classes.forEach((k) => (k.hitDiceUsed = 0));
           d.deathSaves = { successes: 0, failures: 0 };
           d.exhaustion = Math.max(0, d.exhaustion - 1);
@@ -875,6 +1189,11 @@ export function useTableState(char: Character, update: Update) {
       companionWeapon,
       companionNewTurn,
       boostHit,
+      settleHit,
+      settleSave,
+      rollInitiative,
+      moveRoll,
+      concentrationSave,
       latest,
       dismissLatest: () => setLatest(null),
       clearLog: () => setLog([]),
@@ -899,7 +1218,7 @@ export function useTableState(char: Character, update: Update) {
       rest,
       preview,
     }),
-    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
+    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, settleHit, settleSave, rollInitiative, moveRoll, concentrationSave, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
   );
 }
 

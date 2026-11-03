@@ -15,6 +15,8 @@ export const PANELS = {
   glance: ['stats', 'combat'],
   vitals: ['combat'],
   conditions: ['combat'],
+  initiative: ['combat'],
+  enemies: ['enemies'],
   turn: ['combat'],
   attacks: ['combat'],
   companions: ['combat'],
@@ -58,6 +60,7 @@ export const MIN_HEIGHT = 120;
 export const BUILT_IN_PAGES = [
   { id: 'stats', name: 'Stats' },
   { id: 'combat', name: 'Combat' },
+  { id: 'enemies', name: 'Enemies' },
   { id: 'magic', name: 'Magic' },
   { id: 'gear', name: 'Gear' },
   { id: 'languages', name: 'Languages' },
@@ -65,14 +68,15 @@ export const BUILT_IN_PAGES = [
 
 const DEFAULT_COLUMNS: PanelKey[][] = [
   ['identity', 'abilities', 'glance', 'languages', 'feats'],
-  ['vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
+  ['initiative', 'enemies', 'vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
   ['spells', 'compendium', 'features', 'inventory', 'notes'],
 ];
 
 /** The built-in pages' panels, in phone order. */
 const DEFAULT_PAGE_PANELS: Record<string, PanelKey[]> = {
   stats: ['identity', 'abilities', 'skills', 'features', 'glance', 'feats'],
-  combat: ['glance', 'vitals', 'conditions', 'turn', 'attacks', 'companions'],
+  combat: ['glance', 'initiative', 'vitals', 'conditions', 'turn', 'attacks', 'companions'],
+  enemies: ['enemies'],
   magic: ['spells', 'compendium'],
   gear: ['inventory', 'notes'],
   languages: ['languages'],
@@ -129,7 +133,13 @@ export function normalizeLayout(raw: unknown): Layout {
       pages.push({ id: p.id, name, panels, custom: !builtIn });
     }
     // A built-in page that's missing (from an older version) comes back with its usual panels.
-    for (const b of defaultPages()) if (!pages.some((p) => p.id === b.id)) pages.push(b);
+    // It goes back in its usual place among the built-in pages (Enemies right after Combat).
+    defaultPages().forEach((b, k) => {
+      if (pages.some((p) => p.id === b.id)) return;
+      const before = BUILT_IN_PAGES.slice(0, k).map((x) => x.id);
+      const at = pages.reduce((last, p, i) => (before.includes(p.id as never) ? i : last), -1);
+      pages.splice(at + 1, 0, b);
+    });
     l.pages = pages;
     // Every built-in panel is somewhere: one that's on no page goes back to its usual pages.
     for (const id of Object.keys(PANELS) as PanelId[]) {

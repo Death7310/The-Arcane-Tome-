@@ -226,6 +226,8 @@ export function IdentityPanel() {
 export function AbilitiesPanel() {
   const { char: c, update } = useChar();
   const t = useTable();
+  // Scores and save proficiencies change only in Edit, so a stray tap while scrolling can't.
+  const [editing, setEditing] = useState(false);
   return (
     <Panel title="Abilities" tab="stats">
       <div className="abilities">
@@ -243,16 +245,22 @@ export function AbilitiesPanel() {
               >
                 {signed(m)}
               </button>
-              {/* The score itself: type it, or step it with − and +. Everything that uses it follows. */}
-              <div className="score-edit">
-                <button type="button" className="step" aria-label={`Lower ${ABILITY_NAMES[a]}`} disabled={c.abilities[a] <= 1} onClick={() => update((d) => void (d.abilities[a] = Math.max(1, d.abilities[a] - 1)))}>
-                  −
-                </button>
-                <NumField value={c.abilities[a]} min={1} max={30} ariaLabel={`${ABILITY_NAMES[a]} score`} id={`score-${a}`} onChange={(n) => update((d) => void (d.abilities[a] = n))} />
-                <button type="button" className="step" aria-label={`Raise ${ABILITY_NAMES[a]}`} disabled={c.abilities[a] >= 30} onClick={() => update((d) => void (d.abilities[a] = Math.min(30, d.abilities[a] + 1)))}>
-                  +
-                </button>
-              </div>
+              {/* The score itself: in Edit, type it or step it with − and +. Everything that uses it follows. */}
+              {editing ? (
+                <div className="score-edit">
+                  <button type="button" className="step" aria-label={`Lower ${ABILITY_NAMES[a]}`} disabled={c.abilities[a] <= 1} onClick={() => update((d) => void (d.abilities[a] = Math.max(1, d.abilities[a] - 1)))}>
+                    −
+                  </button>
+                  <NumField value={c.abilities[a]} min={1} max={30} ariaLabel={`${ABILITY_NAMES[a]} score`} id={`score-${a}`} onChange={(n) => update((d) => void (d.abilities[a] = n))} />
+                  <button type="button" className="step" aria-label={`Raise ${ABILITY_NAMES[a]}`} disabled={c.abilities[a] >= 30} onClick={() => update((d) => void (d.abilities[a] = Math.min(30, d.abilities[a] + 1)))}>
+                    +
+                  </button>
+                </div>
+              ) : (
+                <span className="score-view" aria-label={`${ABILITY_NAMES[a]} score ${c.abilities[a]}`}>
+                  {c.abilities[a]}
+                </span>
+              )}
               <small className="score-cap">score</small>
               <span className="save">
                 <button
@@ -260,7 +268,8 @@ export function AbilitiesPanel() {
                   className="prof-dot"
                   data-level={c.saveProfs[a] ? 1 : 0}
                   aria-pressed={c.saveProfs[a]}
-                  aria-label={`${ABILITY_NAMES[a]} save proficiency`}
+                  aria-label={`${ABILITY_NAMES[a]} save proficiency${editing ? '' : ' (tap Edit to change)'}`}
+                  disabled={!editing}
                   onClick={() => update((d) => void (d.saveProfs[a] = !d.saveProfs[a]))}
                 />
                 Save
@@ -272,9 +281,16 @@ export function AbilitiesPanel() {
           );
         })}
       </div>
-      <p className="hint" style={{ marginBottom: 0 }}>
-        Change a score by typing it or with − and +: modifiers, saves, skills, attacks, spell DCs and everything else follow. Tap a modifier to roll a check, or a save button to roll that save. The dot marks save proficiency.
-      </p>
+      <div className="row abilities-foot">
+        <button type="button" className={`btn small${editing ? ' primary' : ''}`} aria-pressed={editing} onClick={() => setEditing((e) => !e)}>
+          {editing ? 'Play' : 'Edit'}
+        </button>
+        <span className="hint">
+          {editing
+            ? 'Change a score with − and + or by typing it, and tap a dot to set save proficiency. Modifiers, saves, skills, attacks and spell DCs all follow. Tap Play when you’re done.'
+            : 'Tap a modifier to roll a check, or a save button to roll that save. The dot marks save proficiency. Tap Edit to change scores.'}
+        </span>
+      </div>
     </Panel>
   );
 }

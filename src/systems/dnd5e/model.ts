@@ -211,6 +211,11 @@ export interface Companion {
   weapons: Weapon[];
   /** Armor or barding it wears; null means its stat block's AC. */
   armor: { armorId: string; shield: boolean; magicBonus: number } | null;
+  /**
+   * Its element, chosen once (a drake's Draconic Essence): the damage type of its reactions
+   * that add to a hit (Infused Strikes) when they don't name one themselves. "" for none.
+   */
+  essence: string;
 }
 
 export interface Item {
@@ -326,7 +331,89 @@ export interface Character {
   companions: Companion[];
   /** Tiles you made yourself (for homebrew rules or another system): notes, trackers and rolls. */
   tiles: Tile[];
+  /** The foes in the current fight, as much as you know of them. */
+  enemies: Enemy[];
+  /** The enemy your attacks and spells go at (gold on the Enemies page), or null for none. */
+  targetId: string | null;
+  /** Your party's names, remembered for logging their damage. */
+  party: string[];
+  /** The initiative order of the current fight, or null outside a fight. */
+  fight: Fight | null;
   updatedAt: number;
+}
+
+/** How hurt an enemy looks: set by hand from what the DM describes, or worked out from known HP. */
+export type EnemyStatus = 'healthy' | 'bloodied' | 'badly' | 'down';
+
+/** Something you've put on an enemy that adds damage when you hit it (Hunter's Mark, Hex…). */
+export interface EnemyMark {
+  id: string;
+  name: string;
+  /** Extra dice on each hit with an attack roll, and their type: "1d6" Force. */
+  dice: string;
+  type: string;
+  /** The concentration spell it comes from (it ends with that spell), or "" for one you set by hand. */
+  spell: string;
+}
+
+/** Damage an enemy took: yours, a companion's or a party member's. */
+export interface EnemyHit {
+  id: string;
+  /** The roll it came from, so it can be moved to another enemy. */
+  roll: string;
+  who: 'you' | 'companion' | 'party';
+  /** The companion's or party member's name ("" for you). */
+  name: string;
+  amount: number;
+  type: string;
+  /** What did it: "Longbow", "Hunter's Mark". */
+  what: string;
+  time: number;
+}
+
+/** A foe, as much as you know of it: the DM's answers, not its stat block (unless you choose to see it). */
+export interface Enemy {
+  id: string;
+  name: string;
+  /** Its Armor Class when known, else null. */
+  ac: number | null;
+  /** What your hits and misses have shown about an unknown AC. */
+  acAtLeast: number | null;
+  acAtMost: number | null;
+  /** Its Hit Point maximum, if you know it. */
+  maxHp: number | null;
+  /** How hurt it looks (used when its HP isn't known). */
+  status: EnemyStatus;
+  conditions: ConditionId[];
+  marks: EnemyMark[];
+  /** Damage types it resists, is immune to, or is vulnerable to, as you learn them. */
+  resist: string[];
+  immune: string[];
+  vulnerable: string[];
+  /** Within 5 feet of you: yes, no, or null to go by the attack (melee close, ranged not). */
+  near: boolean | null;
+  hits: EnemyHit[];
+  notes: string;
+  /** Added from the creature list: its id there, and whether you've chosen to see and use its stats. */
+  creatureId: string;
+  revealed: boolean;
+}
+
+/** One place in the initiative order. */
+export interface FightEntry {
+  id: string;
+  kind: 'you' | 'companion' | 'enemy' | 'ally';
+  /** The companion's or enemy's id ("" for you and allies). */
+  ref: string;
+  name: string;
+  initiative: number;
+}
+
+export interface Fight {
+  round: number;
+  /** Whose turn it is: an index into order. */
+  turn: number;
+  order: FightEntry[];
 }
 
 export type TileEntryKind = 'note' | 'tracker' | 'roll';
@@ -476,6 +563,10 @@ export function blankCharacter(): Character {
     portrait: null,
     progression: [],
     companions: [],
+    enemies: [],
+    targetId: null,
+    party: [],
+    fight: null,
     tiles: [],
     languageNotes: {},
     updatedAt: Date.now(),
@@ -508,6 +599,7 @@ export function blankCompanion(partial: Partial<Companion> = {}): Companion {
     notes: '',
     source: 'Made up',
     ...partial,
+    essence: typeof partial.essence === 'string' ? partial.essence : '',
     actions: (partial.actions ?? []).map((a) => blankCompanionAction(a)),
     conditions: Array.isArray(partial.conditions) ? partial.conditions : [],
     turn: { ...emptyTurn(), ...partial.turn },
@@ -547,6 +639,10 @@ export function normalizeCharacter(raw: unknown): Character {
     portrait: typeof c.portrait === 'string' && c.portrait.startsWith('data:image/') ? c.portrait : null,
     progression: Array.isArray(c.progression) ? c.progression.filter((p) => p && typeof p.entryId === 'string' && typeof p.classLevel === 'number') : [],
     companions: Array.isArray(c.companions) ? c.companions.map((k) => blankCompanion({ ...k, abilities: { ...allAbilities(10), ...k.abilities } })) : [],
+    enemies: Array.isArray(c.enemies) ? c.enemies.map((e) => blankEnemy(e)) : [],
+    targetId: typeof c.targetId === 'string' && Array.isArray(c.enemies) && c.enemies.some((e) => e?.id === c.targetId) ? c.targetId : null,
+    party: Array.isArray(c.party) ? c.party.filter((n): n is string => typeof n === 'string' && !!n.trim()) : [],
+    fight: normalizeFight(c.fight),
     tiles: Array.isArray(c.tiles)
       ? c.tiles.filter((t) => t && typeof t.id === 'string').map((t) => blankTile({ ...t, entries: Array.isArray(t.entries) ? t.entries.map((e) => blankTileEntry(e?.kind ?? 'note', e)) : [] }))
       : [],
@@ -555,4 +651,41 @@ export function normalizeCharacter(raw: unknown): Character {
   };
   while (merged.spellcasting.slotsUsed.length < 9) merged.spellcasting.slotsUsed.push(0);
   return merged;
+}
+
+export function blankEnemy(partial: Partial<Enemy> = {}): Enemy {
+  const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+  const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    id: uid(),
+    name: 'Enemy',
+    notes: '',
+    creatureId: '',
+    ...partial,
+    ac: num(partial.ac),
+    acAtLeast: num(partial.acAtLeast),
+    acAtMost: num(partial.acAtMost),
+    maxHp: num(partial.maxHp),
+    status: (['healthy', 'bloodied', 'badly', 'down'] as const).includes(partial.status as EnemyStatus) ? (partial.status as EnemyStatus) : 'healthy',
+    conditions: list<ConditionId>(partial.conditions).filter((x) => CONDITIONS.some((k) => k.id === x)),
+    marks: list<EnemyMark>(partial.marks).map((m) => ({ ...{ id: uid(), name: 'Mark', dice: '', type: '', spell: '' }, ...m })),
+    resist: list<string>(partial.resist),
+    immune: list<string>(partial.immune),
+    vulnerable: list<string>(partial.vulnerable),
+    near: typeof partial.near === 'boolean' ? partial.near : null,
+    hits: list<EnemyHit>(partial.hits).filter((h) => h && Number.isFinite(h.amount)),
+    revealed: !!partial.revealed,
+  };
+}
+
+function normalizeFight(raw: unknown): Fight | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const f = raw as Partial<Fight>;
+  const order = Array.isArray(f.order)
+    ? f.order
+        .filter((x) => x && typeof x.name === 'string')
+        .map((x) => ({ id: typeof x.id === 'string' ? x.id : uid(), kind: x.kind ?? 'ally', ref: typeof x.ref === 'string' ? x.ref : '', name: x.name, initiative: Number(x.initiative) || 0 }))
+    : [];
+  if (!order.length) return null;
+  return { round: Math.max(1, Number(f.round) || 1), turn: Math.min(order.length - 1, Math.max(0, Number(f.turn) || 0)), order };
 }
