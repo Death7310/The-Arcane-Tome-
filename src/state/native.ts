@@ -76,3 +76,25 @@ export async function shareFile(filename: string, text: string): Promise<FileRes
     return { ok: false, message: `Couldn't share (${msg}).` };
   }
 }
+
+/**
+ * Android's Back button: runs `onBack` (close a dialog, leave Arrange, go back a page) and,
+ * when there's nothing left to go back from, sends the app to the background rather than
+ * closing it. Returns a function that stops listening.
+ */
+export function listenBackButton(onBack: () => boolean): () => void {
+  if (!isNative()) return () => {};
+  let stop = () => {};
+  let stopped = false;
+  void import('@capacitor/app').then(async ({ App }) => {
+    const handle = await App.addListener('backButton', () => {
+      if (!onBack()) void App.minimizeApp();
+    });
+    if (stopped) void handle.remove();
+    else stop = () => void handle.remove();
+  });
+  return () => {
+    stopped = true;
+    stop();
+  };
+}

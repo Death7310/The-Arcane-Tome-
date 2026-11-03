@@ -748,3 +748,28 @@ button.stat:hover { border-color: var(--gilt); }
 /* A companion's ability scores in its editor: six across, three across on a phone so two digits fit. */
 .ce-abilities { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 520px) { .ce-abilities { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Choosing the element of a companion's reaction (Infused Strikes) on its card. */
+.element-pick { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; }
+.element-pick > span { color: var(--muted); }
+.element-pick::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--el, var(--muted)); flex: none; order: -1; }
+.element-pick select { min-height: 34px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--el, var(--line)) 60%, var(--line)); background: var(--surface-2); color: var(--fg); padding: 0 8px; }
+.element-pick.compact { margin-top: 0; }
+
+/* Ability scores: clearly editable, with − and + either side. */
+.score-edit { display: flex; align-items: center; gap: 4px; }
+.score-edit .step { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); font: 700 16px/1 var(--font-body); display: grid; place-items: center; padding: 0; }
+.score-edit .step:disabled { opacity: 0.4; }
+.score-edit input { border-color: color-mix(in srgb, var(--gilt) 55%, var(--line)); background: var(--surface); }
+.ability .score-cap { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: -4px; }
+@media (max-width: 480px) {
+  .score-edit { gap: 2px; }
+  .score-edit .step { width: 24px; height: 24px; font-size: 14px; }
+  .ability .score-edit input { width: 38px; padding: 3px 2px; }
+}
+@media (max-width: 380px) {
+  .ability { padding-left: 3px; padding-right: 3px; }
+  .score-edit .step { width: 22px; height: 22px; }
+  .ability .score-edit input { width: 34px; }
+}
+@media (max-width: 340px) { .abilities { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

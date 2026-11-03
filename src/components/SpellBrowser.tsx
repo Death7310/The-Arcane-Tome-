@@ -2,7 +2,7 @@
 // rules library) by level, class and school; importing spells from pasted text or a
 // document into your library, filed under their classes; and the Spell compendium tile.
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { ELEMENTS } from '../fx/types';
 import { extractFromFile, UnsupportedFile } from '../import/extract';
 import { useCatalog } from '../state/catalog';
@@ -38,6 +38,8 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
   const [source, setSource] = useState('all');
   const [open, setOpen] = useState<string | null>(null);
   const [shown, setShown] = useState(pageSize);
+  // Its own ids: the browser shows both as the Spell compendium tile and in Add a spell.
+  const uidBase = useId();
   // Which of your classes (or feats) a spell is added for, so it's cast with that class's ability.
   const sourceList = sourceOptions(c);
   const [addAs, setAddAs] = useState('');
@@ -69,7 +71,7 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
 
   return (
     <div className="spell-browser">
-      <input className="input" placeholder="Search spells" value={q} id="spell-search" aria-label="Search spells" onChange={(e) => (setQ(e.target.value), reset())} />
+      <input className="input" placeholder="Search spells" value={q} id={`${uidBase}-spell-search`} aria-label="Search spells" onChange={(e) => (setQ(e.target.value), reset())} />
       <div className="row" style={{ marginTop: 8 }}>
         <select className="input" style={{ width: 'auto' }} value={String(level)} aria-label="Spell level" onChange={(e) => (setLevel(e.target.value === 'all' ? 'all' : Number(e.target.value)), reset())}>
           <option value="all">All levels</option>
@@ -176,6 +178,7 @@ export function SpellBrowser({ pageSize = 60, defaultClass }: { pageSize?: numbe
 
 /** Spells from pasted text or a document, checked and filed under classes, into your library. */
 export function SpellImport({ onSaved }: { onSaved?: (message: string) => void }) {
+  const idBase = useId();
   const { update } = useChar();
   const cat = useCatalog();
   const [text, setText] = useState('');
@@ -204,14 +207,14 @@ export function SpellImport({ onSaved }: { onSaved?: (message: string) => void }
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
-      <label className="field" htmlFor="spell-pack">
+      <label className="field" htmlFor={`${idBase}-spell-pack`}>
         <span>Save them in your library as</span>
-        <input id="spell-pack" className="input" value={packName} onChange={(e) => setPackName(e.target.value)} placeholder="My spells" />
+        <input id={`${idBase}-spell-pack`} className="input" value={packName} onChange={(e) => setPackName(e.target.value)} placeholder="My spells" />
       </label>
-      <label className="field" htmlFor="spell-paste">
+      <label className="field" htmlFor={`${idBase}-spell-paste`}>
         <span>Paste spells (as many as you like), or upload a document below</span>
         <textarea
-          id="spell-paste"
+          id={`${idBase}-spell-paste`}
           className="input"
           style={{ minHeight: 160 }}
           value={text}
@@ -223,11 +226,11 @@ export function SpellImport({ onSaved }: { onSaved?: (message: string) => void }
         <button type="button" className="btn small primary" disabled={!text.trim()} onClick={() => read(text, 'pasted text')}>
           Read the spells
         </button>
-        <label className="btn small ghost" htmlFor="spell-file" style={{ cursor: 'pointer' }}>
+        <label className="btn small ghost" htmlFor={`${idBase}-spell-file`} style={{ cursor: 'pointer' }}>
           Upload a document (PDF, Word, text)
         </label>
         <input
-          id="spell-file"
+          id={`${idBase}-spell-file`}
           type="file"
           accept=".pdf,.docx,.odt,.txt,.md,.html,.htm,.rtf,application/pdf"
           style={{ display: 'none' }}

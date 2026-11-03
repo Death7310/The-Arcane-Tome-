@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { isValid } from '../engine/dice';
 import { ELEMENTS, SHAPES, type Element } from '../fx/types';
 import { useChar } from '../state/character';
@@ -623,6 +623,7 @@ const missing = (parts: Set<SpellPart>) =>
 
 /** Paste a spell (or several), from a book, D&D Beyond, a friend or your own notes, and add it. */
 function PasteSpells({ onDone }: { onDone: (message: string) => void }) {
+  const idBase = useId();
   const { char: c, update } = useChar();
   const sources = sourceOptions(c);
   const casters = sources.filter((x) => !x.id.startsWith('feat:'));
@@ -636,10 +637,10 @@ function PasteSpells({ onDone }: { onDone: (message: string) => void }) {
   const sourceFor = (d: SpellDef) => (addAs !== 'auto' ? addAs : (casters.find((k) => d.classes?.includes(k.id))?.id ?? ''));
   return (
     <div style={{ display: 'grid', gap: 10 }}>
-      <label className="field" htmlFor="spell-paste-one">
+      <label className="field" htmlFor={`${idBase}-spell-paste-one`}>
         <span>Paste a spell, as much of it as you have: its name, level, casting time, range and description. Several at once work too.</span>
         <textarea
-          id="spell-paste-one"
+          id={`${idBase}-spell-paste-one`}
           className="input"
           style={{ minHeight: 170 }}
           value={text}

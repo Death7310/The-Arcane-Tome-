@@ -3,6 +3,7 @@ import { multiplyDice } from '../engine/dice';
 import { useChar } from '../state/character';
 import { useTable, type Advantage, type RollEntry } from '../state/table';
 import { availableBoosts } from '../systems/dnd5e/companion';
+import { ElementPicker } from './CompanionsPanel';
 
 export function EntryView({ e, onApplyHealing }: { e: RollEntry; onApplyHealing?: (n: number, el: HTMLElement) => void }) {
   return (
@@ -52,18 +53,21 @@ export function BoostButtons({ e }: { e: RollEntry }) {
       {boosts.map((b) => {
         const dice = e.boost!.crit ? multiplyDice(b.dice, 2) : b.dice;
         return (
-          <button
-            key={`${b.comp.id}:${b.action.id}`}
-            type="button"
-            className={`btn small boost el-${b.type || 'arcane'}`}
-            disabled={!!b.blocked}
-            title={b.blocked ? `${b.comp.name} can’t: ${b.blocked}` : `${b.comp.name} uses its reaction: ${b.action.text}`}
-            onClick={(ev) => t.boostHit(e.id, b.comp, b.action, ev.currentTarget)}
-          >
-            {b.comp.name}: {b.action.name} +{dice}
-            {b.type ? ` ${b.type}` : ''}
-            {b.blocked ? ` (${b.blocked})` : ''}
-          </button>
+          <span key={`${b.comp.id}:${b.action.id}`} className="row" style={{ gap: 6 }}>
+            <button
+              type="button"
+              className={`btn small boost el-${b.type || 'arcane'}`}
+              disabled={!!b.blocked}
+              title={b.blocked ? `${b.comp.name} can’t: ${b.blocked}` : `${b.comp.name} uses its reaction: ${b.action.text}`}
+              onClick={(ev) => t.boostHit(e.id, b.comp, b.action, ev.currentTarget)}
+            >
+              {b.comp.name}: {b.action.name} +{dice}
+              {b.type ? ` ${b.type}` : ''}
+              {b.blocked ? ` (${b.blocked})` : ''}
+            </button>
+            {/* No element chosen yet: pick it right here before rolling. */}
+            {!b.type && <ElementPicker companionId={b.comp.id} action={b.action} compact />}
+          </span>
         );
       })}
     </div>

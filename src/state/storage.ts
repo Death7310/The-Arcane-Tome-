@@ -110,6 +110,28 @@ export function save(s: Saved): boolean {
   }
 }
 
+/**
+ * Saves, making room when the browser's storage is full: the oldest save points go first
+ * (never characters, and each character keeps its newest), until the save fits. Returns what
+ * was saved and how many save points it took to fit, or null if it still won't fit.
+ */
+export function saveMakingRoom(s: Saved, write: (s: Saved) => boolean = save): { saved: Saved; dropped: number } | null {
+  if (write(s)) return { saved: s, dropped: 0 };
+  let points = [...s.savePoints];
+  let dropped = 0;
+  for (;;) {
+    const newest = new Map<string, number>();
+    for (const p of points) newest.set(p.characterId, Math.max(newest.get(p.characterId) ?? 0, p.createdAt));
+    // The oldest point that isn't a character's newest.
+    const victim = points.filter((p) => p.createdAt !== newest.get(p.characterId)).sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (!victim) return null;
+    points = points.filter((p) => p.id !== victim.id);
+    dropped++;
+    const next = { ...s, savePoints: points };
+    if (write(next)) return { saved: next, dropped };
+  }
+}
+
 export interface Backup {
   format: 'arcane-tome-backup';
   version: 1;

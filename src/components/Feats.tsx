@@ -3,7 +3,7 @@
 // it on your sheet: its ability increase, its spells (marked as coming from the feat and
 // cast with the ability it names), and a once-per-Long-Rest free cast of each.
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { extractFromFile, UnsupportedFile } from '../import/extract';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
@@ -135,6 +135,8 @@ export function FeatBrowser({ onCopy, onMessage, pageSize = 60 }: { onCopy: (f: 
   const [open, setOpen] = useState<string | null>(null);
   const [taking, setTaking] = useState<string | null>(null);
   const [shown, setShown] = useState(pageSize);
+  // Its own ids: the library shows both as a tile and in the Feats dialog.
+  const uidBase = useId();
   const feats = useMemo(() => [...(cat?.feats ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [cat]);
   const sources = useMemo(() => [...new Set(feats.map((f) => f.source ?? SRD))], [feats]);
   const list = useMemo(() => {
@@ -152,13 +154,13 @@ export function FeatBrowser({ onCopy, onMessage, pageSize = 60 }: { onCopy: (f: 
   return (
     <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
       <div className="grid-2">
-        <label className="field" htmlFor="feat-q">
+        <label className="field" htmlFor={`${uidBase}-feat-q`}>
           <span>Search</span>
-          <input id="feat-q" className="input" value={q} onChange={(e) => (setQ(e.target.value), setShown(pageSize))} placeholder="Name or rules text" />
+          <input id={`${uidBase}-feat-q`} className="input" value={q} onChange={(e) => (setQ(e.target.value), setShown(pageSize))} placeholder="Name or rules text" />
         </label>
-        <label className="field" htmlFor="feat-cat">
+        <label className="field" htmlFor={`${uidBase}-feat-cat`}>
           <span>Kind</span>
-          <select id="feat-cat" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <select id={`${uidBase}-feat-cat`} value={category} onChange={(e) => setCategory(e.target.value)}>
             <option value="all">Every kind</option>
             {CATEGORIES.map((k) => (
               <option key={k.id} value={k.id}>
@@ -167,9 +169,9 @@ export function FeatBrowser({ onCopy, onMessage, pageSize = 60 }: { onCopy: (f: 
             ))}
           </select>
         </label>
-        <label className="field" htmlFor="feat-src">
+        <label className="field" htmlFor={`${uidBase}-feat-src`}>
           <span>From</span>
-          <select id="feat-src" value={source} onChange={(e) => setSource(e.target.value)}>
+          <select id={`${uidBase}-feat-src`} value={source} onChange={(e) => setSource(e.target.value)}>
             <option value="all">Everywhere</option>
             {sources.map((s) => (
               <option key={s} value={s}>
@@ -178,7 +180,7 @@ export function FeatBrowser({ onCopy, onMessage, pageSize = 60 }: { onCopy: (f: 
             ))}
           </select>
         </label>
-        <Check label="Only feats that give spells" checked={spellsOnly} onChange={setSpellsOnly} id="feat-spells-only" />
+        <Check label="Only feats that give spells" checked={spellsOnly} onChange={setSpellsOnly} id={`${uidBase}-feat-spells-only`} />
       </div>
       <p className="hint" style={{ margin: 0 }}>
         {cat ? `${list.length} feat${list.length === 1 ? '' : 's'}` : 'Loading…'}
@@ -350,6 +352,7 @@ export function TakeFeat({ feat, setup = false, onDone }: { feat: FeatDef; setup
 // ── Pasting and uploading ────────────────────────────────────────────────────
 
 export function FeatImport({ onSaved }: { onSaved: (message: string) => void }) {
+  const idBase = useId();
   const [text, setText] = useState('');
   const [packName, setPackName] = useState(MY_FEATS);
   const [origin, setOrigin] = useState('pasted text');
@@ -370,14 +373,14 @@ export function FeatImport({ onSaved }: { onSaved: (message: string) => void }) 
   const chosen = found?.filter((_, i) => !skip.has(i)) ?? [];
   return (
     <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-      <label className="field" htmlFor="feat-pack">
+      <label className="field" htmlFor={`${idBase}-feat-pack`}>
         <span>Save them in your library as</span>
-        <input id="feat-pack" className="input" value={packName} onChange={(e) => setPackName(e.target.value)} placeholder={MY_FEATS} />
+        <input id={`${idBase}-feat-pack`} className="input" value={packName} onChange={(e) => setPackName(e.target.value)} placeholder={MY_FEATS} />
       </label>
-      <label className="field" htmlFor="feat-paste">
+      <label className="field" htmlFor={`${idBase}-feat-paste`}>
         <span>Paste feats (one or many), or upload a document below</span>
         <textarea
-          id="feat-paste"
+          id={`${idBase}-feat-paste`}
           className="input"
           style={{ minHeight: 160 }}
           value={text}
@@ -389,11 +392,11 @@ export function FeatImport({ onSaved }: { onSaved: (message: string) => void }) 
         <button type="button" className="btn small primary" disabled={!text.trim()} onClick={() => read(text, 'pasted text')}>
           Read the feats
         </button>
-        <label className="btn small ghost" htmlFor="feat-file" style={{ cursor: 'pointer' }}>
+        <label className="btn small ghost" htmlFor={`${idBase}-feat-file`} style={{ cursor: 'pointer' }}>
           Upload a document (PDF, Word, text)
         </label>
         <input
-          id="feat-file"
+          id={`${idBase}-feat-file`}
           type="file"
           accept=".pdf,.docx,.odt,.txt,.md,.html,.htm,.rtf,.json,application/pdf"
           style={{ display: 'none' }}
@@ -640,6 +643,7 @@ export function FeatForm({ value: f, onChange }: { value: FeatDef; onChange: (f:
 }
 
 function CreateFeat({ initial, onSaved }: { initial: FeatDef | null; onSaved: (m: string) => void }) {
+  const idBase = useId();
   const cat = useCatalog();
   const [f, setF] = useState<FeatDef>(initial ?? blankFeat());
   const [packName, setPackName] = useState(initial?.source && initial.source !== SRD ? initial.source : MY_FEATS);
@@ -650,9 +654,9 @@ function CreateFeat({ initial, onSaved }: { initial: FeatDef | null; onSaved: (m
     <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
       {initial && <p className="hint" style={{ margin: 0 }}>A copy: change anything, then save it under its own name. The original stays as it was.</p>}
       <FeatForm value={f} onChange={(next) => (setF(next), setSaved(null))} />
-      <label className="field" htmlFor="feat-create-pack">
+      <label className="field" htmlFor={`${idBase}-feat-create-pack`}>
         <span>Save it in your library as</span>
-        <input id="feat-create-pack" className="input" value={packName} onChange={(e) => setPackName(e.target.value)} placeholder={MY_FEATS} />
+        <input id={`${idBase}-feat-create-pack`} className="input" value={packName} onChange={(e) => setPackName(e.target.value)} placeholder={MY_FEATS} />
       </label>
       {clash && <p className="hint" style={{ color: 'var(--warn)', margin: 0 }}>{clash.source ?? SRD} already has a feat called {clash.name}. Both will be listed; a different name keeps them apart on your sheet.</p>}
       {error && <p className="hint" style={{ color: 'var(--bad)', margin: 0 }}>{error}</p>}

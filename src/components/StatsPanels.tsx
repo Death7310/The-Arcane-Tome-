@@ -243,7 +243,17 @@ export function AbilitiesPanel() {
               >
                 {signed(m)}
               </button>
-              <NumField value={c.abilities[a]} min={1} max={30} ariaLabel={`${ABILITY_NAMES[a]} score`} id={`score-${a}`} onChange={(n) => update((d) => void (d.abilities[a] = n))} />
+              {/* The score itself: type it, or step it with − and +. Everything that uses it follows. */}
+              <div className="score-edit">
+                <button type="button" className="step" aria-label={`Lower ${ABILITY_NAMES[a]}`} disabled={c.abilities[a] <= 1} onClick={() => update((d) => void (d.abilities[a] = Math.max(1, d.abilities[a] - 1)))}>
+                  −
+                </button>
+                <NumField value={c.abilities[a]} min={1} max={30} ariaLabel={`${ABILITY_NAMES[a]} score`} id={`score-${a}`} onChange={(n) => update((d) => void (d.abilities[a] = n))} />
+                <button type="button" className="step" aria-label={`Raise ${ABILITY_NAMES[a]}`} disabled={c.abilities[a] >= 30} onClick={() => update((d) => void (d.abilities[a] = Math.min(30, d.abilities[a] + 1)))}>
+                  +
+                </button>
+              </div>
+              <small className="score-cap">score</small>
               <span className="save">
                 <button
                   type="button"
@@ -263,7 +273,7 @@ export function AbilitiesPanel() {
         })}
       </div>
       <p className="hint" style={{ marginBottom: 0 }}>
-        Tap a modifier to roll a check, or a save button to roll that save. The dot marks save proficiency.
+        Change a score by typing it or with − and +: modifiers, saves, skills, attacks, spell DCs and everything else follow. Tap a modifier to roll a check, or a save button to roll that save. The dot marks save proficiency.
       </p>
     </Panel>
   );

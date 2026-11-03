@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { sampleCharacter } from '../systems/dnd5e/sample';
-import { load, parseImport, save, defaultSettings } from './storage';
+import { load, parseImport, save, saveMakingRoom, defaultSettings, type Saved } from './storage';
+import { blankCharacter } from '../systems/dnd5e/model';
 
 const store = new Map<string, string>();
 (globalThis as { localStorage?: unknown }).localStorage = {
@@ -65,5 +66,33 @@ describe('save points', async () => {
     const c = sampleCharacter() as Partial<ReturnType<typeof sampleCharacter>>;
     delete c.customDice;
     expect(parseSaved(JSON.stringify({ characters: [c], currentId: c.id }))?.characters[0].customDice).toEqual([]);
+  });
+});
+
+describe('saving when storage is full', () => {
+  const point = (id: string, characterId: string, createdAt: number) => ({ id, characterId, name: id, createdAt, data: blankCharacter() });
+  const state = (): Saved => ({
+    characters: [blankCharacter()],
+    currentId: 'x',
+    settings: defaultSettings(),
+    savedAt: 0,
+    savePoints: [point('a1', 'a', 1), point('a2', 'a', 2), point('a3', 'a', 3), point('b1', 'b', 4), point('b2', 'b', 5)],
+  });
+
+  it('drops the oldest save points until it fits, keeping each character’s newest', () => {
+    // A "storage" that fits at most 3 save points.
+    const write = (s: Saved) => s.savePoints.length <= 3;
+    const r = saveMakingRoom(state(), write)!;
+    expect(r.dropped).toBe(2);
+    expect(r.saved.savePoints.map((p) => p.id)).toEqual(['a3', 'b1', 'b2']);
+  });
+
+  it('gives up rather than delete a character’s last save point', () => {
+    const r = saveMakingRoom(state(), (s) => s.savePoints.length === 0);
+    expect(r).toBeNull();
+  });
+
+  it('saves as is when there is room', () => {
+    expect(saveMakingRoom(state(), () => true)).toMatchObject({ dropped: 0 });
   });
 });

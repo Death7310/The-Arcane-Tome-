@@ -43,7 +43,12 @@ export function TilePanel({ tile, onDelete }: { tile: Tile; onDelete: () => void
 function TileView({ tile, set, owner }: { tile: Tile; set: (fn: (x: Tile) => void) => void; owner: Parameters<typeof resolveTokens>[1] }) {
   const t = useTable();
   if (!tile.entries.length) return <p className="hint">This tile is empty. Tap Edit to add notes, trackers or rolls.</p>;
-  const entry = (id: string) => (x: Tile) => x.entries.find((e) => e.id === id)!;
+  // Changes one entry, if it's still there (a quick double tap can race a delete).
+  const setEntry = (id: string, fn: (e: TileEntry) => void) =>
+    set((x) => {
+      const en = x.entries.find((e) => e.id === id);
+      if (en) fn(en);
+    });
   return (
     <div className="tile-entries">
       {tile.entries.map((e) => {
@@ -61,12 +66,12 @@ function TileView({ tile, set, owner }: { tile: Tile; set: (fn: (x: Tile) => voi
             <div key={e.id} className="tile-tracker">
               <span className="tile-label">{e.label || 'Tracker'}</span>
               <span className="row" style={{ gap: 4, flexWrap: 'nowrap' }}>
-                <button type="button" className="btn small ghost icon" aria-label={`Lower ${e.label}`} onClick={() => set((x) => void (entry(e.id)(x).value = clamp(e.value - 1)))}>
+                <button type="button" className="btn small ghost icon" aria-label={`Lower ${e.label}`} onClick={() => setEntry(e.id, (en) => void (en.value = clamp(e.value - 1)))}>
                   −
                 </button>
-                <NumField value={e.value} ariaLabel={e.label || 'Tracker'} id={`tile-${e.id}`} className="ac" onChange={(n) => set((x) => void (entry(e.id)(x).value = clamp(n)))} />
+                <NumField value={e.value} ariaLabel={e.label || 'Tracker'} id={`tile-${e.id}`} className="ac" onChange={(n) => setEntry(e.id, (en) => void (en.value = clamp(n)))} />
                 {max !== null && <span className="hint">/ {max}</span>}
-                <button type="button" className="btn small ghost icon" aria-label={`Raise ${e.label}`} onClick={() => set((x) => void (entry(e.id)(x).value = clamp(e.value + 1)))}>
+                <button type="button" className="btn small ghost icon" aria-label={`Raise ${e.label}`} onClick={() => setEntry(e.id, (en) => void (en.value = clamp(e.value + 1)))}>
                   +
                 </button>
               </span>
@@ -97,7 +102,11 @@ function TileView({ tile, set, owner }: { tile: Tile; set: (fn: (x: Tile) => voi
 }
 
 function TileEditor({ tile, set, onDelete }: { tile: Tile; set: (fn: (x: Tile) => void) => void; onDelete: () => void }) {
-  const edit = (id: string, fn: (e: TileEntry) => void) => set((x) => fn(x.entries.find((e) => e.id === id)!));
+  const edit = (id: string, fn: (e: TileEntry) => void) =>
+    set((x) => {
+      const en = x.entries.find((e) => e.id === id);
+      if (en) fn(en);
+    });
   const move = (i: number, dir: -1 | 1) =>
     set((x) => {
       const j = i + dir;

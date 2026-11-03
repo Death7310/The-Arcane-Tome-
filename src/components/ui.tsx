@@ -1,4 +1,5 @@
-import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { onBack } from '../state/back';
 import type { Breakdown } from '../systems/dnd5e/rules';
 import { ArrangeTools, useSlot } from './Arrange';
 import { signed } from '../systems/dnd5e/rules';
@@ -189,11 +190,10 @@ export function Stat(props: { label: string; b: Breakdown; bonus?: boolean; show
 }
 
 export function Dialog(props: { title: string; onClose: () => void; children: ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && props.onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [props]);
+  // Escape and Android's Back close the dialog on top (not the app, and not every dialog at once).
+  const close = useRef(props.onClose);
+  close.current = props.onClose;
+  useEffect(() => onBack(() => close.current()), []);
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label={props.title}>

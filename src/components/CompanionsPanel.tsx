@@ -202,6 +202,9 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
           ))}
         </div>
       )}
+      {usable.filter((a) => boostOf(a)).map((a) => (
+        <ElementPicker key={a.id} companionId={comp.id} action={a} />
+      ))}
 
       {expanded && !editing && (
         <div className="comp-sheet">
@@ -745,5 +748,45 @@ function BoostSettings({ a, owner, set }: { a: CompanionAction; owner: Character
         {steps.length > 0 && <span className="hint">Now: {actionDice(a, owner) || '—'}</span>}
       </div>
     </div>
+  );
+}
+
+/** The damage types, the five a drake's Draconic Essence can be first. "Cold" is ice and frost. */
+const ESSENCES = ['acid', 'cold', 'fire', 'lightning', 'poison'] as const;
+const typeName = (d: string) => (d === 'cold' ? 'Cold (ice, frost)' : d.charAt(0).toUpperCase() + d.slice(1));
+
+/**
+ * The element of a reaction that adds damage to a hit (a drake's Infused Strikes takes its
+ * Draconic Essence), chosen right on the companion card, where it's needed at the table.
+ */
+export function ElementPicker({ companionId, action: a, compact = false }: { companionId: string; action: CompanionAction; compact?: boolean }) {
+  const { update } = useChar();
+  const type = a.damageType || boostOf(a)?.type || '';
+  const set = (v: string) =>
+    update((d) => {
+      const x = d.companions.find((k) => k.id === companionId)?.actions.find((y) => y.id === a.id);
+      if (x) x.damageType = v;
+    });
+  return (
+    <label className={`element-pick el-${type || 'arcane'}${compact ? ' compact' : ''}`}>
+      <span>{compact ? 'Element' : `${a.name} element`}</span>
+      <select value={type} onChange={(e) => set(e.target.value)} aria-label={`${a.name}: element (damage type)`}>
+        {!type && <option value="">Choose…</option>}
+        <optgroup label="Draconic Essence">
+          {ESSENCES.map((d) => (
+            <option key={d} value={d}>
+              {typeName(d)}
+            </option>
+          ))}
+        </optgroup>
+        <optgroup label="Other elements">
+          {DAMAGE_TYPES.filter((d) => !(ESSENCES as readonly string[]).includes(d)).map((d) => (
+            <option key={d} value={d}>
+              {typeName(d)}
+            </option>
+          ))}
+        </optgroup>
+      </select>
+    </label>
   );
 }

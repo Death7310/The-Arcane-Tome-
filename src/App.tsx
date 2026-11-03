@@ -18,11 +18,12 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { AbilitiesPanel, GlancePanel, IdentityPanel, SkillsPanel } from './components/StatsPanels';
 import { fx, setDiceSpeed, setTally, sound } from './fx';
 import { CharacterContext } from './state/character';
-import { isNative, readNativeSave, writeNativeSave } from './state/native';
+import { isNative, listenBackButton, readNativeSave, writeNativeSave } from './state/native';
+import { goBack, onBack } from './state/back';
 import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
 import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
-import { addSavePoint, defaultSettings, load, mergeCharacters, parseSaved, save, type Saved, type Settings } from './state/storage';
+import { addSavePoint, defaultSettings, load, mergeCharacters, parseSaved, saveMakingRoom, type Saved, type Settings } from './state/storage';
 import { TableContext, useTableState } from './state/table';
 import { blankCharacter, blankTile, type Character } from './systems/dnd5e/model';
 import { classSummary, maxHp } from './systems/dnd5e/rules';
@@ -96,6 +97,38 @@ export default function App() {
   const folioRef = useRef<HTMLElement>(null);
   const [arranging, setArranging] = useState(false);
 
+  // Back (Android's button, or Escape for dialogs and Arrange): close what's on top, then go
+  // back through the pages you visited, and only then leave the app.
+  const [trail, setTrail] = useState<string[]>([]);
+  const lastTab = useRef(tab);
+  const goingBack = useRef(false);
+  useEffect(() => {
+    if (lastTab.current === tab) return;
+    if (!goingBack.current) setTrail((t) => [...t, lastTab.current].slice(-20));
+    goingBack.current = false;
+    lastTab.current = tab;
+  }, [tab]);
+  useEffect(() => {
+    if (!trail.length) return;
+    return onBack(() => {
+      goingBack.current = true;
+      setTab(trail[trail.length - 1]);
+      setTrail(trail.slice(0, -1));
+    }, 'page');
+  }, [trail]);
+  useEffect(() => (arranging ? onBack(() => setArranging(false)) : undefined), [arranging]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented && goBack(false)) e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    const stop = listenBackButton(() => goBack(true));
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      stop();
+    };
+  }, []);
+
   const char = state.characters.find((c) => c.id === state.currentId) ?? state.characters[0];
   const pwa = usePwa();
   const tileKeys = char.tiles.map((t) => tileKey(t.id));
@@ -137,10 +170,17 @@ export default function App() {
     }));
   }, []);
 
+  const [roomNote, setRoomNote] = useState('');
   const persist = useCallback((s: Saved) => {
     const snapshot = { ...s, savedAt: Date.now() };
-    setSaveFailed(!save(snapshot));
-    void writeNativeSave(JSON.stringify(snapshot));
+    // When the browser's storage is full, the oldest save points make way for your changes.
+    const r = saveMakingRoom(snapshot);
+    setSaveFailed(!r);
+    if (r?.dropped) {
+      setState((cur) => ({ ...cur, savePoints: cur.savePoints.filter((p) => r.saved.savePoints.some((q) => q.id === p.id)) }));
+      setRoomNote(`This browser’s storage was full, so the ${r.dropped} oldest save point${r.dropped === 1 ? ' was' : 's were'} removed to keep your changes. Back up from Settings to keep everything.`);
+    }
+    void writeNativeSave(JSON.stringify(r?.saved ?? snapshot));
   }, []);
 
   // Pick up the phone's save file if it is newer than what the web view remembers.
@@ -314,6 +354,14 @@ export default function App() {
               </span>
               <button type="button" className="btn small ghost" onClick={dismissReady}>
                 Got it
+              </button>
+            </div>
+          )}
+          {roomNote && (
+            <div className="banner" role="status">
+              {roomNote}{' '}
+              <button type="button" className="btn small ghost" onClick={() => setRoomNote('')}>
+                OK
               </button>
             </div>
           )}

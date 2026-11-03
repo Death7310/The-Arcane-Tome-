@@ -86,7 +86,12 @@ export function ConditionsPanel() {
               </span>
               <span className="row" style={{ flexWrap: 'nowrap' }}>
                 {e.rounds !== null && (
-                  <button type="button" className="btn small ghost icon" aria-label={`One more round of ${e.name}`} onClick={() => update((d) => void (d.effects.find((x) => x.id === e.id)!.rounds = (e.rounds ?? 0) + 1))}>
+                  <button type="button" className="btn small ghost icon" aria-label={`One more round of ${e.name}`} onClick={() =>
+                    update((d) => {
+                      const x = d.effects.find((y) => y.id === e.id);
+                      if (x) x.rounds = (x.rounds ?? 0) + 1;
+                    })
+                  }>
                     +1
                   </button>
                 )}
