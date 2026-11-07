@@ -1,6 +1,7 @@
-// The phone itself: keeping the screen on during a fight, and a buzz on a natural 20 or 1.
-// In the Android app these use the app's own KeepAwake plugin (MainActivity) and Capacitor's
-// Haptics; in a browser, the Screen Wake Lock API and navigator.vibrate where they exist.
+// The device itself: keeping the screen on during a fight, a buzz on a natural 20 or 1, and
+// status bar text that suits the theme. In the Android and iPad apps these use the app's own
+// KeepAwake plugin (KeepAwakePlugin.java / KeepAwakePlugin.swift), Capacitor's Haptics and its
+// SystemBars; in a browser, the Screen Wake Lock API and navigator.vibrate where they exist.
 
 import { isNative } from './native';
 
@@ -66,5 +67,16 @@ export async function keepScreenOn(on: boolean): Promise<void> {
     }
   } catch {
     /* The screen sleeps as usual. */
+  }
+}
+
+/** In the apps, light status bar text on the dark theme and dark text on the light one. */
+export async function matchSystemBars(dark: boolean): Promise<void> {
+  if (!isNative()) return;
+  try {
+    const { SystemBars, SystemBarsStyle } = await import('@capacitor/core');
+    await SystemBars.setStyle({ style: dark ? SystemBarsStyle.Dark : SystemBarsStyle.Light });
+  } catch {
+    /* The bar keeps the system's style. */
   }
 }

@@ -4,7 +4,7 @@ import { fx, perform, performCondition, sound, centerOf, type DiceSpeed } from '
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
 import { CONDITIONS } from '../systems/dnd5e/data';
 import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
-import { isNative, saveFileToDevice, shareFile } from '../state/native';
+import { deviceWord, isNative, platform, saveFileToDevice, shareFile } from '../state/native';
 import { isDefault, normalizeLayout, resetLayout } from '../state/layout';
 import { listPacks, restoreLibrary } from '../state/library';
 import { downloadText, makeBackup, parseImport, type MergeResult, type SavePoint, type Settings } from '../state/storage';
@@ -197,22 +197,37 @@ const backupName = () => `arcane-tome-backup-${new Date().toISOString().slice(0,
 /** Characters plus the rules library, so moving to a new device brings your homebrew along. */
 const backupJson = async (characters: Character[]) => JSON.stringify({ ...makeBackup(characters), library: await listPacks().catch(() => []) }, null, 2);
 
-/** Offered in the browser when the site has an Android build to download. */
-function AndroidAppLink() {
+/** Offered in the browser when the site has an app build to download: the APK on Android, the IPA on an iPad or iPhone. */
+function AppDownloadLink() {
   const [available, setAvailable] = useState(false);
   const pwa = usePwa();
+  const file = pwa.ios ? 'arcane-tome.ipa' : 'arcane-tome.apk';
   useEffect(() => {
-    // Only the website carries the APK; the single file and the app itself don't.
-    if (pwa.ios || pwa.mode !== 'pwa') return;
-    fetch('arcane-tome.apk', { method: 'HEAD' })
+    // Only the website carries the app files; the single file and the apps themselves don't.
+    if (pwa.mode !== 'pwa') return;
+    fetch(file, { method: 'HEAD' })
       .then((r) => setAvailable(r.ok))
       .catch(() => setAvailable(false));
-  }, [pwa.ios, pwa.mode]);
+  }, [pwa.mode, file]);
   if (!available) return null;
+  if (pwa.ios)
+    return (
+      <p className="hint" style={{ margin: 0 }}>
+        There is also an iPad and iPhone app:{' '}
+        <a href={file} download>
+          Download the app file (IPA)
+        </a>
+        . Apple only lets it install through a sideloading tool such as AltStore or SideStore, signed with your own Apple ID.{' '}
+        <a href="https://github.com/Death7310/The-Arcane-Tome-#on-an-ipad-or-iphone" target="_blank" rel="noreferrer">
+          How to install it
+        </a>
+        .
+      </p>
+    );
   return (
     <p className="hint" style={{ margin: 0 }}>
       On Android you can also get it as a regular app:{' '}
-      <a href="arcane-tome.apk" download>
+      <a href={file} download>
         Download the Android app (APK)
       </a>
       . Android will ask you to allow installing apps from your browser the first time.
@@ -230,7 +245,9 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
       <h3 style={{ margin: 0 }}>Offline &amp; backups</h3>
       {pwa.mode === 'native' ? (
         <p className="hint" style={{ margin: 0, color: 'var(--good)' }}>
-          You're using the Android app. It works fully offline and saves to a file in its own storage on your phone.
+          {platform() === 'ios'
+            ? `You're using the ${deviceWord()} app. It works fully offline and saves to a file in its own storage. Backups you save appear in the Files app under On My ${deviceWord()} › Arcane Tome.`
+            : "You're using the Android app. It works fully offline and saves to a file in its own storage on your phone."}
         </p>
       ) : pwa.mode === 'pwa' ? (
         <p className="hint" style={{ margin: 0, color: pwa.offlineReady ? 'var(--good)' : undefined }}>
@@ -260,7 +277,7 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
           Update to the new version
         </button>
       )}
-      {pwa.mode !== 'native' && <AndroidAppLink />}
+      {pwa.mode !== 'native' && <AppDownloadLink />}
       {pwa.mode !== 'native' && pwa.persisted === false && (
         <div className="row">
           <button type="button" className="btn small" onClick={() => void requestPersist().then((ok) => setMsg(ok ? 'Your browser will keep this data.' : 'Your browser decided for itself; installing the app usually makes it agree.'))}>
@@ -282,7 +299,7 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
             setMsg(r.message);
           }}
         >
-          {isNative() ? 'Save a backup to my phone' : 'Save a backup file'}
+          {isNative() ? `Save a backup to my ${deviceWord()}` : 'Save a backup file'}
         </button>
         <button
           type="button"

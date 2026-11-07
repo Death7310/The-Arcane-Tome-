@@ -5,6 +5,10 @@
   "android": {
     "backgroundColor": "#15131b"
   },
+  "ios": {
+    "backgroundColor": "#15131b",
+    "preferredContentMode": "mobile"
+  },
   "plugins": {
     "SystemBars": {
       "insetsHandling": "native",

@@ -24,7 +24,7 @@ import { CharacterContext } from './state/character';
 import { isNative, listenBackButton, readNativeSave, writeNativeSave } from './state/native';
 import { goBack, onBack } from './state/back';
 import { emptyStack, remember, takeBack, type UndoStack } from './state/undo';
-import { keepScreenOn, setVibrate } from './state/device';
+import { keepScreenOn, matchSystemBars, setVibrate } from './state/device';
 import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
 import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
@@ -300,6 +300,15 @@ export default function App() {
       else root.removeAttribute('data-theme');
     } else root.setAttribute('data-theme', state.settings.theme);
   }, [state.settings]);
+  // In the apps, status bar text that suits the theme, following the system when the theme does.
+  useEffect(() => {
+    if (!isNative()) return;
+    const apply = () => void matchSystemBars(getComputedStyle(document.documentElement).colorScheme !== 'light');
+    apply();
+    const mq = window.matchMedia?.('(prefers-color-scheme: light)');
+    mq?.addEventListener?.('change', apply);
+    return () => mq?.removeEventListener?.('change', apply);
+  }, [state.settings.theme]);
 
   // Keep current HP within the (possibly changed) maximum.
   const max = maxHp(char).total;

@@ -1,15 +1,28 @@
-// Saving on the device. In the Android app, the whole save also lives in a file in the
-// app's own storage, and backups can be written to the phone's Documents folder or handed
-// to the share sheet. In a browser the same buttons download or share the file instead.
-// Capacitor's plugins are loaded only inside the Android app.
+// Saving on the device. In the Android and iPad apps, the whole save also lives in a file in
+// the app's own storage, and backups can be written where the person can find them (Android's
+// Documents folder; the Files app on an iPad or iPhone) or handed to the share sheet. In a
+// browser the same buttons download or share the file instead.
+// Capacitor's plugins are loaded only inside the apps.
 
 import { downloadText } from './storage';
 
 const SAVE_PATH = 'arcane-tome/save.json';
 const FOLDER = 'Arcane Tome';
 
-export const isNative = (): boolean =>
-  !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.();
+type CapacitorGlobal = { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } };
+
+export const isNative = (): boolean => !!(window as unknown as CapacitorGlobal).Capacitor?.isNativePlatform?.();
+
+/** Which app this is running in: 'android', 'ios' (iPad or iPhone), or 'web' for a browser. */
+export const platform = (): 'android' | 'ios' | 'web' => {
+  if (!isNative()) return 'web';
+  const p = (window as unknown as CapacitorGlobal).Capacitor?.getPlatform?.();
+  return p === 'ios' ? 'ios' : p === 'android' ? 'android' : 'web';
+};
+
+/** What to call the device in messages: "iPad", "iPhone" or "phone". */
+export const deviceWord = (): string =>
+  platform() === 'ios' ? (/iPhone|iPod/.test(navigator.userAgent) ? 'iPhone' : 'iPad') : 'phone';
 
 export async function readNativeSave(): Promise<string | null> {
   if (!isNative()) return null;
@@ -35,7 +48,10 @@ export async function writeNativeSave(json: string): Promise<boolean> {
 
 export type FileResult = { ok: true; message: string } | { ok: false; message: string };
 
-/** Puts a backup where the person can find it: Documents/Arcane Tome on Android, a download in a browser. */
+/**
+ * Puts a backup where the person can find it: Documents/Arcane Tome on Android; the app's own
+ * folder in the Files app on an iPad or iPhone (Info.plist shares it); a download in a browser.
+ */
 export async function saveFileToDevice(filename: string, text: string): Promise<FileResult> {
   if (!isNative()) {
     return downloadText(filename, text)
@@ -44,6 +60,11 @@ export async function saveFileToDevice(filename: string, text: string): Promise<
   }
   try {
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem');
+    if (platform() === 'ios') {
+      // The app's Documents folder is what the Files app shows as On My iPad › Arcane Tome.
+      await Filesystem.writeFile({ path: filename, data: text, directory: Directory.Documents, encoding: Encoding.UTF8, recursive: true });
+      return { ok: true, message: `Saved to the Files app: On My ${deviceWord()} › Arcane Tome › ${filename}` };
+    }
     // Only Android 9 and older ask for storage permission; newer versions let the app write its own files.
     const perm = await Filesystem.checkPermissions();
     if (perm.publicStorage !== 'granted') await Filesystem.requestPermissions();

@@ -1,5 +1,10 @@
 # Tests and builds every push. Pushes to main also publish the site to GitHub Pages,
-# with the signed Android app at arcane-tome.apk next to it.
+# with the signed Android app at arcane-tome.apk and the iPad/iPhone app at arcane-tome.ipa
+# next to it.
+#
+# The iPad app is built unsigned: Apple installs apps only when signed for the device, so a
+# sideloading tool (AltStore, SideStore) signs it with the person's own Apple ID. Publishing on
+# the App Store or TestFlight would need a paid Apple Developer account and signing secrets.
 #
 # One-time setup:
 #   Settings → Pages → Source: "GitHub Actions"
@@ -87,9 +92,43 @@ jobs:
           path: apk/arcane-tome.apk
           retention-days: 14
 
+  ios:
+    # Capacitor 8 needs Xcode 26, which the macOS 26 runners have.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:native
+      - run: npx cap sync ios
+      - name: Build the iPad app (unsigned IPA)
+        working-directory: ios/App
+        run: |
+          xcodebuild -version
+          version=$(node -p "require('../../package.json').version")
+          xcodebuild -quiet -project App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/build" \
+            MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+          app="$RUNNER_TEMP/build/Build/Products/Release-iphoneos/App.app"
+          test -f "$app/App" && test -f "$app/public/index.html"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" ../../ipa
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/ipa/arcane-tome.ipa" Payload)
+          echo "Built unsigned iPad/iPhone app $version (build ${{ github.run_number }}), $(du -h ../../ipa/arcane-tome.ipa | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: ipa/arcane-tome.ipa
+          retention-days: 14
+
   pages:
     if: always() && needs.web.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: [web, android]
+    needs: [web, android, ios]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -107,6 +146,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: android-apk
+          path: site
+      - if: needs.ios.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa
           path: site
       - uses: actions/upload-pages-artifact@v3
         with:
