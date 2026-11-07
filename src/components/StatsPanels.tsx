@@ -5,6 +5,7 @@ import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, SKILLS, allClasses, classById, type CasterType } from '../systems/dnd5e/data';
 import { levelDown, syncFeatures } from '../systems/dnd5e/leveling';
+import { BackgroundField } from './Backgrounds';
 import { LanguagesField } from './Languages';
 import { LevelUpDialog } from './LevelUp';
 import { uid, type ProfLevel } from '../systems/dnd5e/model';
@@ -145,12 +146,12 @@ export function IdentityPanel() {
           <TextField label="Name" value={c.name} onChange={(v) => update((d) => void (d.name = v))} id="char-name" />
           <div className="grid-2">
             <TextField label="Species" value={c.species} onChange={(v) => update((d) => void (d.species = v))} id="char-species" />
-            <TextField label="Background" value={c.background} onChange={(v) => update((d) => void (d.background = v))} id="char-bg" />
             <TextField label="Alignment" value={c.alignment} onChange={(v) => update((d) => void (d.alignment = v))} id="char-align" />
             <NumField label="XP" value={c.xp} min={0} onChange={(n) => update((d) => void (d.xp = n))} id="char-xp" />
             <TextField label="Player" value={c.player} onChange={(v) => update((d) => void (d.player = v))} id="char-player" />
             <TextField label="Size" value={c.size} onChange={(v) => update((d) => void (d.size = v))} id="char-size" />
           </div>
+          <BackgroundField id="char-bg" />
           <LanguagesField value={c.languages} onChange={(v) => update((d) => void (d.languages = v))} id="char-languages" />
           <h3>Classes</h3>
           {c.classes.map((k, idx) => (

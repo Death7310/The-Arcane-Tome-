@@ -54,6 +54,18 @@ export interface Layout {
   heights: Partial<Record<PanelKey, number>>;
   collapsed: PanelKey[];
   pages: Page[];
+  /**
+   * Tiles you took off the sheet, with the pages they were on so they can go back there.
+   * Nothing in them is deleted: their contents stay on the character, ready to add back.
+   */
+  removed: RemovedPanel[];
+}
+
+export interface RemovedPanel {
+  id: PanelKey;
+  pages: string[];
+  /** On each of those pages, the tile that came after it (null: it was last), to go back in its place. */
+  before?: Record<string, PanelKey | null>;
 }
 
 export const MIN_HEIGHT = 120;
@@ -87,11 +99,11 @@ const DEFAULT_PAGE_PANELS: Record<string, PanelKey[]> = {
 
 const defaultPages = (): Page[] => BUILT_IN_PAGES.map((p) => ({ id: p.id, name: p.name, panels: [...DEFAULT_PAGE_PANELS[p.id]], custom: false }));
 
-export const defaultLayout = (): Layout => ({ columns: DEFAULT_COLUMNS.map((c) => [...c]), widths: null, heights: {}, collapsed: [], pages: defaultPages() });
+export const defaultLayout = (): Layout => ({ columns: DEFAULT_COLUMNS.map((c) => [...c]), widths: null, heights: {}, collapsed: [], pages: defaultPages(), removed: [] });
 
 /**
- * Back to the usual columns, sizes and built-in pages. Pages you made are kept (with what's on
- * them), so a reset never loses your own pages or tiles.
+ * Back to the usual columns, sizes and built-in pages, with removed tiles back in place. Pages
+ * you made are kept (with what's on them), so a reset never loses your own pages or tiles.
  */
 export const resetLayout = (l: Layout): Layout => ({ ...defaultLayout(), pages: [...defaultPages(), ...l.pages.filter((p) => p.custom)] });
 
@@ -104,6 +116,7 @@ export const isDefault = (l: Layout): boolean =>
   l.widths === null &&
   !Object.keys(l.heights).length &&
   !l.collapsed.length &&
+  !l.removed.length &&
   JSON.stringify(l.columns) === JSON.stringify(DEFAULT_COLUMNS) &&
   JSON.stringify(l.pages) === JSON.stringify(defaultPages());
 
@@ -144,11 +157,23 @@ export function normalizeLayout(raw: unknown): Layout {
       pages.splice(at + 1, 0, b);
     });
     l.pages = pages;
-    // Every built-in panel is somewhere: one that's on no page goes back to its usual pages.
-    for (const id of Object.keys(PANELS) as PanelId[]) {
-      if (pages.some((p) => p.panels.includes(id))) continue;
-      for (const pid of PANELS[id]) pages.find((p) => p.id === pid)?.panels.push(id);
+  }
+  if (Array.isArray(r.removed)) {
+    for (const x of r.removed as Partial<RemovedPanel>[]) {
+      if (!x || !isPanel(x.id) || l.removed.some((k) => k.id === x.id)) continue;
+      const before: Record<string, PanelKey | null> = {};
+      if (x.before && typeof x.before === 'object')
+        for (const [pid, k] of Object.entries(x.before)) if (k === null || isPanel(k)) before[pid] = k;
+      l.removed.push({ id: x.id, pages: Array.isArray(x.pages) ? x.pages.filter((p): p is string => typeof p === 'string') : [], ...(Object.keys(before).length ? { before } : {}) });
     }
+    // A removed tile is on no page.
+    const gone = new Set(l.removed.map((x) => x.id));
+    l.pages = l.pages.map((p) => ({ ...p, panels: p.panels.filter((id) => !gone.has(id)) }));
+  }
+  // Every built-in panel you haven't removed is somewhere: one on no page goes back to its usual pages.
+  for (const id of Object.keys(PANELS) as PanelId[]) {
+    if (l.removed.some((x) => x.id === id) || l.pages.some((p) => p.panels.includes(id))) continue;
+    for (const pid of PANELS[id]) l.pages.find((p) => p.id === pid)?.panels.push(id);
   }
   return l;
 }
@@ -258,7 +283,50 @@ export function addPanel(l: Layout, id: PanelKey, pageId: string, col = 2): Layo
 export function removePanel(l: Layout, id: PanelKey): Layout {
   const heights = { ...l.heights };
   delete heights[id];
-  return { ...l, columns: l.columns.map((c) => c.filter((x) => x !== id)), pages: l.pages.map((p) => ({ ...p, panels: p.panels.filter((x) => x !== id) })), heights, collapsed: l.collapsed.filter((x) => x !== id) };
+  return {
+    ...l,
+    columns: l.columns.map((c) => c.filter((x) => x !== id)),
+    pages: l.pages.map((p) => ({ ...p, panels: p.panels.filter((x) => x !== id) })),
+    heights,
+    collapsed: l.collapsed.filter((x) => x !== id),
+    removed: l.removed.filter((x) => x.id !== id),
+  };
+}
+
+/**
+ * Takes a tile off every page, remembering which pages it was on. It keeps its place in the
+ * columns and everything in it, so adding it back puts it where it was.
+ */
+export function takeOff(l: Layout, id: PanelKey): Layout {
+  const pages = pagesOf(l, id);
+  if (!pages.length && l.removed.some((x) => x.id === id)) return l;
+  const before: Record<string, PanelKey | null> = {};
+  for (const p of l.pages) if (p.panels.includes(id)) before[p.id] = p.panels[p.panels.indexOf(id) + 1] ?? null;
+  return {
+    ...l,
+    pages: l.pages.map((p) => ({ ...p, panels: p.panels.filter((x) => x !== id) })),
+    removed: [...l.removed.filter((x) => x.id !== id), { id, pages, before }],
+  };
+}
+
+/**
+ * Adds a removed tile back: to `pageId` if given, else to the pages it was on (those that
+ * still exist), else to its usual pages (a tile you made: the first page you made, or Gear).
+ */
+export function putBack(l: Layout, id: PanelKey, pageId?: string): Layout {
+  const was = l.removed.find((x) => x.id === id);
+  const exists = (pid: string) => l.pages.some((p) => p.id === pid);
+  const usual = isTileKey(id) ? [l.pages.find((p) => p.custom)?.id ?? 'gear'] : [...PANELS[id as PanelId]];
+  const pages = pageId && exists(pageId) ? [pageId] : (was?.pages.filter(exists).length ? was.pages.filter(exists) : usual.filter(exists));
+  const back = { ...l, removed: l.removed.filter((x) => x.id !== id) };
+  const columns = back.columns.some((c) => c.includes(id)) ? back.columns : back.columns.map((c, i) => (i === 2 ? [...c, id] : c));
+  let next = setPanelPages({ ...back, columns }, id, pages.length ? pages : [l.pages[0].id]);
+  // Back in its old place on each page, before the tile that followed it (if that's still there).
+  for (const [pid, after] of Object.entries(was?.before ?? {})) {
+    const page = next.pages.find((p) => p.id === pid);
+    if (page?.panels.includes(id) && (after === null || page.panels.includes(after))) next = placeInPage(next, pid, id, after);
+  }
+  return next;
 }
 
 /**
@@ -266,13 +334,14 @@ export function removePanel(l: Layout, id: PanelKey): Layout {
  * backup): they go at the end of the last column and on the first page you made, or Gear.
  */
 export function withTiles(l: Layout, keys: TileKey[]): Layout {
-  const missing = keys.filter((k) => !l.columns.some((c) => c.includes(k)) || !l.pages.some((p) => p.panels.includes(k)));
+  const removed = (k: TileKey) => l.removed.some((x) => x.id === k);
+  const missing = keys.filter((k) => !l.columns.some((c) => c.includes(k)) || (!removed(k) && !l.pages.some((p) => p.panels.includes(k))));
   if (!missing.length) return l;
   const home = l.pages.find((p) => p.custom)?.id ?? 'gear';
   let next = l;
   for (const k of missing) {
     if (!next.columns.some((c) => c.includes(k))) next = { ...next, columns: next.columns.map((c, i) => (i === 2 ? [...c, k] : c)) };
-    if (!next.pages.some((p) => p.panels.includes(k))) next = setPanelPages(next, k, [home]);
+    if (!removed(k) && !next.pages.some((p) => p.panels.includes(k))) next = setPanelPages(next, k, [home]);
   }
   return next;
 }

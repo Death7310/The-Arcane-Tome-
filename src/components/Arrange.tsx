@@ -7,7 +7,7 @@
 // Drags only change the page while they run; the layout is saved once, when you let go.
 
 import { createContext, useContext, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent, type ReactNode, type RefObject } from 'react';
-import { gridTracks, MIN_HEIGHT, movePanel, onSheet, placeInPage, setHeight, setPanelPages, shiftPanel, stepInPage, stepPanel, toggleCollapsed, type Layout, type PanelKey } from '../state/layout';
+import { gridTracks, MIN_HEIGHT, movePanel, onSheet, placeInPage, setHeight, setPanelPages, shiftPanel, stepInPage, stepPanel, takeOff, toggleCollapsed, type Layout, type PanelKey } from '../state/layout';
 
 /** Which page is showing: on a phone any page; on a wide screen the main sheet or a page you made. */
 export interface ActiveView {
@@ -33,6 +33,8 @@ export interface SlotApi {
   /** Every page, and whether this panel is on it. */
   pages: { id: string; name: string; on: boolean }[];
   setPages(ids: string[]): void;
+  /** Takes it off every page (nothing in it is deleted; it can be added back from Pages). */
+  remove(): void;
   dragging: boolean;
   collapsed: boolean;
   height: number | undefined;
@@ -311,6 +313,7 @@ export function useArranger(layout: Layout, setLayout: (l: Layout) => void, foli
       inColumns: active.view === 'sheet',
       pages: layout.pages.map((p) => ({ id: p.id, name: p.name, on: p.panels.includes(id) })),
       setPages: (ids) => set((l) => setPanelPages(l, id, ids)),
+      remove: () => set((l) => takeOff(l, id)),
       dragging: drag?.id === id,
       collapsed: layout.collapsed.includes(id),
       height: layout.heights[id],
@@ -392,6 +395,15 @@ export function ArrangeTools(props: { slot: SlotApi; title: string }) {
             Fit height
           </button>
         )}
+        <button
+          type="button"
+          className="btn small ghost"
+          aria-label={`Remove ${title} from your pages`}
+          title="Take it off every page. Nothing in it is deleted: add it back any time from Pages."
+          onClick={slot.remove}
+        >
+          Remove
+        </button>
       </div>
       <div
         className="resize-grip wide-only"

@@ -9,6 +9,7 @@
 // Wing Bow) is described in this app's own words, with the book named; check the book
 // for the full rules.
 
+import { applyBackground, findBackground } from './backgrounds';
 import { syncFeatures } from './leveling';
 import { blankCharacter, blankCompanion, blankFeature, blankSpell, blankWeapon, uid, type Character, type Item, type Spell } from './model';
 import { spellFromDef, tunedSpells } from './spells';
@@ -352,5 +353,6 @@ export function buildAnaurys(cat: Catalog): Character {
   // The Ranger's and Warlock's SRD features (Favored Enemy with its free Hunter's Marks,
   // Weapon Mastery, Deft Explorer, Fighting Style, Eldritch Invocations, Magical Cunning).
   syncFeatures(c, cat);
+  applyBackground(c, findBackground(c.background));
   return c;
 }

@@ -25,7 +25,7 @@ import { isNative, listenBackButton, readNativeSave, writeNativeSave } from './s
 import { goBack, onBack } from './state/back';
 import { emptyStack, remember, takeBack, type UndoStack } from './state/undo';
 import { keepScreenOn, matchSystemBars, setVibrate } from './state/device';
-import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
+import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, putBack, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
 import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
 import { addSavePoint, defaultSettings, load, mergeCharacters, parseSaved, saveMakingRoom, type Saved, type Settings } from './state/storage';
@@ -167,6 +167,18 @@ export default function App() {
     setLayout(removePanel(layout, tileKey(id)));
   };
   const tracks = layout.widths ? gridTracks(layout.widths) : null;
+  /** A tile's name: a built-in panel's title, or the title you gave your own tile. */
+  const nameOf = (k: PanelKey) => (isTileKey(k) ? char.tiles.find((t) => tileKey(t.id) === k)?.title || 'Your tile' : (PANEL_NAMES[k as PanelId] ?? k));
+  /** Tiles you removed (this character's own tiles only), to add back. */
+  const removed = layout.removed.filter((x) => exists(x.id));
+  const [backNote, setBackNote] = useState('');
+  useEffect(() => setBackNote(''), [arranging]);
+  const addBack = (id: PanelKey, toPage?: string) => {
+    const next = putBack(layout, id, toPage);
+    setLayout(next);
+    const where = next.pages.filter((p) => p.panels.includes(id)).map((p) => p.name);
+    setBackNote(`${nameOf(id)} is back${where.length ? ` on ${where.join(', ')}` : ''}.`);
+  };
 
   // Undo: each character's recent states, newest last (see state/undo.ts).
   const stateRef = useRef(state);
@@ -475,6 +487,16 @@ export default function App() {
                 <p>
                   <b>{page!.name}</b> is empty. Add a tile of your own (notes, trackers, rolls), or move tiles here: tap Arrange, then use “On:” on any tile.
                 </p>
+                {removed.length > 0 && (
+                  <span className="row" style={{ alignItems: 'center' }}>
+                    <span className="hint">Add back here:</span>
+                    {removed.map((x) => (
+                      <button key={x.id} type="button" className="btn small ghost" onClick={() => addBack(x.id, page!.id)}>
+                        ＋ {nameOf(x.id)}
+                      </button>
+                    ))}
+                  </span>
+                )}
                 <span className="row">
                   <button type="button" className="btn small primary" onClick={newTile}>
                     New tile
@@ -495,8 +517,23 @@ export default function App() {
         {arranging && (
           <div className="arrange-bar" role="region" aria-label="Arranging panels">
             <span>
-              Drag a panel by <b>⠿</b> or use its arrows; “On:” puts it on other pages.<span className="wide-only"> Drag the gap between columns, or a panel’s bottom edge, to resize.</span> The ⌄ on each panel folds it away.
+              Drag a panel by <b>⠿</b> or use its arrows; “On:” puts it on other pages.<span className="wide-only"> Drag the gap between columns, or a panel’s bottom edge, to resize.</span> The ⌄ on each panel folds it away; Remove takes it off your pages.
             </span>
+            {(removed.length > 0 || backNote) && (
+              <span className="row removed-tiles" style={{ alignItems: 'center' }}>
+                {removed.length > 0 && <span>Removed:</span>}
+                {removed.map((x) => (
+                  <button key={x.id} type="button" className="btn small ghost" aria-label={`Add ${nameOf(x.id)} back`} onClick={() => addBack(x.id)}>
+                    ＋ {nameOf(x.id)}
+                  </button>
+                ))}
+                {backNote && (
+                  <span role="status" style={{ color: 'var(--good)' }}>
+                    {backNote}
+                  </span>
+                )}
+              </span>
+            )}
             <span className="row">
               <button type="button" className="btn small ghost" onClick={() => setDialog('pages')}>
                 Pages…
@@ -564,7 +601,9 @@ export default function App() {
         )}
 
         {dialog === 'library' && <LibraryDialog onClose={() => setDialog(null)} />}
-        {dialog === 'pages' && <PagesDialog layout={layout} setLayout={setLayout} exists={exists} onOpen={setTab} onClose={() => setDialog(null)} />}
+        {dialog === 'pages' && (
+          <PagesDialog layout={layout} setLayout={setLayout} exists={exists} onOpen={setTab} onClose={() => setDialog(null)} removed={removed.map((x) => ({ id: x.id, name: nameOf(x.id) }))} onAddBack={(id) => addBack(id)} />
+        )}
 
         <div className="fx-dim" ref={dimRef} aria-hidden="true" />
         <div className="fx-vignette" ref={vignetteRef} aria-hidden="true" />

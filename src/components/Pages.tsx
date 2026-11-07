@@ -1,11 +1,21 @@
 // The pages (a phone's tabs): rename them, put them in your order, add your own (for
-// homebrew rules or another game), and delete the ones you made.
+// homebrew rules or another game), and delete the ones you made. Tiles you removed are
+// listed here to add back.
 
 import { useState } from 'react';
-import { addPage, deletePage, movePage, renamePage, type Layout } from '../state/layout';
+import { addPage, deletePage, movePage, renamePage, type Layout, type PanelKey } from '../state/layout';
 import { ConfirmButton, Dialog } from './ui';
 
-export function PagesDialog(props: { layout: Layout; setLayout: (l: Layout) => void; onClose: () => void; onOpen: (pageId: string) => void; exists: (k: string) => boolean }) {
+export function PagesDialog(props: {
+  layout: Layout;
+  setLayout: (l: Layout) => void;
+  onClose: () => void;
+  onOpen: (pageId: string) => void;
+  exists: (k: string) => boolean;
+  /** Tiles taken off the sheet, to add back. */
+  removed: { id: PanelKey; name: string }[];
+  onAddBack: (id: PanelKey) => void;
+}) {
   const { layout, setLayout } = props;
   const [name, setName] = useState('');
   return (
@@ -52,7 +62,25 @@ export function PagesDialog(props: { layout: Layout; setLayout: (l: Layout) => v
           Add page
         </button>
       </form>
-      <p className="hint" style={{ marginBottom: 0 }}>Deleting a page you made doesn’t delete its tiles: they move back to another page.</p>
+      <p className="hint">Deleting a page you made doesn’t delete its tiles: they move back to another page.</p>
+      <h3 style={{ margin: '14px 0 6px' }}>Removed tiles</h3>
+      {props.removed.length ? (
+        <div className="list">
+          {props.removed.map((x) => (
+            <div key={x.id} className="item page-row">
+              <b>{x.name}</b>
+              <span className="hint">Not on any page</span>
+              <button type="button" className="btn small" onClick={() => props.onAddBack(x.id)}>
+                Add back
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="hint" style={{ margin: 0 }}>
+          None. To take a tile off your pages, tap Arrange, then Remove on that tile. Nothing in it is deleted, and it comes back here to add again.
+        </p>
+      )}
     </Dialog>
   );
 }

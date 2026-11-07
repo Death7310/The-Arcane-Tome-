@@ -63,6 +63,7 @@ describe('Anaurys matches his D&D Beyond sheet', () => {
     expect(freeCastSources(c, { name: "Hunter's Mark" })).toEqual([expect.objectContaining({ name: 'Favored Enemy', left: 2, max: 2 })]);
     expect(freeCastSources(c, { name: 'Ray of Sickness' }).map((s) => s.name)).toEqual(['Shadow Touched', 'Magic Initiate (Wizard)']);
     expect(freeCastSources(c, { name: 'Invisibility' })).toHaveLength(1);
+    expect(c.features.find((f) => f.name === 'Background: Haunted One')?.description).toMatch(/Heart of Darkness/);
     const revelation = c.features.find((f) => f.name.startsWith('Celestial Revelation'))!;
     expect(usesMax(c, revelation)).toBe(1);
   });

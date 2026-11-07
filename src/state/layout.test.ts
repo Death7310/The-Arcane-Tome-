@@ -12,6 +12,7 @@ import {
   onSheet,
   pagesOf,
   placeInPage,
+  putBack,
   removePanel,
   renamePage,
   resetLayout,
@@ -20,6 +21,7 @@ import {
   shiftPanel,
   stepInPage,
   stepPanel,
+  takeOff,
   tileKey,
   toggleCollapsed,
   withTiles,
@@ -189,5 +191,63 @@ describe('pages', () => {
     const reset = resetLayout(l);
     expect(reset.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages', 'Homebrew']);
     expect(pagesOf(reset, 'features')).toEqual(['stats', 'p1']);
+  });
+});
+
+describe('removing tiles and adding them back', () => {
+  it('takes a built-in tile off every page, and it stays off after a reload', () => {
+    const l = takeOff(defaultLayout(), 'glance');
+    expect(pagesOf(l, 'glance')).toEqual([]);
+    expect(onSheet(l, 'glance')).toBe(false);
+    expect(l.removed).toEqual([{ id: 'glance', pages: ['stats', 'combat'], before: { stats: 'feats', combat: 'initiative' } }]);
+    // It keeps its column place, so it comes back where it was on a wide screen.
+    expect(l.columns[0]).toContain('glance');
+    expect(isDefault(l)).toBe(false);
+    const again = normalizeLayout(JSON.parse(JSON.stringify(l)));
+    expect(pagesOf(again, 'glance')).toEqual([]);
+    expect(again.removed).toEqual(l.removed);
+  });
+
+  it('adds it back to the pages it was on, or to one page you choose', () => {
+    let l = takeOff(defaultLayout(), 'glance');
+    l = putBack(l, 'glance');
+    expect(pagesOf(l, 'glance')).toEqual(['stats', 'combat']);
+    expect(l.removed).toEqual([]);
+    expect(isDefault(l)).toBe(true);
+    l = putBack(takeOff(l, 'notes'), 'notes', 'magic');
+    expect(pagesOf(l, 'notes')).toEqual(['magic']);
+  });
+
+  it('sends it to its usual pages when the pages it was on are gone', () => {
+    let [l, id] = addPage(defaultLayout(), 'Homebrew');
+    l = setPanelPages(l, 'counters', [id]);
+    l = takeOff(l, 'counters');
+    l = deletePage(l, id);
+    expect(pagesOf(l, 'counters')).toEqual([]);
+    l = putBack(l, 'counters');
+    expect(pagesOf(l, 'counters')).toEqual(['counters']);
+  });
+
+  it('removes your own tiles too without deleting them, and a reset brings everything back', () => {
+    let l = withTiles(defaultLayout(), [tileKey('a')]);
+    l = takeOff(l, 'tile:a');
+    // A removed tile isn't put back on a page just because this device sees it.
+    l = withTiles(l, [tileKey('a')]);
+    expect(pagesOf(l, 'tile:a')).toEqual([]);
+    l = takeOff(l, 'vitals');
+    const reset = resetLayout(l);
+    expect(reset.removed).toEqual([]);
+    expect(pagesOf(reset, 'vitals')).toEqual(['combat']);
+    // Deleting the tile forgets it entirely.
+    expect(removePanel(l, 'tile:a').removed.map((x) => x.id)).toEqual(['vitals']);
+  });
+
+  it('reads removed tiles defensively', () => {
+    const l = normalizeLayout({ ...defaultLayout(), removed: [{ id: 'skills', pages: ['stats', 7] }, { id: 'bogus' }, null, { id: 'skills', pages: [] }] });
+    expect(l.removed).toEqual([{ id: 'skills', pages: ['stats'] }]);
+    // Its old place is kept only when it names a real tile.
+    const m = normalizeLayout({ ...defaultLayout(), removed: [{ id: 'skills', pages: ['stats'], before: { stats: 'features', combat: 'nope', gear: null } }] });
+    expect(m.removed[0].before).toEqual({ stats: 'features', gear: null });
+    expect(pagesOf(l, 'skills')).toEqual([]);
   });
 });
