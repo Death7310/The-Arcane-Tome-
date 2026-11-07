@@ -41,21 +41,36 @@ An animated, auto-calculating character sheet for D&D 5e (2024 rules). Every num
 
 ## Use it offline
 
-There are two standalone versions. Neither needs an account or a server once it's on your device, and neither sends your data anywhere.
+There are four standalone versions. None needs an account or a server once it's on your device, and none sends your data anywhere.
 
 | Version | Best for | How |
 | --- | --- | --- |
 | **Installed app** (PWA) | Phones and tablets; desktops too | Open **https://death7310.github.io/The-Arcane-Tome-/** once while online, then **Settings → Install** (Chrome, Edge, Android) or **Share → Add to Home Screen** (iPhone/iPad, in Safari). After that first visit it runs fully offline, and updates arrive only when you tap **Update now**. |
 | **Android app** (APK) | Android phones and tablets | Download `arcane-tome.apk` from the site (Settings shows the link) and open it; Android asks once to allow installs from your browser. Saves to a file in the app's own storage; backups go to **Documents › Arcane Tome** or the share sheet. |
+| **iPad / iPhone app** (IPA) | iPads and iPhones, if you're willing to sideload | Apple installs apps only from the App Store unless you sign them yourself. See [On an iPad or iPhone](#on-an-ipad-or-iphone). |
 | **Single file** (`arcane-tome.html`) | Laptops and desktops | Build with `npm run build:single` and open `dist-single/index.html` by double-clicking. Fonts, code and sounds are all inside the one file. |
 
 Your characters are stored on the device you use, in the browser's storage for that version. The installed app and the single file each keep their own saves. Use **Settings → Back up all characters** regularly, and **Restore from a backup** to move to another device. Restoring never overwrites a newer local edit: for each character, the copy edited most recently wins.
 
 On iPhone and iPad, install the app rather than using it as a bookmarked website: Safari can delete a website's stored data after 7 days without a visit, but apps added to the Home Screen are exempt ([WebKit, 2020](https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/)).
 
+### On an iPad or iPhone
+
+There are three ways, from simplest to most app-like.
+
+1. **Home Screen app (free, no computer).** In Safari open the site, tap **Share → Add to Home Screen**. It runs offline with its own icon and keeps its saves. It is the website, so a few app extras are missing: no buzz on a natural 20 (Safari has no vibration), and backups download through Safari rather than going to their own folder.
+2. **The iPad app, sideloaded (free Apple ID, needs a Mac or Windows PC to set up).** This is the same app as the Android APK, built for iPadOS: backups appear in the Files app under **On My iPad › Arcane Tome**, the screen stays on during a fight, and crits buzz on iPhones (iPads have no vibration motor). Every push to `main` publishes it as `arcane-tome.ipa` on the site. Because it isn't from the App Store, a sideloading tool signs it with your own Apple ID:
+   1. On a computer, install **AltServer** from [altstore.io](https://altstore.io) and use it to put **AltStore** on the iPad (or **SideStore**, a fork that can refresh apps from the iPad itself once set up).
+   2. On the iPad: **Settings → Privacy & Security → Developer Mode → On**, then restart. iPadOS 16 and later require this for apps you sign yourself ([Apple](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device)).
+   3. On the iPad, open the site in Safari, then **Settings** in the app shows **Download the app file (IPA)**. It lands in **Files › Downloads**.
+   4. In AltStore: **My Apps → +**, pick `arcane-tome.ipa`.
+   5. **Refresh it at least every 7 days.** With a free Apple ID, a self-signed app stops opening after 7 days until it is refreshed, and only 3 such apps can be installed at once (AltStore itself counts as one) ([AltStore FAQ](https://faq.altstore.io/altstore-classic/your-altstore)). AltStore refreshes in the background when the iPad and the computer running AltServer share a Wi-Fi network. An expired app keeps its saves; deleting the app deletes them, so back up first (**Settings → Save a backup to my iPad**).
+   6. To update, install the newer `arcane-tome.ipa` the same way. It replaces the app and keeps your characters.
+3. **TestFlight or the App Store (needs a paid Apple Developer account, $99 a year).** Signing then lasts a year, with no computer or weekly refresh, and TestFlight can share it with your group. This isn't set up: it needs the account's signing certificate and an App Store Connect key added to GitHub as secrets, and the CI job would sign and upload the build. App Store listing also means Apple's review.
+
 ### Hosting
 
-Every push runs the tests and builds both the website and the Android app (see `.github/workflows/deploy.yml`). Pushes to `main` publish the site to GitHub Pages at https://death7310.github.io/The-Arcane-Tome-/, with the signed APK at `arcane-tome.apk`. Anyone with the link can use the app; each person's characters stay on their own device.
+Every push runs the tests and builds the website, the Android app, and the iPad/iPhone app on a macOS runner (see `.github/workflows/deploy.yml`). Pushes to `main` publish the site to GitHub Pages at https://death7310.github.io/The-Arcane-Tome-/, with the signed APK at `arcane-tome.apk` and the unsigned IPA at `arcane-tome.ipa`. Anyone with the link can use the app; each person's characters stay on their own device.
 
 One-time setup: **Settings → Pages → Source: GitHub Actions**, and a repository secret **`ANDROID_SIGNING_KEY`** (`password:base64-of-the-.p12`). Android only installs an update over an app signed with the same key, so keep a private copy of that key: if it is lost, the next version can only be installed after uninstalling the old one, which deletes its saved characters.
 
@@ -68,9 +83,10 @@ npm test             # rules + dice unit tests
 npm run build        # static site in dist/
 npm run build:single # one self-contained HTML file in dist-single/
 npm run android:sync # web build for the app + copy into android/ (then open android/ in Android Studio)
+npm run build:native && npx cap sync ios  # the same for ios/ (then open ios/App/App.xcodeproj in Xcode)
 ```
 
-The Android project in `android/` is a [Capacitor](https://capacitorjs.com) shell around the same web app, built with JDK 21 and the Android SDK (CI does this on every push).
+The Android project in `android/` is a [Capacitor](https://capacitorjs.com) shell around the same web app, built with JDK 21 and the Android SDK. The iOS project in `ios/` is the same shell for iPad and iPhone; it needs a Mac with Xcode 26 or later (Capacitor 8's minimum). CI builds both on every push.
 
 ## Code map
 
@@ -98,8 +114,10 @@ The Android project in `android/` is a [Capacitor](https://capacitorjs.com) shel
 | `src/systems/dnd5e/spellsource.ts` | Where each spell comes from (a class or a feat), and matching spells to your classes' lists |
 | `src/systems/dnd5e/featimport.ts`, `src/components/Feats.tsx` | Reading feats and the spells they grant; taking a feat; the Feat library, importer and feat writer |
 | `src/state/storage.ts`, `src/state/pwa.ts` | Autosave, save points, backups and restore; offline install and updates |
-| `src/state/native.ts` | Android app storage: save file, Documents backups, share sheet |
+| `src/state/native.ts` | App storage (Android and iPad): save file, backups to Documents or the Files app, share sheet |
+| `src/state/device.ts` | Keep the screen on, haptics, status bar style |
 | `android/` | Capacitor Android project (icons, signing, permissions) |
+| `ios/` | Capacitor iOS project for iPad and iPhone (icon, Files app sharing, KeepAwake plugin) |
 | `src/components/` | Sheet panels, dice tray, dialogs |
 
 ## Roadmap

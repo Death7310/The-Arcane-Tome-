@@ -93,6 +93,7 @@ error inside one panel), and two-digit ability scores cut off in the companion e
     with backups. True sync needs either a server (an account, data leaving the device) or a file in
     a cloud drive you already use (Google Drive via its API, which needs an app registration).
     The second keeps your data in your own account.
-20. **An iPhone app (L).** iOS installs only from the App Store (or TestFlight for testing), which needs an
-    Apple Developer account ($99 a year). The website can be added to the iPhone home screen in the
-    meantime.
+20. ✅ **Done (7 November), as far as a free account allows: an iPad and iPhone app (L).** The same app as the
+    APK, built for iPadOS by CI and published as `arcane-tome.ipa`. It installs by sideloading (AltStore or
+    SideStore, with your own Apple ID, refreshed every 7 days). The App Store or TestFlight would need an Apple
+    Developer account ($99 a year) and signing secrets in CI. The website can still be added to the Home Screen.

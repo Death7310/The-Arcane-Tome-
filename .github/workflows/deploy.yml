@@ -115,7 +115,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build
           app="$RUNNER_TEMP/build/Build/Products/Release-iphoneos/App.app"
+          # Check the app has what the sheet relies on, so a broken project fails here rather than on an iPad.
           test -f "$app/App" && test -f "$app/public/index.html"
+          for key in UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace NSCameraUsageDescription CFBundleIcons~ipad; do
+            plutil -extract "$key" raw "$app/Info.plist" >/dev/null || { echo "::error::Info.plist is missing $key"; exit 1; }
+          done
+          grep -aq KeepAwakePlugin "$app/App" || { echo "::error::The KeepAwake plugin was not compiled in"; exit 1; }
+          grep -raq '3App14ViewController' "$app/Base.lproj/Main.storyboardc" || { echo "::error::Main.storyboard does not use the app's ViewController"; exit 1; }
+          echo "Version $(plutil -extract CFBundleShortVersionString raw "$app/Info.plist") ($(plutil -extract CFBundleVersion raw "$app/Info.plist")), iOS $(plutil -extract MinimumOSVersion raw "$app/Info.plist")+, $(du -sh "$app" | cut -f1)"
+          ls "$app" "$app/Frameworks"
           mkdir -p "$RUNNER_TEMP/ipa/Payload" ../../ipa
           cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
           (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/ipa/arcane-tome.ipa" Payload)
