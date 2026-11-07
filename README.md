@@ -38,6 +38,7 @@ An animated, auto-calculating character sheet for D&D 5e (2024 rules). Every num
 - **Safe by default.** Screen flashes are capped at two per effect, spaced ≥350 ms apart and kept dim, which stays under the WCAG 2.2 limit of three flashes per second (SC 2.3.1). If your device asks for reduced motion, the sheet starts in reduced mode. Flashes, animations and sound can each be turned off.
 - **Saving.** Every change autosaves. **Save** makes a save point you can load later, like a game save slot (loading one first saves where you are, so it can be undone). Backups can be saved as a file or shared, and restored on any device. If a browser's storage fills up, the oldest save points (never a character, never its newest point) make way for your changes, and the app says so.
 - **Multiple characters**, with JSON import/export.
+- **Ready-made characters** under **Characters**: Anaurys (Aasimar Ranger (Drakewarden) 4 / Warlock 2, with his drake Artex, from his player's D&D Beyond sheet) and the example sorcerer, Seraphine Vale. Rules the SRD doesn't include are described in the app's own words, with the book named.
 
 ## Use it offline
 

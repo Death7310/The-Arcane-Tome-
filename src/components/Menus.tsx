@@ -10,6 +10,7 @@ import { listPacks, restoreLibrary } from '../state/library';
 import { downloadText, makeBackup, parseImport, type MergeResult, type SavePoint, type Settings } from '../state/storage';
 import { blankCharacter, uid, type Character } from '../systems/dnd5e/model';
 import { classSummary, maxHp, totalLevel } from '../systems/dnd5e/rules';
+import { anaurysCharacter } from '../systems/dnd5e/anaurys';
 import { sampleCharacter } from '../systems/dnd5e/sample';
 import { SRD_CREDIT } from '../systems/dnd5e/srd';
 import { ImportCharacter } from './ImportCharacter';
@@ -33,7 +34,19 @@ export function CharactersDialog(props: {
   const [pointName, setPointName] = useState('');
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const current = props.characters.find((c) => c.id === props.currentId)!;
+  const addReady = async (make: () => Character | Promise<Character>) => {
+    setPreparing(true);
+    try {
+      props.onAdd(await make());
+      props.onClose();
+    } catch (e) {
+      setNotice(`Couldn't set that character up (${(e as Error).message}).`);
+    } finally {
+      setPreparing(false);
+    }
+  };
   const exportJson = JSON.stringify(current, null, 2);
 
   return (
@@ -118,9 +131,24 @@ export function CharactersDialog(props: {
             <button type="button" className="btn" onClick={() => setMode('import')}>
               Import from a document
             </button>
-            <button type="button" className="btn ghost" onClick={() => (props.onAdd(sampleCharacter()), props.onClose())}>
-              New from the example
-            </button>
+          </div>
+          <h3 style={{ margin: '14px 0 6px' }}>Ready-made characters</h3>
+          <div className="lib">
+            {[
+              { key: 'anaurys', name: 'Anaurys', about: 'Aasimar · Ranger (Drakewarden) 4 / Warlock 2, with Artex the drake', make: anaurysCharacter },
+              { key: 'seraphine', name: 'Seraphine Vale', about: 'Example · Aasimar · Sorcerer 5', make: sampleCharacter },
+            ].map((r) => (
+              <button
+                key={r.key}
+                type="button"
+                className="item item-title"
+                disabled={preparing}
+                onClick={() => void addReady(r.make)}
+              >
+                <b>Add {r.name}</b>
+                <small style={{ whiteSpace: 'normal' }}>{r.about}</small>
+              </button>
+            ))}
           </div>
           <p className="hint">Characters are saved in this browser only. Export them to keep a backup or move them to another device.</p>
         </>

@@ -440,6 +440,9 @@ button.stat:hover { border-color: var(--gilt); }
 .lib { display: grid; gap: 6px; margin-top: 10px; }
 .lib button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); }
 .lib button:hover { border-color: var(--gilt); }
+/* A title over its description (character lists): stacked, not side by side; inside a card it isn't a box of its own. */
+.lib .item-title { display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+.lib .item > .item-title { border: 0; padding: 0; background: none; }
 
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-width: 100%; }
 .seg button { border: 0; background: var(--surface-2); padding: 0 10px; min-height: 34px; font: 600 13px/1 var(--font-body); color: var(--muted); }
