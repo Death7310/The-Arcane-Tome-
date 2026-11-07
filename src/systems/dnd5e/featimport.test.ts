@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { abilitiesFromText, applyFeat, describeGrants, featSpells, featSpellsFromText, readFeatText } from './featimport';
-import { blankCharacter, blankSpell } from './model';
+import { blankCharacter, blankFeature, blankSpell } from './model';
 import { spellAbility, spellSaveDc } from './rules';
-import { inferSources, sourceName, sourceOptions } from './spellsource';
+import { freeCastSources, inferSources, sourceName, sourceOptions } from './spellsource';
 import srdFeats from './srd/feats.json';
 import srdSpells from './srd/spells.json';
 import type { FeatDef, SpellDef } from './srd';
@@ -154,5 +154,23 @@ describe('spells by source', () => {
     expect(spellAbility(c, { abilityOverride: null, grantedBy: 'warlock' })).toBe('cha');
     // A source the sheet no longer has falls back to the sheet's own choice.
     expect(spellAbility(c, { abilityOverride: null, grantedBy: 'wizard' })).toBe(spellAbility(c));
+  });
+});
+
+describe('casting without a slot', () => {
+  it('finds a Ranger’s Favored Enemy free Hunter’s Mark casts and a feat’s free cast, with uses left', () => {
+    const c = blankCharacter();
+    c.classes = [{ id: 'r', classId: 'ranger', subclass: '', level: 4, hitDiceUsed: 0 }];
+    const favored = 'You always have the *Hunter’s Mark* spell prepared. You can cast it twice without expending a spell slot, and you regain all expended uses of this ability when you finish a Long Rest.';
+    c.features = [
+      blankFeature({ name: 'Favored Enemy', source: 'Ranger 1', description: favored, usesMax: 2, usesSpent: 1, recharge: 'long' }),
+      blankFeature({ name: "Hunter's Mark: free cast", source: 'Some feat', description: 'Once per Long Rest.', usesMax: 1, recharge: 'long' }),
+      blankFeature({ name: 'Notes on marks', description: "Hunter's Mark is great.", usesMax: null }),
+    ];
+    expect(freeCastSources(c, { name: "Hunter's Mark" })).toEqual([
+      { idx: 0, name: 'Favored Enemy', left: 1, max: 2 },
+      { idx: 1, name: 'Some feat', left: 1, max: 1 },
+    ]);
+    expect(freeCastSources(c, { name: 'Hex' })).toEqual([]);
   });
 });

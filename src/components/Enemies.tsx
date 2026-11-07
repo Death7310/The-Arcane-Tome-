@@ -3,7 +3,7 @@
 // it: its AC (or what your hits and misses have shown), its conditions (Advantage against a
 // Prone foe within 5 feet…), your marks on it (Hunter's Mark) and the damage it has taken.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { ordinal, useTable, type SlotChoice } from '../state/table';
@@ -25,6 +25,7 @@ import {
 } from '../systems/dnd5e/enemies';
 import { uid, type Character, type Enemy, type EnemyStatus, type Spell } from '../systems/dnd5e/model';
 import { pactSlots, signed, spellSlots, weaponAttack } from '../systems/dnd5e/rules';
+import { freeCastSources } from '../systems/dnd5e/spellsource';
 import type { CreatureDef } from '../systems/dnd5e/srd';
 import { ConfirmButton, Dialog, Panel } from './ui';
 
@@ -355,6 +356,7 @@ function AttackButtons({ c }: { c: Character }) {
 /** A spell at the target: cantrips go at once; levelled spells ask which slot. */
 function SpellPicker({ spells, c, onDone }: { spells: Spell[]; c: Character; onDone: () => void }) {
   const t = useTable();
+  const { update } = useChar();
   const [pick, setPick] = useState<Spell | null>(null);
   const slots = spellSlots(c);
   const pact = pactSlots(c);
@@ -378,6 +380,20 @@ function SpellPicker({ spells, c, onDone }: { spells: Spell[]; c: Character; onD
           {t.slotChoices(pick, slots, pact).map((ch) => (
             <button key={`${ch.kind}-${ch.level}`} type="button" className="btn small" onClick={(e) => go(pick, ch, e.currentTarget)}>
               {ch.kind === 'pact' ? `Pact slot (${ordinal(ch.level)})` : `${ordinal(ch.level)}-level slot`}
+            </button>
+          ))}
+          {freeCastSources(c, pick).map((f) => (
+            <button
+              key={f.idx}
+              type="button"
+              className="btn small"
+              disabled={f.left === 0}
+              onClick={(e) => {
+                update((d) => void (d.features[f.idx].usesSpent += 1));
+                go(pick, { kind: 'free', level: pick.level }, e.currentTarget);
+              }}
+            >
+              Free cast ({f.name}){f.left === 0 ? ': used' : f.max > 1 ? ` · ${f.left} left` : ''}
             </button>
           ))}
           <button type="button" className="btn small ghost" onClick={(e) => go(pick, { kind: 'free', level: pick.level }, e.currentTarget)}>
@@ -670,6 +686,87 @@ export function TargetStrip() {
         </select>
       </label>
       {target && <small>{enemySummary(target, cat?.creatures ?? [])}</small>}
+    </div>
+  );
+}
+
+/**
+ * When an enemy drops (set to Down, or its known HP runs out): if it was your target, your
+ * target moves to the next enemy still standing; if your Hunter's Mark or Hex was on it, a
+ * banner offers to move the mark (a Bonus Action, as those spells allow).
+ */
+export function DownWatch() {
+  const { char: c, update } = useChar();
+  const t = useTable();
+  const cat = useCatalog();
+  const creatures = useMemo(() => cat?.creatures ?? [], [cat]);
+  const down = c.enemies.filter((e) => statusOf(e, creatures) === 'down').map((e) => e.id);
+  const seen = useRef<string[] | null>(null);
+  const [prompt, setPrompt] = useState<{ id: string; name: string; note: string } | null>(null);
+  const key = down.join(',');
+  useEffect(() => {
+    const before = seen.current;
+    seen.current = down;
+    if (before === null) return; // what's already down when the app opens isn't news
+    const fresh = down.filter((id) => !before.includes(id));
+    if (!fresh.length) return;
+    const fell = c.enemies.find((e) => e.id === fresh[fresh.length - 1]);
+    if (!fell) return;
+    const standing = c.enemies.filter((e) => !down.includes(e.id));
+    let note = '';
+    if (fresh.includes(c.targetId ?? '') && standing.length) {
+      const i = c.enemies.findIndex((e) => e.id === c.targetId);
+      const next = [...c.enemies.slice(i + 1), ...c.enemies.slice(0, i)].find((e) => !down.includes(e.id));
+      if (next) {
+        update((d) => void (d.targetId = next.id));
+        note = `Your target is now ${next.name}.`;
+      }
+    }
+    const marked = fell.marks.some((m) => m.spell);
+    if (marked && standing.length) setPrompt({ id: fell.id, name: fell.name, note });
+    else if (note) setPrompt({ id: fell.id, name: fell.name, note });
+    // Runs when who's down changes.
+  }, [key]);
+  if (!prompt) return null;
+  const fell = c.enemies.find((e) => e.id === prompt.id);
+  const marks = fell?.marks.filter((m) => m.spell) ?? [];
+  const standing = c.enemies.filter((e) => !down.includes(e.id));
+  return (
+    <div className="banner down-banner" role="status">
+      <span>
+        <b>{prompt.name} is down.</b> {prompt.note}
+      </span>
+      {marks.length > 0 &&
+        standing.length > 0 &&
+        marks.map((m) => (
+          <span key={m.id} className="row" style={{ gap: 6 }}>
+            <span className="hint">Move {m.name} (Bonus Action) to:</span>
+            {standing.map((e) => (
+              <button
+                key={e.id}
+                type="button"
+                className="btn small"
+                onClick={() => {
+                  update((d) => {
+                    const from = d.enemies.find((x) => x.id === prompt.id);
+                    const to = d.enemies.find((x) => x.id === e.id);
+                    if (!from || !to) return;
+                    from.marks = from.marks.filter((x) => x.id !== m.id);
+                    to.marks.push(m);
+                    d.turn.bonus = true;
+                  });
+                  t.note(`${m.name} moved`, `Now on ${e.name}. That used your Bonus Action.`);
+                  setPrompt(null);
+                }}
+              >
+                {e.name}
+              </button>
+            ))}
+          </span>
+        ))}
+      <button type="button" className="btn small ghost" onClick={() => setPrompt(null)}>
+        {marks.length ? 'Not now' : 'OK'}
+      </button>
     </div>
   );
 }

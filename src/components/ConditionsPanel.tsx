@@ -169,14 +169,26 @@ export function ConditionsPanel() {
 /** One line of chips under the header so active conditions are never forgotten. */
 export function StatusStrip({ onOpen }: { onOpen: () => void }) {
   const { char: c } = useChar();
+  const f = c.fight;
+  const now = f?.order[f.turn];
+  const target = c.enemies.find((e) => e.id === c.targetId);
+  // In a fight: whose turn it is, your target, and what you've used this turn, on every page.
+  const combat = f
+    ? [
+        { key: 'round', text: `Round ${f.round} · ${now?.kind === 'you' ? 'your turn' : `${now?.name ?? '?'}’s turn`}`, kind: now?.kind === 'you' ? 'fight mine' : 'fight' },
+        ...(['action', 'bonus', 'reaction'] as const).map((part) => ({ key: part, text: `${part === 'action' ? 'Action' : part === 'bonus' ? 'Bonus' : 'Reaction'}${c.turn[part] ? ' ✓' : ''}`, kind: c.turn[part] ? 'used' : 'ready' })),
+      ]
+    : [];
   const items = [
+    ...combat,
+    ...(target ? [{ key: 'target', text: `→ ${target.name}`, kind: 'target' }] : []),
     ...CONDITIONS.filter((k) => c.conditions.includes(k.id)).map((k) => ({ key: k.id, text: k.name, kind: 'cond' })),
     ...(c.exhaustion ? [{ key: 'exh', text: `Exhaustion ${c.exhaustion}`, kind: 'cond' }] : []),
     ...c.effects.map((e) => ({ key: e.id, text: e.rounds === null ? e.name : `${e.name} (${e.rounds})`, kind: 'effect' })),
   ];
   if (!items.length) return null;
   return (
-    <button type="button" className="status-strip" onClick={onOpen} aria-label="Active conditions and effects. Open the Combat page.">
+    <button type="button" className="status-strip" onClick={onOpen} aria-label={`${items.map((i) => i.text).join(', ')}. Open the Combat page.`}>
       {items.map((i) => (
         <span key={i.key} className={`status ${i.kind}`}>
           {i.text}

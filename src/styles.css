@@ -838,3 +838,13 @@ button.stat:hover { border-color: var(--gilt); }
 .counter-controls .counter-step { width: 72px; text-align: center; }
 .counter-controls .btn { margin-left: auto; }
 .counter-edit { display: grid; gap: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+
+/* An enemy dropped: move your mark, and where your target went. */
+.down-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; border-color: var(--gilt); }
+
+/* The status strip in a fight: whose turn, what you've used, your target. */
+.status.fight { background: var(--surface-2); border: 1px solid var(--line); color: var(--fg); }
+.status.fight.mine { background: color-mix(in srgb, var(--gilt) 22%, transparent); border-color: var(--gilt); }
+.status.ready { background: transparent; border: 1px solid var(--line); color: var(--fg); }
+.status.used { background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); text-decoration: line-through; }
+.status.target { background: color-mix(in srgb, var(--gilt) 12%, transparent); border: 1px solid var(--gilt); color: var(--fg); }

@@ -410,6 +410,8 @@ export function SettingsDialog(props: {
           Flashes are limited to two per effect and kept dim, below the WCAG three-flashes-per-second threshold. Turn them off if bright flashes bother you.
         </p>
         <Check label="Sound effects" id="set-sound" checked={s.sound} onChange={(b) => set({ sound: b })} />
+        <Check label="Buzz on a natural 20 or 1 (phones that can vibrate)" id="set-vibrate" checked={s.vibrate} onChange={(b) => set({ vibrate: b })} />
+        <Check label="Keep the screen on during a fight (while Initiative is running)" id="set-awake" checked={s.keepAwake} onChange={(b) => set({ keepAwake: b })} />
         <label className="field" htmlFor="set-volume">
           <span>Volume</span>
           <input id="set-volume" type="range" min={0} max={1} step={0.05} value={s.volume} onChange={(e) => set({ volume: Number(e.target.value) })} />

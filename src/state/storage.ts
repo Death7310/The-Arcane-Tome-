@@ -13,6 +13,10 @@ export interface Settings {
   diceSpeed: DiceSpeed;
   /** Attacks and spells count up hit by hit on the dice tray. */
   tally: boolean;
+  /** Keep the screen from dimming and locking while a fight is running (Initiative). */
+  keepAwake: boolean;
+  /** A buzz on a natural 20 or 1 (phones that can vibrate). */
+  vibrate: boolean;
   /** Where the panels sit on this device; null for the built-in arrangement. */
   layout: Layout | null;
 }
@@ -57,6 +61,8 @@ export function defaultSettings(): Settings {
     lastBackupAt: null,
     diceSpeed: reduce ? 'quick' : 'full',
     tally: true,
+    keepAwake: true,
+    vibrate: true,
     layout: null,
   };
 }

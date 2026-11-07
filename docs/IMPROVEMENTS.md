@@ -73,13 +73,13 @@ error inside one panel), and two-digit ability scores cut off in the companion e
 12. ✅ **Done (3 November): targets and an initiative order (L).** Add foes from the SRD creature list (or a quick name +
     AC + HP) as targets. Attacks would then use the chosen target's AC and subtract damage from its HP.
     A turn order covering you, your companions and the foes would advance your and your companions' turns automatically.
-13. **Undo (M).** An "undo last change" for slips like a wrong HP edit, quicker than a save point.
-14. **Keep the roll history (S).** The roll history clears when the app reloads. Keeping the last
+13. ✅ **Done (7 November): undo (M).** An "undo last change" for slips like a wrong HP edit, quicker than a save point.
+14. ✅ **Done (7 November): keep the roll history (S).** The roll history clears when the app reloads. Keeping the last
     ~50 rolls would let you look back at last session's crits.
 
 ### Make it more fun
 
-15. **Haptics on Android (S).** A short buzz on a natural 20 and a thud on a natural 1, using
+15. ✅ **Done (7 November): haptics on Android (S).** A short buzz on a natural 20 and a thud on a natural 1, using
     Capacitor's Haptics plugin.
 16. **Dice colours per character (S–M).** Pick a dice style (colour, material) for each character,
     and for the drake.

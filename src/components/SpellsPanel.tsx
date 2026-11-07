@@ -12,9 +12,8 @@ import { RulesText } from './RulesText';
 import { Check, ConfirmButton, CopyTextButton, Dialog, NumField, Panel, Pips, SelectField, TextField, mathText } from './ui';
 import { SpellBrowser, SpellImport } from './SpellBrowser';
 import { TargetStrip } from './Enemies';
-import { freeCastName } from '../systems/dnd5e/featimport';
 import { endConcentration, markFromSpell } from '../systems/dnd5e/enemies';
-import { inferSources, sourceName, sourceOptions } from '../systems/dnd5e/spellsource';
+import { freeCastSources, inferSources, sourceName, sourceOptions } from '../systems/dnd5e/spellsource';
 import { fillSpell, spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
 import { describeSpellDef, readPastedSpells, spellToText, type SpellPart } from '../systems/dnd5e/spellimport';
 import type { SpellDef } from '../systems/dnd5e/srd';
@@ -221,9 +220,8 @@ function SpellRow({ spell: s, slots, pact, removing, tag }: { spell: Spell; slot
     setChoosing((v) => !v);
   };
   // A feat's once-per-Long-Rest casting without a slot (Shadow-Touched, Magic Initiate…).
-  const freeIdx = c.features.findIndex((f) => f.name === freeCastName(s.name));
-  const free = freeIdx >= 0 ? c.features[freeIdx] : null;
-  const freeLeft = free ? Math.max(0, (typeof free.usesMax === 'number' ? free.usesMax : 1) - free.usesSpent) : 0;
+  // Casting it without a slot: a feat's free cast (Shadow-Touched) or a class feature's (Favored Enemy).
+  const frees = freeCastSources(c, s);
   return (
     <div className={`item el-${s.element}`}>
       <div className="item-head">
@@ -281,20 +279,21 @@ function SpellRow({ spell: s, slots, pact, removing, tag }: { spell: Spell; slot
               {ch.kind === 'slot' && ch.level > s.level ? ' ↑' : ''}
             </button>
           ))}
-          {free && (
+          {frees.map((f) => (
             <button
+              key={f.idx}
               type="button"
               className="btn small"
-              disabled={freeLeft === 0}
-              title={`${free.source}: once per Long Rest without a slot`}
+              disabled={f.left === 0}
+              title={`${f.name}: without a spell slot, ${f.left} of ${f.max} left`}
               onClick={(e) => {
-                update((d) => void (d.features[freeIdx].usesSpent += 1));
+                update((d) => void (d.features[f.idx].usesSpent += 1));
                 castWith({ kind: 'free', level: s.level }, e.currentTarget);
               }}
             >
-              Free cast ({free.source}){freeLeft === 0 ? ': used' : ''}
+              Free cast ({f.name}){f.left === 0 ? ': used' : f.max > 1 ? ` · ${f.left} left` : ''}
             </button>
-          )}
+          ))}
           {choices.length === 0 && <span className="hint">No slots left.</span>}
           <button type="button" className="btn small ghost" onClick={(e) => castWith({ kind: 'free', level: s.level }, e.currentTarget)} title="Ritual, free casting from a trait, or a scroll">
             Without a slot

@@ -14,7 +14,7 @@ import { AdvChip, ResultCard } from './components/Results';
 import { SpellsPanel } from './components/SpellsPanel';
 import { SpellCompendiumPanel } from './components/SpellBrowser';
 import { FeatLibraryPanel } from './components/Feats';
-import { EnemiesPanel } from './components/Enemies';
+import { DownWatch, EnemiesPanel } from './components/Enemies';
 import { InitiativePanel } from './components/Initiative';
 import { CountersPanel } from './components/Counters';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -23,6 +23,8 @@ import { fx, setDiceSpeed, setTally, sound } from './fx';
 import { CharacterContext } from './state/character';
 import { isNative, listenBackButton, readNativeSave, writeNativeSave } from './state/native';
 import { goBack, onBack } from './state/back';
+import { emptyStack, remember, takeBack, type UndoStack } from './state/undo';
+import { keepScreenOn, setVibrate } from './state/device';
 import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
 import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
@@ -166,7 +168,20 @@ export default function App() {
   };
   const tracks = layout.widths ? gridTracks(layout.widths) : null;
 
+  // Undo: each character's recent states, newest last (see state/undo.ts).
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const undoRef = useRef(new Map<string, UndoStack>());
+  const [undoable, setUndoable] = useState(0);
+  const [undoneFlash, setUndoneFlash] = useState(false);
   const update = useCallback((fn: (c: Character) => void) => {
+    const now = stateRef.current;
+    const before = now.characters.find((c) => c.id === now.currentId);
+    if (before) {
+      const next = remember(undoRef.current.get(before.id) ?? emptyStack(), before, Date.now());
+      undoRef.current.set(before.id, next);
+      setUndoable(next.past.length);
+    }
     setState((s) => ({
       ...s,
       characters: s.characters.map((c) => {
@@ -178,6 +193,22 @@ export default function App() {
       }),
     }));
   }, []);
+
+  /** Puts the character back as it was before the last change (or burst of changes). */
+  const undo = () => {
+    const id = stateRef.current.currentId;
+    const r = takeBack(undoRef.current.get(id) ?? emptyStack());
+    undoRef.current.set(id, r.stack);
+    setUndoable(r.stack.past.length);
+    if (!r.restore) return;
+    const restore = { ...r.restore, updatedAt: Date.now() };
+    setState((s) => ({ ...s, characters: s.characters.map((c) => (c.id === id ? restore : c)) }));
+    sound.click();
+    setUndoneFlash(true);
+    setTimeout(() => setUndoneFlash(false), 1200);
+  };
+  // Switching characters shows that character's own undo steps.
+  useEffect(() => setUndoable(undoRef.current.get(state.currentId)?.past.length ?? 0), [state.currentId]);
 
   const [roomNote, setRoomNote] = useState('');
   const persist = useCallback((s: Saved) => {
@@ -238,6 +269,12 @@ export default function App() {
     setTimeout(() => setSavedFlash(false), 1800);
   };
 
+  // During a fight (Initiative), the screen stays on so the phone doesn't lock between turns.
+  const fighting = !!char.fight;
+  useEffect(() => {
+    void keepScreenOn(state.settings.keepAwake && fighting);
+  }, [state.settings.keepAwake, fighting]);
+
   // Your rules library joins the SRD in the catalog from the start.
   useEffect(() => {
     void loadLibrary();
@@ -256,6 +293,7 @@ export default function App() {
     sound.setVolume(state.settings.volume);
     setDiceSpeed(state.settings.diceSpeed);
     setTally(state.settings.tally);
+    setVibrate(state.settings.vibrate);
     const root = document.documentElement;
     if (state.settings.theme === 'system') {
       if (hostTheme) root.setAttribute('data-theme', hostTheme);
@@ -294,6 +332,17 @@ export default function App() {
                 <small>{[char.species, classSummary(char)].filter(Boolean).join(' · ')}</small>
               </h1>
               <div className="mast-actions">
+                <button
+                  type="button"
+                  className="btn small ghost undo-btn"
+                  onClick={undo}
+                  disabled={!undoable}
+                  aria-label={undoneFlash ? 'Undone' : `Undo the last change${undoable ? ` (${undoable} to go back through)` : ''}`}
+                  title="Undo the last change: a wrong HP, damage on the wrong enemy, a mistapped condition"
+                >
+                  {undoneFlash ? '✓' : '↶'}
+                  <span className="wide-only"> Undo</span>
+                </button>
                 <button type="button" className="btn small primary save-btn" onClick={saveNow} aria-live="polite" title="Save a point you can come back to">
                   {savedFlash ? 'Saved ✓' : 'Save'}
                 </button>
@@ -366,6 +415,7 @@ export default function App() {
               </button>
             </div>
           )}
+          <DownWatch />
           {roomNote && (
             <div className="banner" role="status">
               {roomNote}{' '}

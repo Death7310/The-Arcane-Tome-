@@ -3,8 +3,9 @@
 // class's ability; a feat's with the ability chosen for it.
 
 import { classById } from './data';
-import type { Character } from './model';
-import { casterType } from './rules';
+import type { Character, Spell } from './model';
+import { casterType, usesMax } from './rules';
+import { freeCastName } from './featimport';
 import { spellForClass } from './spellimport';
 import type { SpellDef } from './srd';
 
@@ -58,4 +59,22 @@ export function inferSources(c: Character, defs: SpellDef[]): Record<string, str
     if (hits.length === 1) out[s.id] = hits[0];
   }
   return out;
+}
+
+/**
+ * The ways you can cast a spell without a slot: a feat's free cast ("Invisibility: free cast")
+ * and class features that grant it (a Ranger's Favored Enemy: "cast Hunter's Mark … without
+ * expending a spell slot"), each with its uses left.
+ */
+export function freeCastSources(c: Character, spell: Pick<Spell, 'name'>): { idx: number; name: string; left: number; max: number }[] {
+  const plain = (t: string) => t.replace(/[*_]/g, '').replace(/[‘’]/g, "'").toLowerCase();
+  const name = plain(spell.name);
+  return c.features.flatMap((f, idx) => {
+    const named = f.name === freeCastName(spell.name);
+    const text = plain(f.description);
+    const grants = !named && f.usesMax !== null && text.includes(name) && /without (?:expending )?a spell slot/.test(text);
+    if (!named && !grants) return [];
+    const max = usesMax(c, f) ?? 1;
+    return [{ idx, name: named ? f.source || f.name : f.name, left: Math.max(0, max - Math.min(max, f.usesSpent)), max }];
+  });
 }

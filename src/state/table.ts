@@ -5,7 +5,7 @@
 // Every roll is decided up front, then thrown as animated dice; the result card, any
 // HP change and the spell or attack effect are revealed once the dice come to rest.
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { describe, isValid, naturalD20, rollDie, safeRoll, withModifier, type RollResult } from '../engine/dice';
 import { centerOf, fx, perform, performAction, sound, throwPhases, weaponLook, type DicePhase, type StrikeLook, type Verdict } from '../fx';
 import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/types';
@@ -16,6 +16,7 @@ import { actionDice, actionType, compMod, companionWeaponAttack, compWeaponAbili
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
 import type { CreatureDef } from '../systems/dnd5e/srd';
 import { useCatalog } from './catalog';
+import { buzz } from './device';
 import {
   effectDice,
   incapacitatedBy,
@@ -116,6 +117,32 @@ type Update = (fn: (c: Character) => void) => void;
 
 let nextId = 1;
 
+/** The roll history is kept between visits: the newest rolls, with long texts cut short. */
+const LOG_KEY = 'arcane-tome:rolls';
+const LOG_KEEP = 40;
+
+function loadLog(): RollEntry[] {
+  try {
+    const raw = localStorage.getItem(LOG_KEY);
+    const list: unknown = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(list)) return [];
+    const ok = list.filter((e): e is RollEntry => !!e && typeof e === 'object' && typeof (e as RollEntry).id === 'number' && Array.isArray((e as RollEntry).lines)).slice(0, LOG_KEEP);
+    nextId = Math.max(nextId, ...ok.map((e) => e.id + 1));
+    return ok;
+  } catch {
+    return [];
+  }
+}
+
+function saveLog(log: RollEntry[]) {
+  try {
+    const slim = log.slice(0, LOG_KEEP).map((e) => ({ ...e, lines: e.lines.map((l) => (l.detail.length > 300 ? { ...l, detail: `${l.detail.slice(0, 300)}…` } : l)) }));
+    localStorage.setItem(LOG_KEY, JSON.stringify(slim));
+  } catch {
+    /* Storage full or blocked: the history just isn't kept. */
+  }
+}
+
 function d20Expr(mod: number, adv: Advantage): string {
   const base = adv === 'adv' ? '2d20kh1' : adv === 'dis' ? '2d20kl1' : '1d20';
   return withModifier(base, mod);
@@ -152,7 +179,8 @@ function stage(phases: DicePhase[], origin: Point, present: () => void, crit: Cr
 }
 
 export function useTableState(char: Character, update: Update) {
-  const [log, setLog] = useState<RollEntry[]>([]);
+  const [log, setLog] = useState<RollEntry[]>(loadLog);
+  useEffect(() => saveLog(log), [log]);
   const logRef = useRef(log);
   logRef.current = log;
   // The creature list, for enemies whose stats you've chosen to reveal.
@@ -171,6 +199,10 @@ export function useTableState(char: Character, update: Update) {
 
   const push = useCallback((e: Omit<RollEntry, 'id' | 'time'>) => {
     const entry: RollEntry = { ...e, id: nextId++, time: Date.now() };
+    // A buzz on a natural 20 or 1 (phones that can vibrate).
+    const nats = e.lines.filter((l) => l.kind === 'd20').map((l) => l.nat);
+    if (nats.includes(20)) void buzz('crit');
+    else if (nats.includes(1)) void buzz('fumble');
     setLog((l) => [entry, ...l].slice(0, 200));
     setLatest(entry);
     return entry;
