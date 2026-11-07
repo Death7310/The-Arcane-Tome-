@@ -16,6 +16,7 @@ import { SpellCompendiumPanel } from './components/SpellBrowser';
 import { FeatLibraryPanel } from './components/Feats';
 import { EnemiesPanel } from './components/Enemies';
 import { InitiativePanel } from './components/Initiative';
+import { CountersPanel } from './components/Counters';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AbilitiesPanel, GlancePanel, IdentityPanel, SkillsPanel } from './components/StatsPanels';
 import { fx, setDiceSpeed, setTally, sound } from './fx';
@@ -51,6 +52,7 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   feats: FeatLibraryPanel,
   enemies: EnemiesPanel,
   initiative: InitiativePanel,
+  counters: CountersPanel,
 };
 
 /** Panel names for the message shown if one runs into an error. */
@@ -73,6 +75,7 @@ const PANEL_NAMES: Record<PanelId, string> = {
   feats: 'Feat library',
   enemies: 'Enemies',
   initiative: 'Initiative',
+  counters: 'Counters',
 };
 
 function initialState(): Saved {

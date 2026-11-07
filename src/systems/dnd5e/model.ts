@@ -339,7 +339,20 @@ export interface Character {
   party: string[];
   /** The initiative order of the current fight, or null outside a fight. */
   fight: Fight | null;
+  /** Your own counters (arrows, gold, ki, a quest's days…) on the Counters page. */
+  counters: Counter[];
   updatedAt: number;
+}
+
+/** A number you keep track of: − and + change it by its amount, Reset puts it back to its start. */
+export interface Counter {
+  id: string;
+  name: string;
+  value: number;
+  /** How much − and + change it. */
+  step: number;
+  /** What Reset puts it back to. */
+  start: number;
 }
 
 /** How hurt an enemy looks: set by hand from what the DM describes, or worked out from known HP. */
@@ -567,6 +580,7 @@ export function blankCharacter(): Character {
     targetId: null,
     party: [],
     fight: null,
+    counters: [],
     tiles: [],
     languageNotes: {},
     updatedAt: Date.now(),
@@ -643,6 +657,7 @@ export function normalizeCharacter(raw: unknown): Character {
     targetId: typeof c.targetId === 'string' && Array.isArray(c.enemies) && c.enemies.some((e) => e?.id === c.targetId) ? c.targetId : null,
     party: Array.isArray(c.party) ? c.party.filter((n): n is string => typeof n === 'string' && !!n.trim()) : [],
     fight: normalizeFight(c.fight),
+    counters: Array.isArray(c.counters) ? c.counters.filter((k) => k && typeof k === 'object').map((k) => blankCounter(k)) : [],
     tiles: Array.isArray(c.tiles)
       ? c.tiles.filter((t) => t && typeof t.id === 'string').map((t) => blankTile({ ...t, entries: Array.isArray(t.entries) ? t.entries.map((e) => blankTileEntry(e?.kind ?? 'note', e)) : [] }))
       : [],
@@ -688,4 +703,15 @@ function normalizeFight(raw: unknown): Fight | null {
     : [];
   if (!order.length) return null;
   return { round: Math.max(1, Number(f.round) || 1), turn: Math.min(order.length - 1, Math.max(0, Number(f.turn) || 0)), order };
+}
+
+export function blankCounter(partial: Partial<Counter> = {}): Counter {
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  return {
+    id: typeof partial.id === 'string' ? partial.id : uid(),
+    name: typeof partial.name === 'string' ? partial.name : 'Counter',
+    value: num(partial.value, 0),
+    step: Math.max(1, num(partial.step, 1)),
+    start: num(partial.start, num(partial.value, 0)),
+  };
 }

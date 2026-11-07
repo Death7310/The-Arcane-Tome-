@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { sampleCharacter } from '../systems/dnd5e/sample';
 import { load, parseImport, save, saveMakingRoom, defaultSettings, type Saved } from './storage';
-import { blankCharacter } from '../systems/dnd5e/model';
+import { blankCharacter, normalizeCharacter } from '../systems/dnd5e/model';
 
 const store = new Map<string, string>();
 (globalThis as { localStorage?: unknown }).localStorage = {
@@ -94,5 +94,17 @@ describe('saving when storage is full', () => {
 
   it('saves as is when there is room', () => {
     expect(saveMakingRoom(state(), () => true)).toMatchObject({ dropped: 0 });
+  });
+});
+
+describe('counters', () => {
+  it('load from a save, with bad values made safe and old saves given none', () => {
+    const c = normalizeCharacter({ ...sampleCharacter(), counters: [{ id: 'a', name: 'Arrows', value: 20, step: 1, start: 20 }, { name: 'Gold', value: 'x', step: -3 }, null] } as never);
+    expect(c.counters).toEqual([
+      { id: 'a', name: 'Arrows', value: 20, step: 1, start: 20 },
+      { id: expect.any(String), name: 'Gold', value: 0, step: 1, start: 0 },
+    ]);
+    const { counters: _none, ...old } = sampleCharacter();
+    expect(normalizeCharacter(old as never).counters).toEqual([]);
   });
 });

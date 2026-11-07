@@ -826,3 +826,15 @@ button.stat:hover { border-color: var(--gilt); }
 .fight-name:disabled { cursor: default; opacity: 1; }
 .fight-name small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .now-tag { font: 700 11px/1 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--gilt); }
+
+/* Counters: one line each, − amount + under the name and number. */
+.counter-list { display: grid; gap: 8px; }
+.counter { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.counter-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.counter-name { font-weight: 700; font-size: 15px; min-width: 0; overflow-wrap: anywhere; }
+.counter-line .counter-value { width: 104px; text-align: center; font: 700 22px/1.2 var(--font-data); padding: 4px 8px; }
+.counter-controls { display: flex; align-items: center; gap: 8px; }
+.counter-controls .step.big { width: 44px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font: 700 22px/1 var(--font-body); display: grid; place-items: center; padding: 0; }
+.counter-controls .counter-step { width: 72px; text-align: center; }
+.counter-controls .btn { margin-left: auto; }
+.counter-edit { display: grid; gap: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }

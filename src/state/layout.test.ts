@@ -52,7 +52,7 @@ describe('reading a saved layout', () => {
 describe('moving panels', () => {
   it('drops a panel into another column at a position', () => {
     const l = movePanel(defaultLayout(), 'spells', 0, 1);
-    expect(l.columns[0]).toEqual(['identity', 'spells', 'abilities', 'glance', 'languages', 'feats']);
+    expect(l.columns[0]).toEqual(['identity', 'spells', 'abilities', 'glance', 'languages', 'feats', 'counters']);
     expect(l.columns[2]).not.toContain('spells');
   });
 
@@ -61,10 +61,10 @@ describe('moving panels', () => {
     // to just above the Feat library (the last Stats panel in the first column).
     const stats = defaultLayout().pages.find((p) => p.id === 'stats')!.panels;
     const up = stepPanel(defaultLayout(), 'skills', -1, (k) => stats.includes(k));
-    expect(up.columns[0]).toEqual(['identity', 'abilities', 'glance', 'languages', 'skills', 'feats']);
+    expect(up.columns[0]).toEqual(['identity', 'abilities', 'glance', 'languages', 'skills', 'feats', 'counters']);
     expect(up.columns[1]).not.toContain('skills');
     const down = stepPanel(defaultLayout(), 'identity', 1);
-    expect(down.columns[0]).toEqual(['abilities', 'identity', 'glance', 'languages', 'feats']);
+    expect(down.columns[0]).toEqual(['abilities', 'identity', 'glance', 'languages', 'feats', 'counters']);
     expect(stepPanel(defaultLayout(), 'identity', -1)).toEqual(defaultLayout());
   });
 
@@ -100,7 +100,7 @@ describe('pages', () => {
 
   it('starts with the built-in pages, Features on Stats and Languages on its own page', () => {
     const l = defaultLayout();
-    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Magic', 'Gear', 'Languages']);
+    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages']);
     expect(pagesOf(l, 'features')).toEqual(['stats']);
     expect(pagesOf(l, 'glance')).toEqual(['stats', 'combat']);
     expect(page(l, 'languages').panels).toEqual(['languages']);
@@ -137,7 +137,7 @@ describe('pages', () => {
     expect(onSheet(l, 'spells')).toBe(false);
     expect(l.columns[2]).toContain('tile:t1');
     l = renamePage(movePage(l, id, -1), id, 'Madness');
-    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Magic', 'Gear', 'Madness', 'Languages']);
+    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Madness', 'Languages']);
     l = deletePage(l, id);
     expect(l.pages.some((p) => p.id === id)).toBe(false);
     expect(pagesOf(l, 'spells')).toEqual(['magic']);
@@ -157,10 +157,10 @@ describe('pages', () => {
 
   it('puts a new built-in page (Enemies) right after Combat in a layout saved before it existed', () => {
     const saved = defaultLayout();
-    saved.pages = saved.pages.filter((p) => p.id !== 'enemies');
+    saved.pages = saved.pages.filter((p) => p.id !== 'enemies' && p.id !== 'counters');
     saved.pages.splice(2, 0, { id: 'p9', name: 'Homebrew', panels: [], custom: true });
     const l = normalizeLayout(JSON.parse(JSON.stringify(saved)));
-    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Homebrew', 'Magic', 'Gear', 'Languages']);
+    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Homebrew', 'Magic', 'Gear', 'Languages']);
     expect(pagesOf(l, 'enemies')).toEqual(['enemies']);
   });
 
@@ -177,6 +177,7 @@ describe('pages', () => {
       ['stats', 'My Stats', false],
       ['combat', 'Combat', false],
       ['enemies', 'Enemies', false],
+      ['counters', 'Counters', false],
       ['magic', 'Magic', false],
       ['gear', 'Gear', false],
       ['languages', 'Languages', false],
@@ -186,7 +187,7 @@ describe('pages', () => {
     expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills', 'feats']);
     expect(pagesOf(l, 'features')).toEqual(['p1']);
     const reset = resetLayout(l);
-    expect(reset.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Magic', 'Gear', 'Languages', 'Homebrew']);
+    expect(reset.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages', 'Homebrew']);
     expect(pagesOf(reset, 'features')).toEqual(['stats', 'p1']);
   });
 });

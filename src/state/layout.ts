@@ -17,6 +17,7 @@ export const PANELS = {
   conditions: ['combat'],
   initiative: ['combat'],
   enemies: ['enemies'],
+  counters: ['counters'],
   turn: ['combat'],
   attacks: ['combat'],
   companions: ['combat'],
@@ -61,13 +62,14 @@ export const BUILT_IN_PAGES = [
   { id: 'stats', name: 'Stats' },
   { id: 'combat', name: 'Combat' },
   { id: 'enemies', name: 'Enemies' },
+  { id: 'counters', name: 'Counters' },
   { id: 'magic', name: 'Magic' },
   { id: 'gear', name: 'Gear' },
   { id: 'languages', name: 'Languages' },
 ] as const;
 
 const DEFAULT_COLUMNS: PanelKey[][] = [
-  ['identity', 'abilities', 'glance', 'languages', 'feats'],
+  ['identity', 'abilities', 'glance', 'languages', 'feats', 'counters'],
   ['initiative', 'enemies', 'vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
   ['spells', 'compendium', 'features', 'inventory', 'notes'],
 ];
@@ -77,6 +79,7 @@ const DEFAULT_PAGE_PANELS: Record<string, PanelKey[]> = {
   stats: ['identity', 'abilities', 'skills', 'features', 'glance', 'feats'],
   combat: ['glance', 'initiative', 'vitals', 'conditions', 'turn', 'attacks', 'companions'],
   enemies: ['enemies'],
+  counters: ['counters'],
   magic: ['spells', 'compendium'],
   gear: ['inventory', 'notes'],
   languages: ['languages'],
