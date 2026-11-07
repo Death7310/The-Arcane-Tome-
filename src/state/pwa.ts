@@ -10,7 +10,7 @@ interface InstallPromptEvent extends Event {
 }
 
 export interface PwaSnapshot {
-  /** 'pwa': served over http(s) with a service worker; 'file': the single-file build; 'native': the Android or iPad app. */
+  /** 'pwa': served over http(s) with a service worker; 'file': the single-file build; 'native': the Android, iPad or Mac app. */
   mode: 'pwa' | 'file' | 'native';
   offlineReady: boolean;
   justBecameReady: boolean;

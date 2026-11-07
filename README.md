@@ -41,13 +41,14 @@ An animated, auto-calculating character sheet for D&D 5e (2024 rules). Every num
 
 ## Use it offline
 
-There are four standalone versions. None needs an account or a server once it's on your device, and none sends your data anywhere.
+There are five standalone versions. None needs an account or a server once it's on your device, and none sends your data anywhere.
 
 | Version | Best for | How |
 | --- | --- | --- |
 | **Installed app** (PWA) | Phones and tablets; desktops too | Open **https://death7310.github.io/The-Arcane-Tome-/** once while online, then **Settings → Install** (Chrome, Edge, Android) or **Share → Add to Home Screen** (iPhone/iPad, in Safari). After that first visit it runs fully offline, and updates arrive only when you tap **Update now**. |
 | **Android app** (APK) | Android phones and tablets | Download `arcane-tome.apk` from the site (Settings shows the link) and open it; Android asks once to allow installs from your browser. Saves to a file in the app's own storage; backups go to **Documents › Arcane Tome** or the share sheet. |
 | **iPad / iPhone app** (IPA) | iPads and iPhones, if you're willing to sideload | Apple installs apps only from the App Store unless you sign them yourself. See [On an iPad or iPhone](#on-an-ipad-or-iphone). |
+| **Mac app** (DMG) | Mac laptops and desktops (Apple silicon and Intel) | Download `arcane-tome-mac.dmg` from the site (Settings shows the link on a Mac). See [On a Mac](#on-a-mac). |
 | **Single file** (`arcane-tome.html`) | Laptops and desktops | Build with `npm run build:single` and open `dist-single/index.html` by double-clicking. Fonts, code and sounds are all inside the one file. |
 
 Your characters are stored on the device you use, in the browser's storage for that version. The installed app and the single file each keep their own saves. Use **Settings → Back up all characters** regularly, and **Restore from a backup** to move to another device. Restoring never overwrites a newer local edit: for each character, the copy edited most recently wins.
@@ -68,9 +69,19 @@ There are three ways, from simplest to most app-like.
    6. To update, install the newer `arcane-tome.ipa` the same way. It replaces the app and keeps your characters.
 3. **TestFlight or the App Store (needs a paid Apple Developer account, $99 a year).** Signing then lasts a year, with no computer or weekly refresh, and TestFlight can share it with your group. This isn't set up: it needs the account's signing certificate and an App Store Connect key added to GitHub as secrets, and the CI job would sign and upload the build. App Store listing also means Apple's review.
 
+### On a Mac
+
+1. Download `arcane-tome-mac.dmg` (on a Mac, **Settings** on the site shows the link) and open it.
+2. Drag **Arcane Tome** onto the **Applications** folder in that window.
+3. Open Arcane Tome from Applications. The first time, macOS says it can't verify the app, because it isn't notarized by Apple (that needs a paid Apple Developer account). Choose **Done**, then open **System Settings → Privacy & Security**, scroll down, and choose **Open Anyway** next to Arcane Tome ([Apple](https://support.apple.com/en-us/102445)). After that it opens normally.
+
+It runs fully offline and keeps your characters in its own storage on the Mac (`~/Library/Application Support/Arcane Tome`), separate from any browser. **Save a backup file** asks where to save, starting in Documents. To update, download the newer DMG and replace the app; your characters stay.
+
+Installing the website from Chrome (**Settings → Install Arcane Tome as an app**) also works on a Mac, and updates itself.
+
 ### Hosting
 
-Every push runs the tests and builds the website, the Android app, and the iPad/iPhone app on a macOS runner (see `.github/workflows/deploy.yml`). Pushes to `main` publish the site to GitHub Pages at https://death7310.github.io/The-Arcane-Tome-/, with the signed APK at `arcane-tome.apk` and the unsigned IPA at `arcane-tome.ipa`. Anyone with the link can use the app; each person's characters stay on their own device.
+Every push runs the tests and builds the website, the Android app, and the iPad/iPhone and Mac apps on a macOS runner (see `.github/workflows/deploy.yml`). Pushes to `main` publish the site to GitHub Pages at https://death7310.github.io/The-Arcane-Tome-/, with the signed APK at `arcane-tome.apk` the unsigned IPA at `arcane-tome.ipa`, and the Mac app at `arcane-tome-mac.dmg`. Anyone with the link can use the app; each person's characters stay on their own device.
 
 One-time setup: **Settings → Pages → Source: GitHub Actions**, and a repository secret **`ANDROID_SIGNING_KEY`** (`password:base64-of-the-.p12`). Android only installs an update over an app signed with the same key, so keep a private copy of that key: if it is lost, the next version can only be installed after uninstalling the old one, which deletes its saved characters.
 
@@ -118,6 +129,7 @@ The Android project in `android/` is a [Capacitor](https://capacitorjs.com) shel
 | `src/state/device.ts` | Keep the screen on, haptics, status bar style |
 | `android/` | Capacitor Android project (icons, signing, permissions) |
 | `ios/` | Capacitor iOS project for iPad and iPhone (icon, Files app sharing, KeepAwake plugin) |
+| `desktop/` | The Mac app: Electron around the same web build (`main.cjs`), with a `--smoke-test` CI runs |
 | `src/components/` | Sheet panels, dice tray, dialogs |
 
 ## Roadmap

@@ -1,0 +1,15 @@
+{
+  "name": "arcane-tome-desktop",
+  "productName": "Arcane Tome",
+  "version": "0.4.0",
+  "private": true,
+  "description": "The Mac app: the Arcane Tome sheet in its own window, fully offline.",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "44.10.2"
+  }
+}

@@ -20,6 +20,13 @@ export const platform = (): 'android' | 'ios' | 'web' => {
   return p === 'ios' ? 'ios' : p === 'android' ? 'android' : 'web';
 };
 
+/** True in the Mac app (desktop/main.cjs), which runs the same web build in Electron. */
+export const isMacApp = (): boolean => typeof navigator !== 'undefined' && /\bElectron\//.test(navigator.userAgent);
+
+/** True in a browser on a Mac (not an iPad, which can also report itself as a Mac). */
+export const isMacBrowser = (): boolean =>
+  typeof navigator !== 'undefined' && /Macintosh|Mac OS X/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1) && !isMacApp();
+
 /** What to call the device in messages: "iPad", "iPhone" or "phone". */
 export const deviceWord = (): string =>
   platform() === 'ios' ? (/iPhone|iPod/.test(navigator.userAgent) ? 'iPhone' : 'iPad') : 'phone';
@@ -53,6 +60,11 @@ export type FileResult = { ok: true; message: string } | { ok: false; message: s
  * folder in the Files app on an iPad or iPhone (Info.plist shares it); a download in a browser.
  */
 export async function saveFileToDevice(filename: string, text: string): Promise<FileResult> {
+  if (isMacApp()) {
+    return downloadText(filename, text)
+      ? { ok: true, message: `Choose where to keep ${filename} (it starts in Documents).` }
+      : { ok: false, message: "Couldn't save the backup. Use Characters → Export → Copy instead." };
+  }
   if (!isNative()) {
     return downloadText(filename, text)
       ? { ok: true, message: `Saved ${filename} to your downloads.` }

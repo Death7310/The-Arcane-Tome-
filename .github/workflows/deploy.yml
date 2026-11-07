@@ -1,10 +1,12 @@
 # Tests and builds every push. Pushes to main also publish the site to GitHub Pages,
-# with the signed Android app at arcane-tome.apk and the iPad/iPhone app at arcane-tome.ipa
-# next to it.
+# with the signed Android app at arcane-tome.apk, the iPad/iPhone app at arcane-tome.ipa and
+# the Mac app at arcane-tome-mac.dmg next to it.
 #
 # The iPad app is built unsigned: Apple installs apps only when signed for the device, so a
 # sideloading tool (AltStore, SideStore) signs it with the person's own Apple ID. Publishing on
 # the App Store or TestFlight would need a paid Apple Developer account and signing secrets.
+# The Mac app (desktop/, Electron around the same web build) is signed ad hoc for the same
+# reason: macOS asks once to allow it (System Settings → Privacy & Security → Open Anyway).
 #
 # One-time setup:
 #   Settings → Pages → Source: "GitHub Actions"
@@ -134,9 +136,63 @@ jobs:
           path: ipa/arcane-tome.ipa
           retention-days: 14
 
+  mac:
+    # One app for Apple silicon and Intel Macs.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
+      - run: npm ci
+      - run: npm run build:native
+      - name: Build the Mac app
+        working-directory: desktop
+        run: |
+          npm ci
+          cp -R ../dist-native app
+          version=$(node -p "require('../package.json').version")
+          # The icon at every size macOS uses.
+          mkdir -p build/icon.iconset
+          for s in 16 32 128 256 512; do
+            sips -z $s $s icon-1024.png --out build/icon.iconset/icon_${s}x${s}.png >/dev/null
+            sips -z $((s * 2)) $((s * 2)) icon-1024.png --out build/icon.iconset/icon_${s}x${s}@2x.png >/dev/null
+          done
+          iconutil -c icns build/icon.iconset -o build/icon.icns
+          npx electron-packager . "Arcane Tome" --platform=darwin --arch=universal \
+            --icon=build/icon.icns --app-bundle-id=io.github.death7310.arcanetome \
+            --app-version="$version" --build-version=${{ github.run_number }} \
+            --app-category-type=public.app-category.role-playing-games \
+            --ignore='^/(build|out|dmg|node_modules|icon-1024\.png|\.gitignore)' --out=out --overwrite
+          app="out/Arcane Tome-darwin-universal/Arcane Tome.app"
+          # Signed ad hoc, so macOS offers "Open Anyway" once instead of calling it damaged.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          echo "Architectures: $(lipo -archs "$app/Contents/MacOS/Arcane Tome")"
+          # Open the finished app: the sheet must draw and be able to save.
+          "$app/Contents/MacOS/Arcane Tome" --smoke-test
+          mkdir -p dmg ../mac
+          cp -R "$app" dmg/
+          ln -s /Applications dmg/Applications
+          for attempt in 1 2 3; do
+            hdiutil create -volname "Arcane Tome" -srcfolder dmg -fs HFS+ -format UDZO -ov ../mac/arcane-tome-mac.dmg && break
+            sleep 5
+          done
+          test -f ../mac/arcane-tome-mac.dmg
+          echo "Built the Mac app $version (build ${{ github.run_number }}), $(du -h ../mac/arcane-tome-mac.dmg | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-dmg
+          path: mac/arcane-tome-mac.dmg
+          retention-days: 14
+
   pages:
     if: always() && needs.web.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    needs: [web, android, ios]
+    needs: [web, android, ios, mac]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -159,6 +215,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ios-ipa
+          path: site
+      - if: needs.mac.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-dmg
           path: site
       - uses: actions/upload-pages-artifact@v3
         with:

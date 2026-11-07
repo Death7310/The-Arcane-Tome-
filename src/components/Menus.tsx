@@ -4,7 +4,7 @@ import { fx, perform, performCondition, sound, centerOf, type DiceSpeed } from '
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
 import { CONDITIONS } from '../systems/dnd5e/data';
 import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
-import { deviceWord, isNative, platform, saveFileToDevice, shareFile } from '../state/native';
+import { deviceWord, isMacApp, isMacBrowser, isNative, platform, saveFileToDevice, shareFile } from '../state/native';
 import { isDefault, normalizeLayout, resetLayout } from '../state/layout';
 import { listPacks, restoreLibrary } from '../state/library';
 import { downloadText, makeBackup, parseImport, type MergeResult, type SavePoint, type Settings } from '../state/storage';
@@ -197,11 +197,12 @@ const backupName = () => `arcane-tome-backup-${new Date().toISOString().slice(0,
 /** Characters plus the rules library, so moving to a new device brings your homebrew along. */
 const backupJson = async (characters: Character[]) => JSON.stringify({ ...makeBackup(characters), library: await listPacks().catch(() => []) }, null, 2);
 
-/** Offered in the browser when the site has an app build to download: the APK on Android, the IPA on an iPad or iPhone. */
+/** Offered in the browser when the site has an app build to download: the IPA on an iPad or iPhone, the Mac app on a Mac, the APK elsewhere. */
 function AppDownloadLink() {
   const [available, setAvailable] = useState(false);
   const pwa = usePwa();
-  const file = pwa.ios ? 'arcane-tome.ipa' : 'arcane-tome.apk';
+  const mac = !pwa.ios && isMacBrowser();
+  const file = pwa.ios ? 'arcane-tome.ipa' : mac ? 'arcane-tome-mac.dmg' : 'arcane-tome.apk';
   useEffect(() => {
     // Only the website carries the app files; the single file and the apps themselves don't.
     if (pwa.mode !== 'pwa') return;
@@ -220,6 +221,21 @@ function AppDownloadLink() {
         . Apple only lets it install through a sideloading tool such as AltStore or SideStore, signed with your own Apple ID.{' '}
         <a href="https://github.com/Death7310/The-Arcane-Tome-#on-an-ipad-or-iphone" target="_blank" rel="noreferrer">
           How to install it
+        </a>
+        .
+      </p>
+    );
+  if (mac)
+    return (
+      <p className="hint" style={{ margin: 0 }}>
+        There is also a Mac app:{' '}
+        <a href={file} download>
+          Download the Mac app (DMG)
+        </a>
+        . Open it and drag Arcane Tome into Applications. The first time, macOS blocks it because it isn't notarized by Apple: choose Done, then
+        allow it in System Settings → Privacy &amp; Security → Open Anyway.{' '}
+        <a href="https://github.com/Death7310/The-Arcane-Tome-#on-a-mac" target="_blank" rel="noreferrer">
+          More help
         </a>
         .
       </p>
@@ -247,7 +263,9 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
         <p className="hint" style={{ margin: 0, color: 'var(--good)' }}>
           {platform() === 'ios'
             ? `You're using the ${deviceWord()} app. It works fully offline and saves to a file in its own storage. Backups you save appear in the Files app under On My ${deviceWord()} › Arcane Tome.`
-            : "You're using the Android app. It works fully offline and saves to a file in its own storage on your phone."}
+            : isMacApp()
+              ? "You're using the Mac app. It works fully offline and keeps your characters in its own storage on this Mac. “Save a backup file” asks where to put the backup."
+              : "You're using the Android app. It works fully offline and saves to a file in its own storage on your phone."}
         </p>
       ) : pwa.mode === 'pwa' ? (
         <p className="hint" style={{ margin: 0, color: pwa.offlineReady ? 'var(--good)' : undefined }}>
@@ -301,17 +319,20 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
         >
           {isNative() ? `Save a backup to my ${deviceWord()}` : 'Save a backup file'}
         </button>
-        <button
-          type="button"
-          className="btn"
-          onClick={async () => {
-            const r = await shareFile(backupName(), await backupJson(props.characters));
-            if (r.ok && r.message === 'Shared.') props.onChange({ ...props.settings, lastBackupAt: Date.now() });
-            setMsg(r.message);
-          }}
-        >
-          Share a backup…
-        </button>
+        {/* The Mac app has no share sheet; saving the file covers it. */}
+        {!isMacApp() && (
+          <button
+            type="button"
+            className="btn"
+            onClick={async () => {
+              const r = await shareFile(backupName(), await backupJson(props.characters));
+              if (r.ok && r.message === 'Shared.') props.onChange({ ...props.settings, lastBackupAt: Date.now() });
+              setMsg(r.message);
+            }}
+          >
+            Share a backup…
+          </button>
+        )}
         <button type="button" className="btn ghost" onClick={() => fileRef.current?.click()}>
           Restore from a backup
         </button>
