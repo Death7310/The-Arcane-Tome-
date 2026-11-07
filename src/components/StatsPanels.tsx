@@ -6,6 +6,7 @@ import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, SKILLS, allClasses, classById, type CasterType } from '../systems/dnd5e/data';
 import { levelDown, syncFeatures } from '../systems/dnd5e/leveling';
 import { BackgroundField } from './Backgrounds';
+import { InspirationSlot } from './Inspiration';
 import { LanguagesField } from './Languages';
 import { LevelUpDialog } from './LevelUp';
 import { uid, type ProfLevel } from '../systems/dnd5e/model';
@@ -316,6 +317,7 @@ export function GlancePanel() {
     >
       <div className="glance">
         <Stat label="Proficiency" b={{ total: pb(c), parts: [{ label: `Level ${totalLevel(c)}`, value: pb(c) }] }} bonus showMath={showMath} />
+        <InspirationSlot />
         <Stat label="Armor Class" b={armorClass(c)} showMath={showMath} />
         <Stat label="Initiative" b={initiative(c)} bonus showMath={showMath} onRoll={(el) => t.test('Initiative', initiative(c), el, undefined, { type: 'initiative' })} />
         <Stat label="Speed" b={speed(c)} suffix=" ft" showMath={showMath} />

@@ -81,6 +81,8 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
+/* A sideways trackpad swipe turns the sheet's page, not the browser's (no back/forward swipe). */
+html, body { overscroll-behavior-x: none; }
 /* Installed on a phone, the status bar overlays the page; keep content below it. */
 :root { padding-top: env(safe-area-inset-top, 0px); }
 body {
@@ -355,6 +357,13 @@ button.stat:hover { border-color: var(--gilt); }
 .stat .v { font: 800 22px/1.05 var(--font-display); font-variant-numeric: lining-nums tabular-nums; }
 .stat .k { font: 600 11px/1.2 var(--font-body); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .stat .math { font: 400 12px/1.35 var(--font-body); color: var(--muted); margin-top: 4px; }
+/* Heroic Inspiration: an empty or filled star slot. */
+.stat.inspiration { cursor: pointer; border: 1px dashed var(--line); }
+.stat.inspiration .v { color: var(--muted); }
+.stat.inspiration.has { border: 1px solid var(--gilt); background: color-mix(in srgb, var(--gilt) 14%, var(--surface-2)); }
+.stat.inspiration.has .v { color: var(--gilt); text-shadow: 0 0 10px color-mix(in srgb, var(--gilt) 55%, transparent); }
+.stat.inspiration.compact { display: inline-flex; align-items: center; gap: 8px; }
+.stat.inspiration.compact .v { font-size: 20px; }
 
 /* ── Skills ── */
 .skills { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 14px; }
@@ -851,3 +860,4 @@ button.stat:hover { border-color: var(--gilt); }
 .status.ready { background: transparent; border: 1px solid var(--line); color: var(--fg); }
 .status.used { background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); text-decoration: line-through; }
 .status.target { background: color-mix(in srgb, var(--gilt) 12%, transparent); border: 1px solid var(--gilt); color: var(--fg); }
+.status.insp { background: color-mix(in srgb, var(--gilt) 22%, transparent); border: 1px solid var(--gilt); color: var(--gilt); font-weight: 700; }

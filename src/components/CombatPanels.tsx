@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { InspirationSlot } from './Inspiration';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ARMOR, DAMAGE_TYPES, STANDARD_ACTIONS, UNARMORED_DEFENSES, WEAPONS, type Ability, type DamageType } from '../systems/dnd5e/data';
@@ -119,7 +120,7 @@ export function VitalsPanel() {
       </div>
 
       <div className="row" style={{ marginTop: 12 }}>
-        <Check label="Heroic Inspiration" id="inspiration" checked={c.heroicInspiration} onChange={(b) => update((d) => void (d.heroicInspiration = b))} />
+        <InspirationSlot compact />
       </div>
       <div className="row" style={{ marginTop: 12 }}>
         <button type="button" className="btn" onClick={() => t.rest('short')}>

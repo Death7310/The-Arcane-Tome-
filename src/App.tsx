@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { PanelSlot, useArranger } from './components/Arrange';
 import { AttacksPanel, TurnPanel, VitalsPanel } from './components/CombatPanels';
 import { CompanionsPanel } from './components/CompanionsPanel';
@@ -24,7 +24,8 @@ import { CharacterContext } from './state/character';
 import { isNative, listenBackButton, readNativeSave, writeNativeSave } from './state/native';
 import { goBack, onBack } from './state/back';
 import { emptyStack, remember, takeBack, type UndoStack } from './state/undo';
-import { keepScreenOn, matchSystemBars, setVibrate } from './state/device';
+import { keepScreenOn, matchSystemBars, setVibrate, tick } from './state/device';
+import { slideIn, usePageSwipe, type Dir } from './state/swipe';
 import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, putBack, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
 import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
@@ -154,6 +155,39 @@ export default function App() {
   const view = page?.custom ? 'page' : 'sheet';
   const arranger = useArranger(layout, setLayout, folioRef, arranging, { pageId, view, exists });
   const emptyPage = !!page && !page.panels.some(exists);
+
+  // Sliding between pages (swipe, trackpad, arrow keys on the tabs), in the tabs' order: every
+  // page then Dice on a phone; the main sheet, the pages you made, then Dice on a wide screen.
+  const narrowNow = () => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 899px)').matches;
+  const sheetId = layout.pages.find((p) => !p.custom)!.id;
+  const swipeOrder = () => (narrowNow() ? [...layout.pages.map((p) => p.id), 'dice'] : [sheetId, ...layout.pages.filter((p) => p.custom).map((p) => p.id), 'dice']);
+  const swipeCurrent = () => (tab === 'dice' ? 'dice' : !narrowNow() && page && !page.custom ? sheetId : (page?.id ?? sheetId));
+  const slideDir = useRef<Dir | null>(null);
+  const slideTo = (id: string, dir: Dir) => {
+    slideDir.current = dir;
+    setTab(id);
+    void tick();
+  };
+  useEffect(() => {
+    if (slideDir.current) slideIn(folioRef.current, slideDir.current);
+    slideDir.current = null;
+  }, [tab]);
+  usePageSwipe({ surface: shakeRef, follow: folioRef, enabled: !arranging && !dialog, order: swipeOrder, current: swipeCurrent, go: slideTo });
+  /** Left and right arrows (and Home, End) move along the tabs, as tabs do everywhere. */
+  const onTabKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    const keys: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity };
+    if (!(e.key in keys)) return;
+    const tabs = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')].filter((b) => b.offsetParent !== null);
+    const i = tabs.indexOf(document.activeElement as HTMLButtonElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const step = keys[e.key];
+    const j = Number.isFinite(step) ? Math.max(0, Math.min(tabs.length - 1, i + step)) : step < 0 ? 0 : tabs.length - 1;
+    if (j === i) return;
+    slideDir.current = j > i ? 1 : -1;
+    tabs[j].focus();
+    tabs[j].click();
+  };
 
   /** A new tile of your own, on the page you're looking at (on a wide screen's main sheet, with the gear). */
   const newTile = () => {
@@ -382,7 +416,7 @@ export default function App() {
                 </button>
               </div>
             </header>
-            <nav className="tabs" role="tablist" aria-label="Sheet sections">
+            <nav className="tabs" role="tablist" aria-label="Sheet sections" onKeyDown={onTabKey}>
               {/* Wide screens: the main sheet, the pages you made, Dice. Phones: every page, then Dice. */}
               <button type="button" role="tab" className="tab-wide" aria-selected={!!page && !page.custom} onClick={() => setTab(layout.pages.find((p) => !p.custom)!.id)}>
                 Character sheet

@@ -26,6 +26,17 @@ export async function buzz(kind: 'crit' | 'fumble'): Promise<void> {
   }
 }
 
+/** A light tick in the apps when a swipe turns the page (none in a browser). */
+export async function tick(): Promise<void> {
+  if (!vibrateOn || !isNative()) return;
+  try {
+    const { Haptics, ImpactStyle } = await import('@capacitor/haptics');
+    await Haptics.impact({ style: ImpactStyle.Light });
+  } catch {
+    /* No haptics on this device. */
+  }
+}
+
 interface KeepAwakePlugin {
   keepOn(): Promise<void>;
   allowSleep(): Promise<void>;

@@ -182,6 +182,7 @@ export function StatusStrip({ onOpen }: { onOpen: () => void }) {
   const items = [
     ...combat,
     ...(target ? [{ key: 'target', text: `→ ${target.name}`, kind: 'target' }] : []),
+    ...(c.heroicInspiration ? [{ key: 'insp', text: '★ Inspiration', kind: 'insp' }] : []),
     ...CONDITIONS.filter((k) => c.conditions.includes(k.id)).map((k) => ({ key: k.id, text: k.name, kind: 'cond' })),
     ...(c.exhaustion ? [{ key: 'exh', text: `Exhaustion ${c.exhaustion}`, kind: 'cond' }] : []),
     ...c.effects.map((e) => ({ key: e.id, text: e.rounds === null ? e.name : `${e.name} (${e.rounds})`, kind: 'effect' })),
