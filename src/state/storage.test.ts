@@ -22,7 +22,7 @@ describe('saves from the Arcane Folio name', () => {
     const old = sampleCharacter();
     const now = { ...sampleCharacter(), name: 'Current' };
     store.set('arcane-folio:v1', JSON.stringify({ characters: [old], currentId: old.id, settings: {} }));
-    save({ characters: [now], currentId: now.id, settings: defaultSettings(), savePoints: [], savedAt: Date.now() });
+    save({ characters: [now], currentId: now.id, settings: defaultSettings(), savePoints: [], gameStates: [], savedAt: Date.now() });
     expect(load()?.characters[0].name).toBe('Current');
   });
 
@@ -75,6 +75,7 @@ describe('saving when storage is full', () => {
     characters: [blankCharacter()],
     currentId: 'x',
     settings: defaultSettings(),
+    gameStates: [],
     savedAt: 0,
     savePoints: [point('a1', 'a', 1), point('a2', 'a', 2), point('a3', 'a', 3), point('b1', 'b', 4), point('b2', 'b', 5)],
   });

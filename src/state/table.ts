@@ -24,6 +24,7 @@ import {
   maxHp,
   mod as abilityModOf,
   planSpell,
+  pointSlot,
   rollMode,
   resolveTokens,
   savingThrow,
@@ -33,6 +34,7 @@ import {
   spellAttack,
   spellSaveDc,
   usesMax,
+  usesSpellPoints,
   weaponAbility,
   weaponAttack,
   type Breakdown,
@@ -111,7 +113,15 @@ export interface RollTarget {
   enemies: { id: string; name: string; state: 'pending' | 'hit' | 'miss' | 'failed' | 'saved' }[];
 }
 
-export type SlotChoice = { kind: 'slot'; level: number } | { kind: 'pact'; level: number } | { kind: 'free'; level: number };
+export type SlotChoice = { kind: 'slot'; level: number } | { kind: 'pact'; level: number } | { kind: 'points'; level: number; cost: number } | { kind: 'free'; level: number };
+
+/** How a way of casting reads on a button: "2nd-level slot", "Pact slot (1st)", "3rd level · 5 points". */
+export function choiceLabel(ch: SlotChoice): string {
+  if (ch.kind === 'pact') return `Pact slot (${ordinal(ch.level)})`;
+  if (ch.kind === 'points') return `${ordinal(ch.level)} level · ${ch.cost} points`;
+  if (ch.kind === 'free') return 'Without a slot';
+  return `${ordinal(ch.level)}-level slot`;
+}
 
 type Update = (fn: (c: Character) => void) => void;
 
@@ -817,7 +827,10 @@ export function useTableState(char: Character, update: Update) {
     if (spell.level === 0) return [{ kind: 'free', level: 0 }];
     const out: SlotChoice[] = [];
     for (let lvl = spell.level; lvl <= 9; lvl++) {
-      if (slots[lvl - 1] - (c.spellcasting.slotsUsed[lvl - 1] ?? 0) > 0) out.push({ kind: 'slot', level: lvl });
+      if (usesSpellPoints(c)) {
+        const p = pointSlot(c, lvl);
+        if (p.ok) out.push({ kind: 'points', level: lvl, cost: p.cost });
+      } else if (slots[lvl - 1] - (c.spellcasting.slotsUsed[lvl - 1] ?? 0) > 0) out.push({ kind: 'slot', level: lvl });
     }
     if (pact.count - c.spellcasting.pactUsed > 0 && pact.level >= spell.level) out.push({ kind: 'pact', level: pact.level });
     return out;
@@ -851,7 +864,12 @@ export function useTableState(char: Character, update: Update) {
       let healing: number | undefined;
       const mode: Mode = spell.resolution === 'attack' ? modeFor({ type: 'attack' }, vs) : { adv: 'normal', note: '', extra: '', autoFail: null };
       const warn = spell.castingTime === 'other' ? '' : actingWarning();
-      const levelText = spell.level === 0 ? 'Cantrip' : `${ordinal(slotLevel)}-level ${choice.kind === 'pact' ? 'pact slot' : choice.kind === 'free' ? '(no slot)' : 'slot'}`;
+      const levelText =
+        spell.level === 0
+          ? 'Cantrip'
+          : choice.kind === 'points'
+            ? `${ordinal(slotLevel)} level · ${choice.cost} spell points`
+            : `${ordinal(slotLevel)}-level ${choice.kind === 'pact' ? 'pact slot' : choice.kind === 'free' ? '(no slot)' : 'slot'}`;
       const ability = spellAbility(c, spell);
       const raw = spell.damage.filter((p) => p.dice.trim());
       const damage = plan.damage.map((d, i) => ({ ...d, known: tokenParts(raw[i]?.dice ?? '', c, spell) }));
@@ -859,6 +877,10 @@ export function useTableState(char: Character, update: Update) {
       update((d) => {
         if (choice.kind === 'slot') d.spellcasting.slotsUsed[choice.level - 1] = (d.spellcasting.slotsUsed[choice.level - 1] ?? 0) + 1;
         if (choice.kind === 'pact') d.spellcasting.pactUsed += 1;
+        if (choice.kind === 'points') {
+          d.spellcasting.pointsUsed += choice.cost;
+          if (choice.level >= 6 && !d.spellcasting.highUsed.includes(choice.level)) d.spellcasting.highUsed.push(choice.level);
+        }
         if (spell.concentration) {
           // A new concentration spell (even the same one again) ends the old casting, and the marks it put on enemies.
           endConcentration(d);
@@ -1178,6 +1200,8 @@ export function useTableState(char: Character, update: Update) {
           d.hp.current = maxHp(c).total;
           d.hp.temp = 0;
           d.spellcasting.slotsUsed = d.spellcasting.slotsUsed.map(() => 0);
+          d.spellcasting.pointsUsed = 0;
+          d.spellcasting.highUsed = [];
           endConcentration(d);
           d.classes.forEach((k) => (k.hitDiceUsed = 0));
           d.deathSaves = { successes: 0, failures: 0 };

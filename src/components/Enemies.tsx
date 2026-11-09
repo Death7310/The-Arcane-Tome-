@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
-import { ordinal, useTable, type SlotChoice } from '../state/table';
+import { choiceLabel, ordinal, useTable, type SlotChoice } from '../state/table';
 import { CONDITIONS, DAMAGE_TYPES, type ConditionId } from '../systems/dnd5e/data';
 import { actionDice, actionType } from '../systems/dnd5e/companion';
 import {
@@ -379,7 +379,7 @@ function SpellPicker({ spells, c, onDone }: { spells: Spell[]; c: Character; onD
           <span className="hint">{pick.name} with:</span>
           {t.slotChoices(pick, slots, pact).map((ch) => (
             <button key={`${ch.kind}-${ch.level}`} type="button" className="btn small" onClick={(e) => go(pick, ch, e.currentTarget)}>
-              {ch.kind === 'pact' ? `Pact slot (${ordinal(ch.level)})` : `${ordinal(ch.level)}-level slot`}
+              {choiceLabel(ch)}
             </button>
           ))}
           {freeCastSources(c, pick).map((f) => (

@@ -1,9 +1,10 @@
-// The Background field: type or pick a background, see what it gives, and write it into
-// Features & traits.
+// Backgrounds: the Background field (type or pick one, see what it gives, write it into
+// Features & traits) and the Background library on the Library page.
 
 import { useId, useState } from 'react';
 import { useChar } from '../state/character';
-import { BACKGROUNDS, applyBackground, describeBackground, findBackground, isBackgroundFeature } from '../systems/dnd5e/backgrounds';
+import { BACKGROUNDS, BACKGROUND_SOURCES, applyBackground, describeBackground, findBackground, isBackgroundFeature, type BackgroundDef } from '../systems/dnd5e/backgrounds';
+import { Panel } from './ui';
 
 export function BackgroundField({ id }: { id?: string }) {
   const { char: c, update } = useChar();
@@ -73,5 +74,81 @@ export function BackgroundField({ id }: { id?: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Every background, to read and take: setting it as yours writes it into Features & traits. */
+export function BackgroundLibraryPanel() {
+  const { char: c, update } = useChar();
+  const base = useId();
+  const [q, setQ] = useState('');
+  const [source, setSource] = useState('');
+  const [open, setOpen] = useState<string | null>(null);
+  const [message, setMessage] = useState('');
+  const mine = findBackground(c.background)?.name ?? '';
+  const words = q.trim().toLowerCase();
+  const list = BACKGROUNDS.filter((b) => (!source || b.source === source) && (!words || `${b.name} ${b.about} ${b.skills} ${b.feat ?? ''} ${b.feature?.name ?? ''}`.toLowerCase().includes(words)));
+  const take = (b: BackgroundDef) => {
+    update((d) => {
+      d.background = b.name;
+      applyBackground(d, b);
+    });
+    setMessage(`${b.name} is now ${c.name || 'your character'}’s background, and it’s in Features & traits.${b.feat ? ` Its Origin feat, ${b.feat}, is in the Feat library.` : ''}`);
+  };
+  return (
+    <Panel title="Background library" tab="library">
+      {message && (
+        <p className="note good" role="status" style={{ marginTop: 0 }}>
+          {message}
+        </p>
+      )}
+      <div className="grid-2">
+        <label className="field" htmlFor={`${base}-q`}>
+          <span>Search</span>
+          <input id={`${base}-q`} className="input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name, skill or feature" />
+        </label>
+        <label className="field" htmlFor={`${base}-src`}>
+          <span>From</span>
+          <select id={`${base}-src`} value={source} onChange={(e) => setSource(e.target.value)}>
+            <option value="">Every book</option>
+            {BACKGROUND_SOURCES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="hint" style={{ margin: 0 }}>
+        {list.length} background{list.length === 1 ? '' : 's'}. Taking one sets it as your background and adds it to Features &amp; traits; it doesn’t change your skills or scores, so set those as your DM allows.
+      </p>
+      <div className="list">
+        {list.map((b) => (
+          <div className="item" key={b.name}>
+            <div className="item-head">
+              <button type="button" className="item-title" onClick={() => setOpen(open === b.name ? null : b.name)} aria-expanded={open === b.name}>
+                <b>
+                  {b.name}
+                  {mine === b.name ? ' ✓' : ''}
+                </b>
+                <small>{[b.feat ? `Feat: ${b.feat}` : b.feature?.name, b.skills, b.source].filter(Boolean).join(' · ')}</small>
+              </button>
+              <button type="button" className="cast" disabled={mine === b.name} onClick={() => take(b)} aria-label={mine === b.name ? `${b.name} is your background` : `Take ${b.name} as your background`}>
+                {mine === b.name ? 'Yours' : 'Take'}
+              </button>
+            </div>
+            {open === b.name && (
+              <div className="item-body">
+                <p style={{ whiteSpace: 'pre-line' }}>{describeBackground(b)}</p>
+                <p className="hint" style={{ margin: 0 }}>
+                  Source: {b.source}
+                  {b.source === 'SRD 5.2.1' ? '' : '. Described in this app’s own words; check the book for the full rules.'}
+                </p>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Panel>
   );
 }

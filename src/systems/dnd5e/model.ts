@@ -308,6 +308,12 @@ export interface Character {
     slotsUsed: number[]; // index 0 = 1st level
     pactUsed: number;
     concentratingOn: string | null;
+    /** Spell slots (the usual rules) or spell points (the Dungeon Master's Guide variant). */
+    system: 'slots' | 'points';
+    /** Spell points spent since the last Long Rest. */
+    pointsUsed: number;
+    /** Slot levels of 6th and up made with spell points since the last Long Rest (one of each). */
+    highUsed: number[];
   };
   spells: Spell[];
   weapons: Weapon[];
@@ -560,7 +566,7 @@ export function blankCharacter(): Character {
     deathSaves: { successes: 0, failures: 0 },
     exhaustion: 0,
     heroicInspiration: false,
-    spellcasting: { ability: null, slotsOverride: null, slotsUsed: [0, 0, 0, 0, 0, 0, 0, 0, 0], pactUsed: 0, concentratingOn: null },
+    spellcasting: { ability: null, slotsOverride: null, slotsUsed: [0, 0, 0, 0, 0, 0, 0, 0, 0], pactUsed: 0, concentratingOn: null, system: 'slots', pointsUsed: 0, highUsed: [] },
     spells: [],
     weapons: [],
     features: [],
@@ -665,6 +671,10 @@ export function normalizeCharacter(raw: unknown): Character {
     inventory: Array.isArray(c.inventory) ? c.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
   };
   while (merged.spellcasting.slotsUsed.length < 9) merged.spellcasting.slotsUsed.push(0);
+  const sc = merged.spellcasting;
+  sc.system = sc.system === 'points' ? 'points' : 'slots';
+  sc.pointsUsed = Number.isFinite(sc.pointsUsed) ? Math.max(0, sc.pointsUsed) : 0;
+  sc.highUsed = Array.isArray(sc.highUsed) ? sc.highUsed.filter((n) => Number.isInteger(n) && n >= 6 && n <= 9) : [];
   return merged;
 }
 

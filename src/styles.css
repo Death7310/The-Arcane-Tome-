@@ -860,4 +860,9 @@ button.stat:hover { border-color: var(--gilt); }
 .status.ready { background: transparent; border: 1px solid var(--line); color: var(--fg); }
 .status.used { background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); text-decoration: line-through; }
 .status.target { background: color-mix(in srgb, var(--gilt) 12%, transparent); border: 1px solid var(--gilt); color: var(--fg); }
+/* Spell points: a gilt bar of what's left. */
+.points { display: grid; gap: 6px; margin-bottom: 6px; }
+.points-bar { height: 10px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
+.points-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--gilt), color-mix(in srgb, var(--gilt) 60%, var(--verdigris))); transition: width 0.25s ease; }
+.points-left { font: 800 20px/1 var(--font-display); color: var(--gilt); }
 .status.insp { background: color-mix(in srgb, var(--gilt) 22%, transparent); border: 1px solid var(--gilt); color: var(--gilt); font-weight: 700; }

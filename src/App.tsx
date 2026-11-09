@@ -14,6 +14,7 @@ import { AdvChip, ResultCard } from './components/Results';
 import { SpellsPanel } from './components/SpellsPanel';
 import { SpellCompendiumPanel } from './components/SpellBrowser';
 import { FeatLibraryPanel } from './components/Feats';
+import { BackgroundLibraryPanel } from './components/Backgrounds';
 import { DownWatch, EnemiesPanel } from './components/Enemies';
 import { InitiativePanel } from './components/Initiative';
 import { CountersPanel } from './components/Counters';
@@ -26,10 +27,11 @@ import { goBack, onBack } from './state/back';
 import { emptyStack, remember, takeBack, type UndoStack } from './state/undo';
 import { keepScreenOn, matchSystemBars, setVibrate, tick } from './state/device';
 import { slideIn, usePageSwipe, type Dir } from './state/swipe';
-import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, putBack, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
+import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, ownTab, putBack, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
 import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
-import { addSavePoint, defaultSettings, load, mergeCharacters, parseSaved, saveMakingRoom, type Saved, type Settings } from './state/storage';
+import { addGameState, addSavePoint, defaultSettings, load, mergeCharacters, parseSaved, saveMakingRoom, type Saved, type Settings } from './state/storage';
+import { applyPlay, makeGameState } from './systems/dnd5e/gamestate';
 import { TableContext, useTableState } from './state/table';
 import { blankCharacter, blankTile, type Character } from './systems/dnd5e/model';
 import { classSummary, maxHp } from './systems/dnd5e/rules';
@@ -56,6 +58,7 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   enemies: EnemiesPanel,
   initiative: InitiativePanel,
   counters: CountersPanel,
+  backgrounds: BackgroundLibraryPanel,
 };
 
 /** Panel names for the message shown if one runs into an error. */
@@ -79,13 +82,14 @@ const PANEL_NAMES: Record<PanelId, string> = {
   enemies: 'Enemies',
   initiative: 'Initiative',
   counters: 'Counters',
+  backgrounds: 'Background library',
 };
 
 function initialState(): Saved {
   const saved = load();
   if (saved) return saved;
   const c = sampleCharacter();
-  return { characters: [c], currentId: c.id, settings: defaultSettings(), savePoints: [], savedAt: 0 };
+  return { characters: [c], currentId: c.id, settings: defaultSettings(), savePoints: [], gameStates: [], savedAt: 0 };
 }
 
 const hostTheme = typeof document !== 'undefined' ? document.documentElement.getAttribute('data-theme') : null;
@@ -152,16 +156,17 @@ export default function App() {
   const exists = useCallback((k: string) => !isTileKey(k) || char.tiles.some((t) => tileKey(t.id) === k), [char.tiles]);
   const page = tab === 'dice' ? null : (layout.pages.find((p) => p.id === tab) ?? layout.pages[0]);
   const pageId = page?.id ?? null;
-  const view = page?.custom ? 'page' : 'sheet';
+  // The Library and pages you made show on their own on a wide screen; the rest share the main sheet.
+  const view = page && ownTab(page) ? 'page' : 'sheet';
   const arranger = useArranger(layout, setLayout, folioRef, arranging, { pageId, view, exists });
   const emptyPage = !!page && !page.panels.some(exists);
 
   // Sliding between pages (swipe, trackpad, arrow keys on the tabs), in the tabs' order: every
   // page then Dice on a phone; the main sheet, the pages you made, then Dice on a wide screen.
   const narrowNow = () => typeof matchMedia !== 'undefined' && matchMedia('(max-width: 899px)').matches;
-  const sheetId = layout.pages.find((p) => !p.custom)!.id;
-  const swipeOrder = () => (narrowNow() ? [...layout.pages.map((p) => p.id), 'dice'] : [sheetId, ...layout.pages.filter((p) => p.custom).map((p) => p.id), 'dice']);
-  const swipeCurrent = () => (tab === 'dice' ? 'dice' : !narrowNow() && page && !page.custom ? sheetId : (page?.id ?? sheetId));
+  const sheetId = layout.pages.find((p) => !ownTab(p))!.id;
+  const swipeOrder = () => (narrowNow() ? [...layout.pages.map((p) => p.id), 'dice'] : [sheetId, ...layout.pages.filter(ownTab).map((p) => p.id), 'dice']);
+  const swipeCurrent = () => (tab === 'dice' ? 'dice' : !narrowNow() && page && !ownTab(page) ? sheetId : (page?.id ?? sheetId));
   const slideDir = useRef<Dir | null>(null);
   const slideTo = (id: string, dir: Dir) => {
     slideDir.current = dir;
@@ -194,7 +199,7 @@ export default function App() {
     const tile = blankTile({ entries: [] });
     update((d) => void d.tiles.push(tile));
     const narrowScreen = typeof matchMedia !== 'undefined' && matchMedia('(max-width: 899px)').matches;
-    setLayout(addPanel(layout, tileKey(tile.id), page && (page.custom || narrowScreen) ? page.id : 'gear'));
+    setLayout(addPanel(layout, tileKey(tile.id), page && (ownTab(page) || narrowScreen) ? page.id : 'gear'));
   };
   const deleteTile = (id: string) => {
     update((d) => void (d.tiles = d.tiles.filter((t) => t.id !== id)));
@@ -418,11 +423,11 @@ export default function App() {
             </header>
             <nav className="tabs" role="tablist" aria-label="Sheet sections" onKeyDown={onTabKey}>
               {/* Wide screens: the main sheet, the pages you made, Dice. Phones: every page, then Dice. */}
-              <button type="button" role="tab" className="tab-wide" aria-selected={!!page && !page.custom} onClick={() => setTab(layout.pages.find((p) => !p.custom)!.id)}>
+              <button type="button" role="tab" className="tab-wide" aria-selected={!!page && !ownTab(page)} onClick={() => setTab(sheetId)}>
                 Character sheet
               </button>
               {layout.pages.map((p) => (
-                <button key={p.id} type="button" role="tab" className={p.custom ? undefined : 'tab-narrow'} aria-selected={pageId === p.id} onClick={() => setTab(p.id)}>
+                <button key={p.id} type="button" role="tab" className={ownTab(p) ? undefined : 'tab-narrow'} aria-selected={pageId === p.id} onClick={() => setTab(p.id)}>
                   {p.name}
                 </button>
               ))}
@@ -616,6 +621,20 @@ export default function App() {
               })
             }
             onDeleteSavePoint={(id) => setState((s) => ({ ...s, savePoints: s.savePoints.filter((p) => p.id !== id) }))}
+            gameStates={state.gameStates}
+            onSaveGameState={(name) => setState((s) => ({ ...s, gameStates: addGameState(s.gameStates, makeGameState(char, name)) }))}
+            onLoadGameState={(id) => {
+              const g = state.gameStates.find((x) => x.id === id);
+              if (!g) return [];
+              // Keep a way back: where you are now is saved as a game state first.
+              const before = makeGameState(char, `Before loading “${g.name}”`);
+              const missed = applyPlay(structuredClone(char), g.state);
+              setState((s) => ({ ...s, gameStates: addGameState(s.gameStates, before) }));
+              update((d) => void applyPlay(d, g.state));
+              return missed;
+            }}
+            onDeleteGameState={(id) => setState((s) => ({ ...s, gameStates: s.gameStates.filter((g) => g.id !== id) }))}
+            onImportGameState={(g) => setState((s) => ({ ...s, gameStates: addGameState(s.gameStates, g) }))}
             onClose={() => setDialog(null)}
           />
         )}
@@ -623,7 +642,9 @@ export default function App() {
           <SettingsDialog
             settings={state.settings}
             characters={state.characters}
+            gameStates={state.gameStates}
             onRestore={restore}
+            onRestoreGameStates={(list) => setState((s) => ({ ...s, gameStates: list.reduceRight((acc, g) => addGameState(acc, g), s.gameStates) }))}
             onChange={(settings: Settings) => setState((s) => ({ ...s, settings }))}
             onArrange={() => {
               setDialog(null);

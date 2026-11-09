@@ -60,10 +60,10 @@ describe('moving panels', () => {
 
   it('steps up and down through the columns, skipping panels that aren’t on screen', () => {
     // With only the Stats page's panels on screen, Skills steps up past the combat panels,
-    // to just above the Feat library (the last Stats panel in the first column).
+    // to just above At a glance (the last Stats panel in the first column).
     const stats = defaultLayout().pages.find((p) => p.id === 'stats')!.panels;
     const up = stepPanel(defaultLayout(), 'skills', -1, (k) => stats.includes(k));
-    expect(up.columns[0]).toEqual(['identity', 'abilities', 'glance', 'languages', 'skills', 'feats', 'counters']);
+    expect(up.columns[0]).toEqual(['identity', 'abilities', 'skills', 'glance', 'languages', 'feats', 'counters']);
     expect(up.columns[1]).not.toContain('skills');
     const down = stepPanel(defaultLayout(), 'identity', 1);
     expect(down.columns[0]).toEqual(['abilities', 'identity', 'glance', 'languages', 'feats', 'counters']);
@@ -102,10 +102,31 @@ describe('pages', () => {
 
   it('starts with the built-in pages, Features on Stats and Languages on its own page', () => {
     const l = defaultLayout();
-    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages']);
+    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages', 'Library']);
     expect(pagesOf(l, 'features')).toEqual(['stats']);
     expect(pagesOf(l, 'glance')).toEqual(['stats', 'combat']);
     expect(page(l, 'languages').panels).toEqual(['languages']);
+  });
+
+  it('keeps the spell, feat and background lists on the Library, off the main sheet', () => {
+    const l = defaultLayout();
+    expect(page(l, 'library').panels).toEqual(['compendium', 'feats', 'backgrounds']);
+    expect(page(l, 'magic').panels).toEqual(['spells']);
+    for (const id of ['compendium', 'feats', 'backgrounds'] as const) expect(onSheet(l, id)).toBe(false);
+    expect(onSheet(l, 'spells')).toBe(true);
+  });
+
+  it('moves the compendium and feat library to the Library in a layout saved before it existed', () => {
+    const saved = defaultLayout();
+    saved.pages = saved.pages.filter((p) => p.id !== 'library');
+    saved.pages.find((p) => p.id === 'magic')!.panels = ['spells', 'compendium'];
+    saved.pages.find((p) => p.id === 'stats')!.panels.push('feats');
+    const l = normalizeLayout(JSON.parse(JSON.stringify(saved)));
+    expect(l.pages.map((p) => p.id).at(-1)).toBe('library');
+    expect(pagesOf(l, 'compendium')).toEqual(['library']);
+    expect(pagesOf(l, 'feats')).toEqual(['library']);
+    expect(pagesOf(l, 'backgrounds')).toEqual(['library']);
+    expect(page(l, 'magic').panels).toEqual(['spells']);
   });
 
   it('moves a tile to another page, or puts it on several, keeping at least one', () => {
@@ -119,7 +140,7 @@ describe('pages', () => {
 
   it('orders each page on its own, skipping tiles that aren’t on screen', () => {
     let l = stepInPage(defaultLayout(), 'stats', 'glance', -1);
-    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills', 'glance', 'features', 'feats']);
+    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills', 'glance', 'features']);
     expect(page(l, 'combat').panels[0]).toBe('glance');
     l = placeInPage(l, 'stats', 'features', 'identity');
     expect(page(l, 'stats').panels[0]).toBe('features');
@@ -139,12 +160,13 @@ describe('pages', () => {
     expect(onSheet(l, 'spells')).toBe(false);
     expect(l.columns[2]).toContain('tile:t1');
     l = renamePage(movePage(l, id, -1), id, 'Madness');
-    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Madness', 'Languages']);
+    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages', 'Madness', 'Library']);
     l = deletePage(l, id);
     expect(l.pages.some((p) => p.id === id)).toBe(false);
     expect(pagesOf(l, 'spells')).toEqual(['magic']);
     expect(pagesOf(l, 'notes')).toEqual(['gear']);
-    expect(pagesOf(l, tileKey('t1'))).toEqual(['gear']);
+    // Its own tile goes to the page before it.
+    expect(pagesOf(l, tileKey('t1'))).toEqual(['languages']);
     expect(deletePage(l, 'stats')).toBe(l);
   });
 
@@ -162,7 +184,7 @@ describe('pages', () => {
     saved.pages = saved.pages.filter((p) => p.id !== 'enemies' && p.id !== 'counters');
     saved.pages.splice(2, 0, { id: 'p9', name: 'Homebrew', panels: [], custom: true });
     const l = normalizeLayout(JSON.parse(JSON.stringify(saved)));
-    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Homebrew', 'Magic', 'Gear', 'Languages']);
+    expect(l.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Homebrew', 'Magic', 'Gear', 'Languages', 'Library']);
     expect(pagesOf(l, 'enemies')).toEqual(['enemies']);
   });
 
@@ -183,13 +205,15 @@ describe('pages', () => {
       ['magic', 'Magic', false],
       ['gear', 'Gear', false],
       ['languages', 'Languages', false],
+      ['library', 'Library', false],
       ['p1', 'Homebrew', true],
     ]);
-    // The Feat library (added in a later version) comes back on its usual page.
-    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills', 'feats']);
+    // The Feat library (added in a later version) comes back on its usual page, the Library.
+    expect(page(l, 'stats').panels).toEqual(['identity', 'abilities', 'skills']);
+    expect(pagesOf(l, 'feats')).toEqual(['library']);
     expect(pagesOf(l, 'features')).toEqual(['p1']);
     const reset = resetLayout(l);
-    expect(reset.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages', 'Homebrew']);
+    expect(reset.pages.map((p) => p.name)).toEqual(['Stats', 'Combat', 'Enemies', 'Counters', 'Magic', 'Gear', 'Languages', 'Library', 'Homebrew']);
     expect(pagesOf(reset, 'features')).toEqual(['stats', 'p1']);
   });
 });
@@ -199,7 +223,7 @@ describe('removing tiles and adding them back', () => {
     const l = takeOff(defaultLayout(), 'glance');
     expect(pagesOf(l, 'glance')).toEqual([]);
     expect(onSheet(l, 'glance')).toBe(false);
-    expect(l.removed).toEqual([{ id: 'glance', pages: ['stats', 'combat'], before: { stats: 'feats', combat: 'initiative' } }]);
+    expect(l.removed).toEqual([{ id: 'glance', pages: ['stats', 'combat'], before: { stats: null, combat: 'initiative' } }]);
     // It keeps its column place, so it comes back where it was on a wide screen.
     expect(l.columns[0]).toContain('glance');
     expect(isDefault(l)).toBe(false);

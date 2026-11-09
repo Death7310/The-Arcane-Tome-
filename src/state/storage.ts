@@ -1,4 +1,5 @@
 import type { Layout } from './layout';
+import { readGameState, type GameState } from '../systems/dnd5e/gamestate';
 import type { DiceSpeed } from '../fx';
 import type { FxLevel } from '../fx/types';
 import { normalizeCharacter, uid, type Character } from '../systems/dnd5e/model';
@@ -35,11 +36,17 @@ export interface Saved {
   currentId: string;
   settings: Settings;
   savePoints: SavePoint[];
+  /** Game states: where a session stands (see systems/dnd5e/gamestate.ts), newest first. */
+  gameStates: GameState[];
   /** When this state was last written, used to pick the newer of two copies (browser vs. phone storage). */
   savedAt: number;
 }
 
 export const SAVE_POINTS_PER_CHARACTER = 25;
+export const GAME_STATES_KEPT = 60;
+
+/** Adds a game state (or replaces one with the same id), newest first, keeping GAME_STATES_KEPT. */
+export const addGameState = (list: GameState[], g: GameState): GameState[] => [g, ...list.filter((x) => x.id !== g.id)].slice(0, GAME_STATES_KEPT);
 
 const KEY = 'arcane-tome:v1';
 /** Saves from before the app was renamed; read if nothing is stored under the current key yet. */
@@ -96,6 +103,13 @@ export function parseSaved(raw: string): Saved | null {
       savePoints: (Array.isArray(data.savePoints) ? data.savePoints : []).flatMap((p) => {
         try {
           return [{ id: String(p.id), characterId: String(p.characterId), name: String(p.name ?? 'Save'), createdAt: Number(p.createdAt) || 0, data: normalizeCharacter(p.data) }];
+        } catch {
+          return [];
+        }
+      }),
+      gameStates: (Array.isArray(data.gameStates) ? data.gameStates : []).flatMap((g) => {
+        try {
+          return [readGameState(g)];
         } catch {
           return [];
         }

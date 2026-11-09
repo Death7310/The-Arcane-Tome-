@@ -3,10 +3,11 @@
 // and a laptop can be arranged differently). Everything here is pure; the dragging lives
 // in the UI.
 //
-// Pages are the phone's tabs: the built-in ones (Stats, Combat, Magic, Gear, Languages)
-// and any you make. A panel can be on several pages, in its own place on each. On a wide
-// screen the built-in pages share one sheet laid out in columns, and the pages you made
-// get tabs of their own.
+// Pages are the phone's tabs: the built-in ones (Stats, Combat, Magic, Gear, Languages,
+// Library) and any you make. A panel can be on several pages, in its own place on each. On a
+// wide screen the built-in pages share one sheet laid out in columns; the Library and the
+// pages you made get tabs of their own (so the spell, feat and background lists aren't on
+// the sheet unless you go to them).
 
 /** Every built-in panel, with the pages it starts on. */
 export const PANELS = {
@@ -23,9 +24,10 @@ export const PANELS = {
   companions: ['combat'],
   skills: ['stats'],
   features: ['stats'],
-  feats: ['stats'],
+  feats: ['library'],
   spells: ['magic'],
-  compendium: ['magic'],
+  compendium: ['library'],
+  backgrounds: ['library'],
   inventory: ['gear'],
   notes: ['gear'],
   languages: ['languages'],
@@ -78,23 +80,31 @@ export const BUILT_IN_PAGES = [
   { id: 'magic', name: 'Magic' },
   { id: 'gear', name: 'Gear' },
   { id: 'languages', name: 'Languages' },
+  { id: 'library', name: 'Library' },
 ] as const;
+
+/** Built-in pages with a tab of their own on wide screens, rather than a place on the main sheet. */
+const OWN_TAB_PAGES: readonly string[] = ['library'];
+
+/** Whether a page has its own tab on a wide screen (one you made, or the Library). */
+export const ownTab = (p: Pick<Page, 'id' | 'custom'>): boolean => p.custom || OWN_TAB_PAGES.includes(p.id);
 
 const DEFAULT_COLUMNS: PanelKey[][] = [
   ['identity', 'abilities', 'glance', 'languages', 'feats', 'counters'],
   ['initiative', 'enemies', 'vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
-  ['spells', 'compendium', 'features', 'inventory', 'notes'],
+  ['spells', 'compendium', 'features', 'inventory', 'notes', 'backgrounds'],
 ];
 
 /** The built-in pages' panels, in phone order. */
 const DEFAULT_PAGE_PANELS: Record<string, PanelKey[]> = {
-  stats: ['identity', 'abilities', 'skills', 'features', 'glance', 'feats'],
+  stats: ['identity', 'abilities', 'skills', 'features', 'glance'],
   combat: ['glance', 'initiative', 'vitals', 'conditions', 'turn', 'attacks', 'companions'],
   enemies: ['enemies'],
   counters: ['counters'],
-  magic: ['spells', 'compendium'],
+  magic: ['spells'],
   gear: ['inventory', 'notes'],
   languages: ['languages'],
+  library: ['compendium', 'feats', 'backgrounds'],
 };
 
 const defaultPages = (): Page[] => BUILT_IN_PAGES.map((p) => ({ id: p.id, name: p.name, panels: [...DEFAULT_PAGE_PANELS[p.id]], custom: false }));
@@ -150,6 +160,8 @@ export function normalizeLayout(raw: unknown): Layout {
     }
     // A built-in page that's missing (from an older version) comes back with its usual panels.
     // It goes back in its usual place among the built-in pages (Enemies right after Combat).
+    // Layouts from before the Library: the spell compendium and the feat library move there.
+    if (!pages.some((p) => p.id === 'library')) for (const p of pages) p.panels = p.panels.filter((x) => x !== 'compendium' && x !== 'feats');
     defaultPages().forEach((b, k) => {
       if (pages.some((p) => p.id === b.id)) return;
       const before = BUILT_IN_PAGES.slice(0, k).map((x) => x.id);
@@ -181,8 +193,8 @@ export function normalizeLayout(raw: unknown): Layout {
 /** The pages a panel is on. */
 export const pagesOf = (l: Layout, id: PanelKey): string[] => l.pages.filter((p) => p.panels.includes(id)).map((p) => p.id);
 
-/** Whether a panel is on the wide screen's main sheet (any built-in page). */
-export const onSheet = (l: Layout, id: PanelKey): boolean => l.pages.some((p) => !p.custom && p.panels.includes(id));
+/** Whether a panel is on the wide screen's main sheet (a built-in page without its own tab). */
+export const onSheet = (l: Layout, id: PanelKey): boolean => l.pages.some((p) => !ownTab(p) && p.panels.includes(id));
 
 /** Puts a panel on exactly these pages (at the end of any it's new to). At least one page is kept. */
 export function setPanelPages(l: Layout, id: PanelKey, pageIds: string[]): Layout {

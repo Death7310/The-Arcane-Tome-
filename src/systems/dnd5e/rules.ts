@@ -252,28 +252,63 @@ export function spellSaveDc(c: Character, spell?: Pick<Spell, 'abilityOverride' 
 }
 
 /**
- * Spell slots by level (index 0 = 1st). A single caster class uses its own table;
+ * Your level as a spellcaster (Pact Magic aside). A single caster class uses its own table;
  * several use the multiclass rule: full levels + half (round up) + third (round down).
  */
-export function spellSlots(c: Character): number[] {
-  if (c.spellcasting.slotsOverride) return padSlots(c.spellcasting.slotsOverride);
+export function casterLevel(c: Character): number {
   const casters = c.classes.filter((k) => {
     const t = casterType(k);
     return t === 'full' || t === 'half' || t === 'third';
   });
-  if (casters.length === 0) return padSlots([]);
-  let casterLevel: number;
+  if (casters.length === 0) return 0;
   if (casters.length === 1) {
     const k = casters[0];
     const t = casterType(k);
-    casterLevel = t === 'full' ? k.level : t === 'half' ? Math.ceil(k.level / 2) : k.level < 3 ? 0 : Math.ceil(k.level / 3);
-  } else {
-    casterLevel = casters.reduce((acc, k) => {
-      const t = casterType(k);
-      return acc + (t === 'full' ? k.level : t === 'half' ? Math.ceil(k.level / 2) : Math.floor(k.level / 3));
-    }, 0);
+    return t === 'full' ? k.level : t === 'half' ? Math.ceil(k.level / 2) : k.level < 3 ? 0 : Math.ceil(k.level / 3);
   }
-  return padSlots(FULL_CASTER_SLOTS[Math.min(20, casterLevel)] ?? []);
+  return casters.reduce((acc, k) => {
+    const t = casterType(k);
+    return acc + (t === 'full' ? k.level : t === 'half' ? Math.ceil(k.level / 2) : Math.floor(k.level / 3));
+  }, 0);
+}
+
+/** Spell slots by level (index 0 = 1st), from your spellcaster level (or as you set them by hand). */
+export function spellSlots(c: Character): number[] {
+  if (c.spellcasting.slotsOverride) return padSlots(c.spellcasting.slotsOverride);
+  return padSlots(FULL_CASTER_SLOTS[Math.min(20, casterLevel(c))] ?? []);
+}
+
+// ── Spell points (Dungeon Master's Guide variant) ──────────────────────────
+// Instead of slots, a pool of points: spend a spell level's cost to make a slot of that
+// level, up to the highest level your spellcaster level allows, and only one slot each of
+// 6th level and up per Long Rest. All points come back on a Long Rest. Pact Magic keeps its
+// own slots. The pool uses the same spellcaster level as slots (half casters round up, as
+// in the 2024 rules).
+
+/** Points for a slot of each level (index = spell level). */
+export const SPELL_POINT_COST = [0, 2, 3, 5, 6, 7, 9, 10, 11, 13];
+
+/** By spellcaster level (index 0–20): [spell points, highest slot level you can make]. */
+export const SPELL_POINTS_TABLE: readonly (readonly [number, number])[] = [
+  [0, 0], [4, 1], [6, 1], [14, 2], [17, 2], [27, 3], [32, 3], [38, 4], [44, 4], [57, 5], [64, 5],
+  [73, 6], [73, 6], [83, 7], [83, 7], [94, 8], [94, 8], [107, 9], [114, 9], [123, 9], [133, 9],
+];
+
+export const usesSpellPoints = (c: Character): boolean => c.spellcasting.system === 'points';
+
+export function spellPoints(c: Character): { max: number; left: number; maxLevel: number } {
+  const [max, maxLevel] = SPELL_POINTS_TABLE[Math.min(20, casterLevel(c))];
+  return { max, left: Math.max(0, max - c.spellcasting.pointsUsed), maxLevel };
+}
+
+/** Whether spell points can make a slot of this level right now, and if not, why. */
+export function pointSlot(c: Character, level: number): { ok: boolean; cost: number; why: string } {
+  const cost = SPELL_POINT_COST[level] ?? Infinity;
+  const p = spellPoints(c);
+  if (level > p.maxLevel) return { ok: false, cost, why: `Your highest slot is ${p.maxLevel ? `level ${p.maxLevel}` : 'none yet'}` };
+  if (level >= 6 && c.spellcasting.highUsed.includes(level)) return { ok: false, cost, why: `Already made a level ${level} slot since your last Long Rest` };
+  if (cost > p.left) return { ok: false, cost, why: `Needs ${cost} points; ${p.left} left` };
+  return { ok: true, cost, why: '' };
 }
 
 const padSlots = (s: number[]): number[] => Array.from({ length: 9 }, (_, i) => Math.max(0, s[i] ?? 0));

@@ -2,10 +2,10 @@ import { useEffect, useId, useState } from 'react';
 import { isValid } from '../engine/dice';
 import { ELEMENTS, SHAPES, type Element } from '../fx/types';
 import { useChar } from '../state/character';
-import { ordinal, useTable, type SlotChoice } from '../state/table';
+import { choiceLabel, ordinal, useTable, type SlotChoice } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, type Ability, type DamageType } from '../systems/dnd5e/data';
 import { blankSpell, uid, type Character, type Spell } from '../systems/dnd5e/model';
-import { defaultSpellAbility, pactSlots, planSpell, signed, spellAbility, spellAttack, spellSaveDc, spellSlots } from '../systems/dnd5e/rules';
+import { defaultSpellAbility, pactSlots, planSpell, signed, spellAbility, spellAttack, spellPoints, spellSaveDc, spellSlots, SPELL_POINT_COST, usesSpellPoints } from '../systems/dnd5e/rules';
 import { useCatalog } from '../state/catalog';
 import { spellCounts } from '../systems/dnd5e/leveling';
 import { RulesText } from './RulesText';
@@ -86,10 +86,29 @@ export function SpellsPanel() {
 
       {(slots.some((n) => n > 0) || pact.count > 0) && (
         <>
-          <h3>Spell slots</h3>
+          <div className="row" style={{ alignItems: 'center', margin: '14px 0 6px' }}>
+            <h3 style={{ margin: 0, flex: 1 }}>{usesSpellPoints(c) ? 'Spell points' : 'Spell slots'}</h3>
+            {slots.some((n) => n > 0) && (
+              <div className="seg" role="radiogroup" aria-label="Cast your spells with">
+                {(['slots', 'points'] as const).map((sys) => (
+                  <button
+                    key={sys}
+                    type="button"
+                    role="radio"
+                    aria-checked={c.spellcasting.system === sys}
+                    title={sys === 'points' ? "The Dungeon Master's Guide variant: a pool of points instead of slots. Check with your DM." : 'The usual spell slots'}
+                    onClick={() => update((d) => void (d.spellcasting.system = sys))}
+                  >
+                    {sys === 'slots' ? 'Slots' : 'Spell points'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {usesSpellPoints(c) && slots.some((n) => n > 0) && <SpellPointsMeter />}
           <div className="slots">
             {slots.map((n, i) =>
-              n > 0 ? (
+              n > 0 && !usesSpellPoints(c) ? (
                 <span className="slot-row" key={i}>
                   {ordinal(i + 1)}
                   <Pips total={n} spent={Math.min(n, c.spellcasting.slotsUsed[i] ?? 0)} label={`${ordinal(i + 1)}-level slot`} onChange={(v) => update((d) => void (d.spellcasting.slotsUsed[i] = Math.max(0, Math.min(n, v))))} />
@@ -105,7 +124,7 @@ export function SpellsPanel() {
           </div>
         </>
       )}
-      <SlotOverride />
+      {!usesSpellPoints(c) && <SlotOverride />}
       <SpellCounts />
 
       {c.spellcasting.concentratingOn && (
@@ -156,6 +175,37 @@ export function SpellsPanel() {
       ))}
       {libOpen && <SpellLibrary onClose={() => setLibOpen(false)} />}
     </Panel>
+  );
+}
+
+/** The spell point pool: what's left, the highest slot it can make, and what each level costs. */
+function SpellPointsMeter() {
+  const { char: c, update } = useChar();
+  const p = spellPoints(c);
+  const used = c.spellcasting.pointsUsed;
+  const levels = Array.from({ length: Math.max(1, p.maxLevel) }, (_, i) => i + 1);
+  return (
+    <div className="points" role="group" aria-label="Spell points">
+      <div className="points-bar" aria-hidden="true">
+        <span style={{ width: `${p.max ? (100 * p.left) / p.max : 0}%` }} />
+      </div>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <span style={{ flex: 1 }}>
+          <b className="points-left">{p.left}</b> of {p.max} points left · highest slot you can make: {p.maxLevel ? `${ordinal(p.maxLevel)} level` : 'none'}
+        </span>
+        <button type="button" className="btn small ghost" aria-label="Spend a spell point" disabled={p.left === 0} onClick={() => update((d) => void (d.spellcasting.pointsUsed = Math.min(p.max, d.spellcasting.pointsUsed + 1)))}>
+          −
+        </button>
+        <button type="button" className="btn small ghost" aria-label="Get a spell point back" disabled={used === 0} onClick={() => update((d) => void (d.spellcasting.pointsUsed = Math.max(0, d.spellcasting.pointsUsed - 1)))}>
+          +
+        </button>
+      </div>
+      <p className="hint" style={{ margin: '4px 0 0' }}>
+        Cost: {levels.map((l) => `${ordinal(l)} ${SPELL_POINT_COST[l]}`).join(' · ')}
+        {p.maxLevel < 9 ? ' (higher levels as you level up)' : ''}. Cast spends them; a Long Rest brings them all back.
+        {c.spellcasting.highUsed.length > 0 && ` Made since your Long Rest: ${c.spellcasting.highUsed.map((l) => ordinal(l)).join(', ')} level (one each).`}
+      </p>
+    </div>
   );
 }
 
@@ -275,7 +325,7 @@ function SpellRow({ spell: s, slots, pact, removing, tag }: { spell: Spell; slot
         <div className="popover" role="group" aria-label={`Cast ${s.name} with`}>
           {choices.map((ch) => (
             <button key={`${ch.kind}-${ch.level}`} type="button" className="btn small" onClick={(e) => castWith(ch, e.currentTarget)}>
-              {ch.kind === 'pact' ? `Pact slot (${ordinal(ch.level)})` : `${ordinal(ch.level)}-level slot`}
+              {choiceLabel(ch)}
               {ch.kind === 'slot' && ch.level > s.level ? ' ↑' : ''}
             </button>
           ))}

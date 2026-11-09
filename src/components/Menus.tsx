@@ -14,6 +14,8 @@ import { anaurysCharacter } from '../systems/dnd5e/anaurys';
 import { sampleCharacter } from '../systems/dnd5e/sample';
 import { SRD_CREDIT } from '../systems/dnd5e/srd';
 import { ImportCharacter } from './ImportCharacter';
+import { GameStatesPanel } from './GameStates';
+import { GAME_STATE_FORMAT, readGameState, type GameState } from '../systems/dnd5e/gamestate';
 import { Check, ConfirmButton, Dialog, SelectField } from './ui';
 
 export function CharactersDialog(props: {
@@ -27,10 +29,15 @@ export function CharactersDialog(props: {
   onMakeSavePoint: (name: string) => void;
   onLoadSavePoint: (id: string) => void;
   onDeleteSavePoint: (id: string) => void;
+  gameStates: GameState[];
+  onSaveGameState: (name: string) => void;
+  onLoadGameState: (id: string) => string[];
+  onDeleteGameState: (id: string) => void;
+  onImportGameState: (g: GameState) => void;
   onClose: () => void;
-  initialMode?: 'list' | 'saves' | 'import' | 'export';
+  initialMode?: 'list' | 'saves' | 'game' | 'import' | 'export';
 }) {
-  const [mode, setMode] = useState<'list' | 'saves' | 'import' | 'export'>(props.initialMode ?? 'list');
+  const [mode, setMode] = useState<'list' | 'saves' | 'game' | 'import' | 'export'>(props.initialMode ?? 'list');
   const [pointName, setPointName] = useState('');
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
@@ -52,12 +59,23 @@ export function CharactersDialog(props: {
   return (
     <Dialog title="Characters" onClose={props.onClose}>
       <div className="seg" role="group" aria-label="Character tools" style={{ marginBottom: 12 }}>
-        {(['list', 'saves', 'import', 'export'] as const).map((m) => (
+        {(['list', 'saves', 'game', 'import', 'export'] as const).map((m) => (
           <button key={m} type="button" aria-pressed={mode === m} onClick={() => (setMode(m), setNotice(''))}>
-            {m === 'list' ? 'Characters' : m === 'saves' ? 'Save points' : m === 'import' ? 'Import' : 'Export'}
+            {m === 'list' ? 'Characters' : m === 'saves' ? 'Save points' : m === 'game' ? 'Game states' : m === 'import' ? 'Import' : 'Export'}
           </button>
         ))}
       </div>
+
+      {mode === 'game' && (
+        <GameStatesPanel
+          current={current}
+          gameStates={props.gameStates}
+          onSave={props.onSaveGameState}
+          onLoad={props.onLoadGameState}
+          onDelete={props.onDeleteGameState}
+          onImport={props.onImportGameState}
+        />
+      )}
 
       {mode === 'saves' && (
         <>
@@ -223,7 +241,26 @@ function ago(t: number): string {
 
 const backupName = () => `arcane-tome-backup-${new Date().toISOString().slice(0, 10)}.json`;
 /** Characters plus the rules library, so moving to a new device brings your homebrew along. */
-const backupJson = async (characters: Character[]) => JSON.stringify({ ...makeBackup(characters), library: await listPacks().catch(() => []) }, null, 2);
+/** Everything to move to another device: characters, game states and the rules library. */
+const backupJson = async (characters: Character[], gameStates: GameState[]) => JSON.stringify({ ...makeBackup(characters), gameStates, library: await listPacks().catch(() => []) }, null, 2);
+
+/** The game states in a backup file, or the one game state a game state file holds. */
+function gameStatesIn(text: string): GameState[] {
+  try {
+    const data = JSON.parse(text) as { format?: unknown; gameStates?: unknown };
+    if (data?.format === GAME_STATE_FORMAT) return [readGameState(data)];
+    if (!Array.isArray(data?.gameStates)) return [];
+    return data.gameStates.flatMap((g) => {
+      try {
+        return [readGameState(g)];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
 
 /** Offered in the browser when the site has an app build to download: the IPA on an iPad or iPhone, the Mac app on a Mac, the APK elsewhere. */
 function AppDownloadLink() {
@@ -279,7 +316,14 @@ function AppDownloadLink() {
   );
 }
 
-function OfflineSection(props: { characters: Character[]; settings: Settings; onChange: (s: Settings) => void; onRestore: (c: Character[]) => MergeResult }) {
+function OfflineSection(props: {
+  characters: Character[];
+  gameStates: GameState[];
+  settings: Settings;
+  onChange: (s: Settings) => void;
+  onRestore: (c: Character[]) => MergeResult;
+  onRestoreGameStates: (g: GameState[]) => void;
+}) {
   const pwa = usePwa();
   const [msg, setMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -340,7 +384,7 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
           type="button"
           className="btn"
           onClick={async () => {
-            const r = await saveFileToDevice(backupName(), await backupJson(props.characters));
+            const r = await saveFileToDevice(backupName(), await backupJson(props.characters, props.gameStates));
             if (r.ok) props.onChange({ ...props.settings, lastBackupAt: Date.now() });
             setMsg(r.message);
           }}
@@ -353,7 +397,7 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
             type="button"
             className="btn"
             onClick={async () => {
-              const r = await shareFile(backupName(), await backupJson(props.characters));
+              const r = await shareFile(backupName(), await backupJson(props.characters, props.gameStates));
               if (r.ok && r.message === 'Shared.') props.onChange({ ...props.settings, lastBackupAt: Date.now() });
               setMsg(r.message);
             }}
@@ -376,9 +420,17 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
             if (!f) return;
             try {
               const text = await f.text();
+              const games = gameStatesIn(text);
+              if (games.length) props.onRestoreGameStates(games);
+              const gameNote = games.length ? `${games.length} game state${games.length === 1 ? '' : 's'} (under Characters → Game states)` : '';
+              // A game state file on its own holds no characters.
+              if (games.length === 1 && JSON.parse(text)?.format === GAME_STATE_FORMAT) {
+                setMsg(`Added ${gameNote}.`);
+                return;
+              }
               const summary = restoreSummary(props.onRestore(parseImport(text)));
               const packs = await restoreLibrary(text).catch(() => 0);
-              setMsg(`Restored: ${summary}${packs ? `, and ${packs} rules ${packs === 1 ? 'pack' : 'packs'}` : ''}.`);
+              setMsg(`Restored: ${summary}${packs ? `, ${packs} rules ${packs === 1 ? 'pack' : 'packs'}` : ''}${gameNote ? `, and ${gameNote}` : ''}.`);
             } catch (err) {
               setMsg((err as Error).message);
             }
@@ -393,8 +445,10 @@ function OfflineSection(props: { characters: Character[]; settings: Settings; on
 export function SettingsDialog(props: {
   settings: Settings;
   characters: Character[];
+  gameStates: GameState[];
   onChange: (s: Settings) => void;
   onRestore: (c: Character[]) => MergeResult;
+  onRestoreGameStates: (g: GameState[]) => void;
   onArrange: () => void;
   onLibrary: () => void;
   onClose: () => void;
@@ -404,7 +458,7 @@ export function SettingsDialog(props: {
   return (
     <Dialog title="Settings" onClose={props.onClose}>
       <div style={{ display: 'grid', gap: 12 }}>
-        <OfflineSection characters={props.characters} settings={s} onChange={props.onChange} onRestore={props.onRestore} />
+        <OfflineSection characters={props.characters} gameStates={props.gameStates} settings={s} onChange={props.onChange} onRestore={props.onRestore} onRestoreGameStates={props.onRestoreGameStates} />
         <h3 style={{ margin: '8px 0 0' }}>Are the dice fair?</h3>
         <FairnessCheck />
         <h3 style={{ margin: '8px 0 0' }}>Rules library</h3>
