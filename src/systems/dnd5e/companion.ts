@@ -112,6 +112,13 @@ export function actionDice(a: CompanionAction, owner: Character): string {
   return base ? resolveTokens(base, owner).replace(/\s+/g, '') : '';
 }
 
+/** An action's extra damage at your level (a drake's Magic Fang), or '' if none applies yet. */
+export function actionExtra(a: CompanionAction, owner: Character): string {
+  const level = ownerLevel(owner, a.levelOf);
+  const step = [...(a.extra ?? [])].filter((x) => x.dice.trim() && x.level <= level).sort((x, y) => x.level - y.level).at(-1);
+  return step ? resolveTokens(step.dice, owner).replace(/\s+/g, '') : '';
+}
+
 export interface Boost {
   comp: Companion;
   action: CompanionAction;

@@ -7,6 +7,7 @@
 // companions treat your own classes, spells and creatures exactly like the official ones.
 
 import type { CastingTime, Companion, Spell, Weapon } from '../model';
+import { EXTRA_SUBCLASSES } from '../extras';
 import type { Ability } from '../data';
 
 /** Values that change with class level, as change points: [[1, 2], [3, 3], [6, 4]…]. */
@@ -218,7 +219,7 @@ export function loadSrd(): Promise<Catalog> {
   loading ??= Promise.all([import('./classes.json'), import('./subclasses.json'), import('./feats.json'), import('./spells.json'), import('./creatures.json'), import('./items.json')]).then(
     ([classes, subclasses, feats, spells, creatures, items]) => ({
       classes: (classes.default as ClassDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
-      subclasses: (subclasses.default as SubclassDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
+      subclasses: [...(subclasses.default as SubclassDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })), ...EXTRA_SUBCLASSES],
       feats: (feats.default as FeatDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       spells: (spells.default as SpellDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       creatures: (creatures.default as unknown as CreatureDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),

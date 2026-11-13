@@ -5,6 +5,8 @@ export interface CharacterApi {
   char: Character;
   /** Mutate a copy of the character; the sheet re-renders and autosaves. */
   update: (fn: (c: Character) => void) => void;
+  /** Makes a save point of the character as it is now (before a big change like an update from a sheet). */
+  savePoint?: (name: string) => void;
 }
 
 export const CharacterContext = createContext<CharacterApi | null>(null);

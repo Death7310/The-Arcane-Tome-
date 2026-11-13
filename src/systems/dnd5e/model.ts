@@ -47,6 +47,8 @@ export interface LevelStep {
   asi?: Partial<Record<Ability, number>>;
   /** Features added for feats chosen at this level. */
   featFeatureIds?: string[];
+  /** Spells learned at this level. */
+  spellIds?: string[];
   /** Subclass chosen at this level, and what it replaced. */
   subclass?: { id?: string; name: string; previous: { id?: string; name: string } };
   /** Skill proficiencies gained (multiclassing into a Bard, Ranger or Rogue). */
@@ -169,6 +171,11 @@ export interface CompanionAction {
   levelDice?: { level: number; dice: string }[];
   /** Whose level the steps count: a class id ("ranger"), or "" for your character level. */
   levelOf?: string;
+  /**
+   * Extra damage of the companion's essence type from a level of yours on (a Drakewarden drake's
+   * Magic Fang: 1d6 from Ranger 7, 2d6 from 15): the last step at or below your level applies.
+   */
+  extra?: { level: number; dice: string }[];
 }
 
 /**

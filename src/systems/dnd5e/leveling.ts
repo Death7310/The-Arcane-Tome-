@@ -9,10 +9,12 @@
 // its multiclass training; HP per level is the die's average (half + 1) or a roll, plus
 // your Constitution modifier, at least 1.
 
-import { ABILITIES, ABILITY_NAMES, type Ability, type SkillId } from './data';
+import { ABILITIES, ABILITY_NAMES, classById, FULL_CASTER_SLOTS, PACT_SLOTS, type Ability, type SkillId } from './data';
+import { syncDrake } from './extras';
 import { blankFeature, uid, type Character, type ClassEntry, type Feature, type FeatureOrigin, type LevelStep, type UsesFormula } from './model';
 import { abilityMod, maxHp, pactSlots, spellSlots, totalLevel } from './rules';
-import { stepAt, type Catalog, type ClassDef, type ClassFeatureDef, type FeatDef, type SubclassDef } from './srd';
+import { stepAt, type Catalog, type ClassDef, type ClassFeatureDef, type FeatDef, type SpellDef, type SubclassDef } from './srd';
+import { spellFromDef, tunedSpells } from './spells';
 import type { Element as FxElement, Shape } from '../../fx/types';
 
 /** Shown elsewhere on the sheet (spellcasting) or realized through choices (ASI, boons). */
@@ -144,6 +146,7 @@ export function syncFeatures(d: Character, cat: Catalog) {
     }
   }
   d.features = d.features.filter((f) => !f.origin || f.origin.kind === 'feat' || !f.origin.auto || keep.has(f.id));
+  syncDrake(d);
 }
 
 // ── Planning a level ─────────────────────────────────────────────────────────
@@ -176,6 +179,25 @@ export interface LevelUpPlan {
     cantrips: [number, number] | null;
     prepared: [number, number] | null;
   };
+  /** New spells this level lets you learn for this class: how many, and the highest level it can cast. */
+  learn: { cantrips: number; spells: number; maxLevel: number; newLevel: boolean };
+}
+
+/** The highest spell level a class casts at a class level, on its own (its slots, or its Pact Magic). */
+export function classSpellLevel(classId: string, level: number): number {
+  const t = classById(classId).caster;
+  if (t === 'pact') return level > 0 ? PACT_SLOTS[Math.min(20, level)][1] : 0;
+  const caster = t === 'full' ? level : t === 'half' ? Math.ceil(level / 2) : t === 'third' ? (level < 3 ? 0 : Math.ceil(level / 3)) : 0;
+  const slots = FULL_CASTER_SLOTS[Math.min(20, caster)] ?? [];
+  return slots.reduce((hi, n, i) => (n > 0 ? i + 1 : hi), 0);
+}
+
+/** Spells a class can learn now: on its list, of a level it can cast, and not already on the sheet. */
+export function learnableSpells(c: Character, cat: Catalog, classId: string, maxLevel: number, cantrips: boolean): SpellDef[] {
+  const have = new Set(c.spells.map((s) => norm(s.name)));
+  return tunedSpells(cat.spells)
+    .filter((d) => d.classes?.includes(classId) && !have.has(norm(d.name)) && (cantrips ? d.level === 0 : d.level >= 1 && d.level <= maxLevel))
+    .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
 }
 
 export function planLevelUp(c: Character, cat: Catalog, classId: string): LevelUpPlan | null {
@@ -224,6 +246,12 @@ export function planLevelUp(c: Character, cat: Catalog, classId: string): LevelU
       cantrips: cls.cantrips ? [count(cls.cantrips, classLevel - 1), count(cls.cantrips, classLevel)] : null,
       prepared: cls.prepared ? [count(cls.prepared, classLevel - 1), count(cls.prepared, classLevel)] : null,
     },
+    learn: {
+      cantrips: cls.cantrips ? Math.max(0, count(cls.cantrips, classLevel) - count(cls.cantrips, classLevel - 1)) : 0,
+      spells: cls.prepared ? Math.max(0, count(cls.prepared, classLevel) - count(cls.prepared, classLevel - 1)) : 0,
+      maxLevel: classSpellLevel(classId, classLevel),
+      newLevel: classSpellLevel(classId, classLevel) > classSpellLevel(classId, classLevel - 1),
+    },
   };
 }
 
@@ -238,6 +266,8 @@ export interface LevelUpChoices {
   /** A homebrew or unlisted feat, by name. */
   customFeat?: string;
   skills?: SkillId[];
+  /** New spells (and cantrips) for this class, by name, from the rules. */
+  spells?: string[];
 }
 
 /** HP this level adds: the roll (or the average) plus Constitution, at least 1. */
@@ -293,6 +323,18 @@ export function applyLevelUp(d: Character, cat: Catalog, plan: LevelUpPlan, choi
   if (Object.keys(raised).length) step.asi = raised;
   if (featIds.length) step.featFeatureIds = featIds;
 
+  // New spells for this class, prepared and marked as coming from it.
+  const defs = choices.spells?.length ? tunedSpells(cat.spells) : [];
+  const spellIds: string[] = [];
+  for (const name of choices.spells ?? []) {
+    const def = defs.find((x) => norm(x.name) === norm(name));
+    if (!def || d.spells.some((x) => norm(x.name) === norm(name))) continue;
+    const sp = { ...spellFromDef(def, uid(), plan.classId), prepared: true };
+    d.spells.push(sp);
+    spellIds.push(sp.id);
+  }
+  if (spellIds.length) step.spellIds = spellIds;
+
   const learned = (choices.skills ?? []).filter((s) => d.skills[s] === 0);
   learned.forEach((s) => (d.skills[s] = 1));
   if (learned.length) step.skills = learned;
@@ -338,6 +380,7 @@ export function levelDown(d: Character, cat: Catalog): string | null {
     }
     for (const a of ABILITIES) if (step.asi?.[a]) d.abilities[a] -= step.asi[a]!;
     if (step.featFeatureIds) d.features = d.features.filter((f) => !step.featFeatureIds!.includes(f.id));
+    if (step.spellIds) d.spells = d.spells.filter((s) => !step.spellIds!.includes(s.id));
     step.skills?.forEach((s) => (d.skills[s] = 0));
     if (step.proficiencyNote) d.proficiencies = d.proficiencies.split('\n').filter((l) => l !== step.proficiencyNote).join('\n');
     if (step.maxOverrideBefore !== undefined) d.hp.maxOverride = step.maxOverrideBefore;

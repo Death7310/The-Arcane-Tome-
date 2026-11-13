@@ -4,7 +4,7 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
-import { actionDice, actionType, boostOf, carriedWeight, hasEssence, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, ownerLevel, walkSpeed } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionType, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, hasEssence, ownerLevel, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, evalFormula, isFormula } from '../systems/dnd5e/formula';
 import { blankCompanion, blankCompanionAction, uid, type Character, type Companion, type CompanionAction } from '../systems/dnd5e/model';
 import { abilityMod, signed } from '../systems/dnd5e/rules';
@@ -31,7 +31,8 @@ function actionSummary(a: CompanionAction, c: Character, comp?: Companion): stri
   if (a.save) parts.push(`DC ${evalFormula(a.dc, c) ?? '?'} ${a.save.toUpperCase()}`);
   const b = boostOf(a);
   const dice = actionDice(a, c);
-  if (dice) parts.push(`${b ? '+' : ''}${dice} ${(comp ? actionType(comp, a) : a.damageType || b?.type) || (b ? 'damage' : '')}`.trim());
+  const extra = actionExtra(a, c);
+  if (dice) parts.push(`${b ? '+' : ''}${dice} ${(comp ? actionType(comp, a) : a.damageType || b?.type) || (b ? 'damage' : '')}${extra ? ` + ${extra} ${comp?.essence || 'essence'}` : ''}`.trim());
   if (b) parts.push('adds to a hit');
   return parts.join(' · ');
 }

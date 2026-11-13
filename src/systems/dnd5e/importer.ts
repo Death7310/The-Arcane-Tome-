@@ -264,7 +264,13 @@ function readSaves(lines: string[], kv: Map<string, string>): Draft['saves'] {
     const v = get(kv, `st${norm(fullName(a))}`, `${a}save`, `${norm(fullName(a))}save`, `${norm(fullName(a))}savingthrow`);
     const n = v !== undefined ? signedInt(v) ?? firstInt(v) : undefined;
     if (n !== undefined) out[a] = n;
+    // D&D Beyond marks a proficient save with a dot in its own field ("DexProf": "•").
+    if (/^[•●*xP✓]$/i.test(get(kv, `${a}prof`, `${norm(fullName(a))}prof`)?.trim() ?? '')) out[a] = true;
   }
+  // Form fields are the sheet's own saves; a "Saving Throws:" line may belong to a companion's
+  // stat block printed on the same sheet, so lines count only when the fields gave nothing, and
+  // only the first such line (the character's).
+  if (Object.keys(out).length) return out;
   for (const l of lines) {
     const m = /^(?:saving throws?|saves)\s*(?:proficienc(?:y|ies))?\s*[:=-]\s*(.+)$/i.exec(stripBullet(l));
     if (!m) continue;
@@ -274,6 +280,7 @@ function readSaves(lines: string[], kv: Map<string, string>): Draft['saves'] {
       const a = ABILITY_WORDS[w[1].toLowerCase()];
       out[a] = signedInt(part.slice(w.index + w[0].length)) ?? true;
     }
+    break;
   }
   return out;
 }
@@ -396,10 +403,15 @@ function readSpells(lines: string[], fields: Record<string, string>, opts: ReadO
       if (l.length > 200 || headingOf(l)) continue;
       const words = stripBullet(l).replace(/[*†‡]/g, '').split(/\s+/);
       for (let n = Math.min(6, words.length); n >= 1; n--) {
+        // A name ends in a word: "Darkvision •" is the feature "Darkvision", not a two-word spell row.
+        if (!/[A-Za-z]/.test(words[n - 1])) continue;
         const name = words.slice(0, n).join(' ').replace(/[.,;:]+$/, '');
         if (!known.has(norm(name))) continue;
         const rest = words.slice(n).join(' ');
-        const rowLike = /\b(?:1\s?(?:A|BA|R)|action|bonus|reaction|minute|hour)\b|\d+\s*ft|\bself\b|\btouch\b|\bV,?\s*S\b|\bconc/i.test(rest);
+        // A sense ("Darkvision 60 ft.", maybe with the next column run onto the same line) shares
+        // a spell's name; as a sense its name is followed straight away by a distance.
+        const onlyDistance = /^\s*\d+\s*(?:ft|feet)\.?\s*$/i.test(rest) || (/^(?:darkvision|blindsight|tremorsense|truesight)$/i.test(name) && /^\s*\d+\s*(?:ft|feet)\b/i.test(rest));
+        const rowLike = !onlyDistance && /\b(?:1\s?(?:A|BA|R)|action|bonus|reaction|minute|hour)\b|\d+\s*ft|\bself\b|\btouch\b|\bV,?\s*S\b|\bconc/i.test(rest);
         if (n > 1 || rowLike) out.push({ name: cleanSpellName(name) });
         break;
       }
@@ -643,6 +655,15 @@ export function readText(text: string, fields: Record<string, string> = {}, opts
     (x): x is string => !!x,
   );
   d.classes = readClasses(classLines, kv);
+  // D&D Beyond lists each subclass under "* Ranger Subclass • PHB-2024 120" as "| Drakewarden (FToD)".
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^[*•-]?\s*([A-Za-z]+)\s+Subclass\b/i.exec(lines[i].trim());
+    const entry = m ? d.classes.find((k) => classById(k.classId).name.toLowerCase() === m[1].toLowerCase()) : undefined;
+    if (!entry || entry.subclass) continue;
+    const choice = lines.slice(i + 1, i + 4).find((l) => /^\|\s*\S/.test(l.trim()));
+    const name = choice?.trim().replace(/^\|\s*/, '').replace(/\s*•.*$/, '').replace(/\s*\([A-Za-z0-9 .'-]{1,12}\)\s*$/, '').trim();
+    if (name && name.length <= 40) entry.subclass = name;
+  }
   d.abilities = readAbilities(lines, kv, all);
   d.saves = readSaves(lines, kv);
   d.skills = readSkills(lines, kv);

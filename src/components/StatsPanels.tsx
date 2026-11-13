@@ -9,6 +9,7 @@ import { BackgroundField } from './Backgrounds';
 import { InspirationSlot } from './Inspiration';
 import { LanguagesField } from './Languages';
 import { LevelUpDialog } from './LevelUp';
+import { SheetUpdateDialog } from './SheetUpdate';
 import { uid, type ProfLevel } from '../systems/dnd5e/model';
 import {
   abilityCheck,
@@ -92,6 +93,7 @@ export function IdentityPanel() {
   const cat = useCatalog();
   const [open, setOpen] = useState(false);
   const [leveling, setLeveling] = useState(false);
+  const [updating, setUpdating] = useState(false);
   return (
     <Panel
       title="Character"
@@ -127,6 +129,9 @@ export function IdentityPanel() {
           <div className="row" style={{ gridColumn: '1 / -1' }}>
             <button type="button" className="btn small primary" onClick={() => setLeveling(true)} disabled={totalLevel(c) >= 20}>
               Level up
+            </button>
+            <button type="button" className="btn small" onClick={() => setUpdating(true)} title="Bring in a newer copy of this character’s sheet (a D&D Beyond PDF after a level up, say)">
+              Update from a sheet
             </button>
             {cat && totalLevel(c) > 1 && (
               <ConfirmButton
@@ -221,6 +226,7 @@ export function IdentityPanel() {
         </div>
       )}
       {leveling && <LevelUpDialog onClose={() => setLeveling(false)} onDone={(m) => t.note('Level up', m)} />}
+      {updating && <SheetUpdateDialog onClose={() => setUpdating(false)} onDone={(m) => t.note('Updated from a sheet', m)} />}
     </Panel>
   );
 }

@@ -866,3 +866,7 @@ button.stat:hover { border-color: var(--gilt); }
 .points-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--gilt), color-mix(in srgb, var(--gilt) 60%, var(--verdigris))); transition: width 0.25s ease; }
 .points-left { font: 800 20px/1 var(--font-display); color: var(--gilt); }
 .status.insp { background: color-mix(in srgb, var(--gilt) 22%, transparent); border: 1px solid var(--gilt); color: var(--gilt); font-weight: 700; }
+
+/* Level up: picking new spells. */
+.spell-picks { display: grid; gap: 6px; margin-top: 8px; }
+.spell-pick-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 12px; max-height: 260px; overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }

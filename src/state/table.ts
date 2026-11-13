@@ -12,7 +12,7 @@ import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/t
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type StandardActionId } from '../systems/dnd5e/data';
 import { evalFormula } from '../systems/dnd5e/formula';
 import { emptyTurn, uid, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type Spell, type Weapon } from '../systems/dnd5e/model';
-import { actionDice, actionType, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionType, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
 import type { CreatureDef } from '../systems/dnd5e/srd';
 import { useCatalog } from './catalog';
@@ -556,6 +556,9 @@ export function useTableState(char: Character, update: Update) {
       const element = type as FxElement;
       const dice = actionDice(action, c);
       const damage = dice && isValid(dice) ? [{ dice, type, known: [] as Part[] }] : [];
+      // Extra damage of its essence type from your level (a drake's Magic Fang).
+      const extra = actionExtra(action, c);
+      if (damage.length && extra && isValid(extra)) damage.push({ dice: extra, type: liveCompanion(comp).essence || type, known: [] as Part[] });
       if (action.attack) {
         const toHit = evalFormula(action.toHit, c) ?? 0;
         const vs = vsTarget(c, action.attack === 'ranged', false);

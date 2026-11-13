@@ -368,7 +368,8 @@ export default function App() {
   }, [max, char.hp.current, update]);
 
   const table = useTableState(char, update);
-  const charApi = useMemo(() => ({ char, update }), [char, update]);
+  const savePoint = useCallback((name: string) => setState((s) => ({ ...s, savePoints: addSavePoint(s.savePoints, s.characters.find((c) => c.id === s.currentId)!, name) })), []);
+  const charApi = useMemo(() => ({ char, update, savePoint }), [char, update, savePoint]);
 
   const addCharacter = (c: Character) => setState((s) => ({ ...s, characters: [...s.characters, c], currentId: c.id }));
   const restore = (incoming: Character[]) => {

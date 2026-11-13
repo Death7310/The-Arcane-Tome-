@@ -64,7 +64,7 @@ error inside one panel), and two-digit ability scores cut off in the companion e
 9. ✅ **Done (3 November): one-tap concentration saves (S).** Taking damage while concentrating already shows "DC N
    Constitution save". A button there that rolls the save (with your save bonus and conditions)
    and ends the spell on a failure would save a step every fight.
-10. **The drake's Bite essence damage (S–M).** (Partly done: the essence is now one setting on the companion. The Bite's extra damage waits until Ranger 7.) At 7th level the Bite adds 1d6 of the essence type,
+10. ✅ **Done (13 November): the drake's Bite essence damage (S–M).** Companion actions can now carry extra damage of the companion's essence type from a level on: a Drakewarden's Bite gets Magic Fang's 1d6 at Ranger 7 and 2d6 at 15, set automatically, and Level up brings the Drakewarden's features. At 7th level the Bite adds 1d6 of the essence type,
     and at 15th 2d6. Companion actions hold one damage type, so the Bite rolls only its piercing
     damage. A second damage part on companion actions would cover this, and other multi-type attacks.
 11. **Where each ability score comes from (M).** Show a score as base + increases (Level up's

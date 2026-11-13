@@ -1,7 +1,7 @@
 {
   "name": "arcane-tome-desktop",
   "productName": "Arcane Tome",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "The Mac app: the Arcane Tome sheet in its own window, fully offline.",
   "main": "main.cjs",

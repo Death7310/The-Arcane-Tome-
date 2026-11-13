@@ -4,7 +4,8 @@ import { fx, sound } from '../fx';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { ABILITIES, ABILITY_NAMES, SKILLS, type Ability, type SkillId } from '../systems/dnd5e/data';
-import { ABILITY_CAP, BOON_CAP, applyLevelUp, hpGain, planLevelUp, statsLine, type LevelUpChoices } from '../systems/dnd5e/leveling';
+import { ABILITY_CAP, BOON_CAP, applyLevelUp, hpGain, learnableSpells, planLevelUp, statsLine, type LevelUpChoices } from '../systems/dnd5e/leveling';
+import type { SpellDef } from '../systems/dnd5e/srd';
 import { totalLevel } from '../systems/dnd5e/rules';
 import type { FeatDef } from '../systems/dnd5e/srd';
 import { RulesText } from './RulesText';
@@ -44,12 +45,14 @@ export function LevelUpDialog(props: { onClose: () => void; onDone: (message: st
   const [boonAbility, setBoonAbility] = useState<Ability | ''>('');
   const [styles, setStyles] = useState<Record<string, string>>({});
   const [skill, setSkill] = useState<SkillId | ''>('');
+  const [newSpells, setNewSpells] = useState<string[]>([]);
 
   const plan = cat ? planLevelUp(c, cat, classId) : null;
   // A new class or level resets the roll.
   useEffect(() => {
     setRolled(null);
     setSubPick('');
+    setNewSpells([]);
   }, [classId]);
 
   if (!cat) {
@@ -122,6 +125,7 @@ export function LevelUpDialog(props: { onClose: () => void; onDone: (message: st
     }
     if (feats.length) choices.feats = feats;
     if (plan.skillPick && skill) choices.skills = [skill];
+    if (newSpells.length) choices.spells = newSpells;
     update((d) => applyLevelUp(d, cat, plan, choices));
     sound.critical();
     fx.critical({ x: window.innerWidth / 2, y: window.innerHeight * 0.4 }, 'arcane', `LEVEL ${plan.totalLevel}!`);
@@ -377,6 +381,34 @@ export function LevelUpDialog(props: { onClose: () => void; onDone: (message: st
               )}
               <p className="hint">Proficiency Bonus, spell slots, cantrip damage, saves, skills and everything else on the sheet update on their own.</p>
             </section>
+
+            {(plan.learn.cantrips > 0 || plan.learn.spells > 0 || (plan.learn.newLevel && plan.learn.maxLevel > 0)) && (
+              <section>
+                <h3>New spells</h3>
+                <p className="hint" style={{ marginTop: 0 }}>
+                  {[
+                    plan.learn.cantrips ? `${plan.learn.cantrips} more ${plan.className} cantrip${plan.learn.cantrips === 1 ? '' : 's'}` : '',
+                    plan.learn.spells ? `${plan.learn.spells} more prepared ${plan.className} spell${plan.learn.spells === 1 ? '' : 's'}` : '',
+                    plan.learn.newLevel ? `${plan.className} spells up to ${ORDINAL[plan.learn.maxLevel]} level` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                  . Pick them now, or later with Add spell. Spells from your feats and species don’t count against these.
+                </p>
+                {plan.learn.cantrips > 0 && (
+                  <SpellPicks title="Cantrips" options={learnableSpells(c, cat, plan.classId, 0, true)} limit={plan.learn.cantrips} picked={newSpells} onChange={setNewSpells} />
+                )}
+                {(plan.learn.spells > 0 || plan.learn.newLevel) && (
+                  <SpellPicks
+                    title={`Spells (up to ${ORDINAL[plan.learn.maxLevel]} level)`}
+                    options={learnableSpells(c, cat, plan.classId, plan.learn.maxLevel, false)}
+                    limit={Math.max(plan.learn.spells, 1)}
+                    picked={newSpells}
+                    onChange={setNewSpells}
+                  />
+                )}
+              </section>
+            )}
           </>
         )}
 
@@ -419,6 +451,40 @@ function FeatPicker(props: {
       {props.onCustom && !feat && (
         <input className="input" placeholder="Another feat, by name (e.g. Sharpshooter)" value={props.custom ?? ''} onChange={(e) => props.onCustom!(e.target.value)} aria-label="Feat name" />
       )}
+    </div>
+  );
+}
+
+/** Pick up to `limit` spells from a class list, searchable; the picks are shared with the other lists. */
+function SpellPicks(props: { title: string; options: SpellDef[]; limit: number; picked: string[]; onChange: (names: string[]) => void }) {
+  const [q, setQ] = useState('');
+  const mine = props.options.filter((o) => props.picked.includes(o.name));
+  const words = q.trim().toLowerCase();
+  const shown = props.options.filter((o) => !words || `${o.name} ${o.school}`.toLowerCase().includes(words)).slice(0, 40);
+  const full = mine.length >= props.limit;
+  return (
+    <div className="spell-picks">
+      <div className="row" style={{ alignItems: 'center' }}>
+        <b style={{ flex: 1 }}>
+          {props.title}: {mine.length} of {props.limit}
+        </b>
+        <input className="input" style={{ maxWidth: 200 }} placeholder="Search" aria-label={`Search ${props.title}`} value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="spell-pick-list">
+        {shown.map((o) => {
+          const on = props.picked.includes(o.name);
+          return (
+            <label key={o.name} className="check">
+              <input type="checkbox" checked={on} disabled={!on && full} onChange={() => props.onChange(on ? props.picked.filter((n) => n !== o.name) : [...props.picked, o.name])} />
+              {o.name}{' '}
+              <span className="hint">
+                {o.level ? `${ORDINAL[o.level]} level` : 'cantrip'} · {o.school}
+              </span>
+            </label>
+          );
+        })}
+        {shown.length === 0 && <span className="hint">None left to learn{words ? ' that match' : ''}.</span>}
+      </div>
     </div>
   );
 }

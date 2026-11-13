@@ -28,7 +28,9 @@ describe('the SRD class data', () => {
     expect(fighterDef.asiLevels).toEqual([4, 6, 8, 12, 14, 16]);
     expect(cat.classes.find((c) => c.id === 'rogue')!.asiLevels).toEqual([4, 8, 10, 12, 16]);
     expect(cat.classes.find((c) => c.id === 'wizard')!.prepared).toContainEqual([20, 25]);
-    expect(cat.subclasses).toHaveLength(12);
+    // One SRD subclass per class, plus the book subclasses the app describes itself (the Drakewarden).
+    expect(cat.subclasses.filter((x) => x.source === 'SRD 5.2.1')).toHaveLength(12);
+    expect(cat.subclasses.filter((x) => x.source !== 'SRD 5.2.1').map((x) => x.name)).toEqual(['Drakewarden']);
   });
 });
 

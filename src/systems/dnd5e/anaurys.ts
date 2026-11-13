@@ -10,6 +10,7 @@
 // for the full rules.
 
 import { applyBackground, findBackground } from './backgrounds';
+import { DRAKEWARDEN } from './extras';
 import { syncFeatures } from './leveling';
 import { blankCharacter, blankCompanion, blankFeature, blankSpell, blankWeapon, uid, type Character, type Item, type Spell } from './model';
 import { spellFromDef, tunedSpells } from './spells';
@@ -44,7 +45,7 @@ export function buildAnaurys(cat: Catalog): Character {
     alignment: 'Chaotic Neutral',
     xp: 0, // Milestone
     classes: [
-      { id: uid(), classId: 'ranger', subclass: 'Drakewarden', level: 4, hitDiceUsed: 0 },
+      { id: uid(), classId: 'ranger', subclass: 'Drakewarden', subclassId: DRAKEWARDEN.id, level: 4, hitDiceUsed: 0 },
       { id: uid(), classId: 'warlock', subclass: '', level: 2, hitDiceUsed: 0 },
     ],
     abilities: { str: 8, dex: 16, con: 8, int: 11, wis: 17, cha: 15 },
@@ -294,7 +295,7 @@ export function buildAnaurys(cat: Catalog): Character {
             damageType: 'piercing',
             save: null,
             dc: '',
-            text: 'Melee attack using your spell attack modifier. From Ranger 7 it also deals an extra 1d6 damage of its essence type.',
+            text: 'Melee attack using your spell attack modifier. From Ranger 7 (Magic Fang) it also deals an extra 1d6 damage of its essence type, 2d6 from Ranger 15.',
           },
           {
             id: uid(),

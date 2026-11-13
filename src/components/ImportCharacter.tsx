@@ -6,6 +6,8 @@ import { ABILITIES, ABILITY_NAMES, classById } from '../systems/dnd5e/data';
 import { AI_PROMPT, buildCharacter, importFromText, looksLikeAiJson, readAiJson, type ImportResult } from '../systems/dnd5e/importer';
 import type { Character } from '../systems/dnd5e/model';
 import { NumField, TextField } from './ui';
+import { useChar } from '../state/character';
+import { SheetUpdateReview } from './SheetUpdate';
 
 const ACCEPT = '.pdf,.docx,.odt,.txt,.md,.markdown,.html,.htm,.rtf,.csv,.json,application/pdf,text/*';
 
@@ -21,6 +23,8 @@ export function ImportCharacter(props: { onCreate: (c: Character) => void; onRes
   const [review, setReview] = useState<(ImportResult & { source: string }) | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const { char: current } = useChar();
 
   /** The rules (SRD + library), so spells and items are matched against all of them. Reading still works without. */
   const rules = () => loadCatalog().catch(() => undefined);
@@ -62,6 +66,7 @@ export function ImportCharacter(props: { onCreate: (c: Character) => void; onRes
     }
   };
 
+  if (review && updating) return <SheetUpdateReview sheet={review.character} source={review.source} onBack={() => setUpdating(false)} onDone={props.onDone} />;
   if (review) {
     const c = review.character;
     const set = (fn: (x: Character) => void) => {
@@ -104,6 +109,11 @@ export function ImportCharacter(props: { onCreate: (c: Character) => void; onRes
           <button type="button" className="btn primary" onClick={() => (props.onCreate(c), props.onDone(`Created ${c.name}.`))}>
             Create this character
           </button>
+          {!current.isExample && (
+            <button type="button" className="btn" onClick={() => setUpdating(true)} title="A newer copy of a character you already have: see what differs and take what you choose">
+              Update {current.name || 'the open character'} from it instead
+            </button>
+          )}
           <button type="button" className="btn ghost" onClick={() => setReview(null)}>
             Back
           </button>
