@@ -27,6 +27,7 @@ import { goBack, onBack } from './state/back';
 import { emptyStack, remember, takeBack, type UndoStack } from './state/undo';
 import { keepScreenOn, matchSystemBars, setVibrate, tick } from './state/device';
 import { slideIn, usePageSwipe, type Dir } from './state/swipe';
+import { APP_BUILD, checkInBackground, type Published } from './state/updates';
 import { addPanel, gridTracks, isDefault, isTileKey, normalizeLayout, ownTab, putBack, removePanel, resetLayout, tileKey, withTiles, type Layout, type PanelId, type PanelKey } from './state/layout';
 import { loadLibrary } from './state/library';
 import { applyUpdate, dismissReady, usePwa } from './state/pwa';
@@ -112,6 +113,11 @@ export default function App() {
   const vignetteRef = useRef<HTMLDivElement>(null);
   const folioRef = useRef<HTMLElement>(null);
   const [arranging, setArranging] = useState(false);
+  // The apps (Android, iPad, Mac) look for a newer build now and then; the website updates itself.
+  const [appUpdate, setAppUpdate] = useState<Published | null>(null);
+  useEffect(() => {
+    void checkInBackground().then((p) => p && setAppUpdate(p));
+  }, []);
 
   // Back (Android's button, or Escape for dialogs and Arrange): close what's on top, then go
   // back through the pages you visited, and only then leave the app.
@@ -455,6 +461,19 @@ export default function App() {
                   Keep editing this one
                 </button>
               </span>
+            </div>
+          )}
+          {appUpdate && (
+            <div className="banner" role="status">
+              <span>
+                <strong>Arcane Tome {appUpdate.version}</strong> is out (build {appUpdate.build}; this is {APP_BUILD || 'a local build'}). Installing it over this app keeps your characters.
+              </span>
+              <button type="button" className="btn small primary" onClick={() => (setAppUpdate(null), setDialog('settings'))}>
+                Update
+              </button>
+              <button type="button" className="btn small ghost" onClick={() => setAppUpdate(null)}>
+                Later
+              </button>
             </div>
           )}
           {pwa.needRefresh && (

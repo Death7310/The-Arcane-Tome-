@@ -89,6 +89,10 @@ It runs fully offline and keeps your characters in its own storage on the Mac (`
 
 Installing the website from Chrome (**Settings → Install Arcane Tome as an app**) also works on a Mac, and updates itself.
 
+### Updating
+
+**Settings → App version** shows the version and build, with **Check for updates**. The website and the installed web app fetch the new version themselves (**Update now** switches to it). The Android, iPad/iPhone and Mac apps check the site's `version.json`, which CI writes on every publish with the build number and the app files it holds; when a newer build is out (the apps also look by themselves every few hours and show a banner), **Download the update** opens the new APK, IPA or DMG in the browser. Installing it over the app keeps every character: Android installs an update signed with the same key over the old app, AltStore or SideStore with the same Apple ID replaces the iPad app, and the Mac keeps its data in `~/Library/Application Support/Arcane Tome` when you replace the app in Applications.
+
 ### Hosting
 
 Every push runs the tests and builds the website, the Android app, and the iPad/iPhone and Mac apps on a macOS runner (see `.github/workflows/deploy.yml`). Pushes to `main` publish the site to GitHub Pages at https://death7310.github.io/The-Arcane-Tome-/, with the signed APK at `arcane-tome.apk` the unsigned IPA at `arcane-tome.ipa`, and the Mac app at `arcane-tome-mac.dmg`. Anyone with the link can use the app; each person's characters stay on their own device.

@@ -40,6 +40,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # What the apps' "Check for updates" compares their own build number with.
+      - name: Write version.json
+        run: |
+          node -e "require('fs').writeFileSync('dist/version.json', JSON.stringify({ version: require('./package.json').version, build: Number(process.env.GITHUB_RUN_NUMBER), date: new Date().toISOString(), files: [] }))"
+          cat dist/version.json
       - uses: actions/upload-artifact@v4
         with:
           name: web
@@ -221,6 +226,15 @@ jobs:
         with:
           name: mac-dmg
           path: site
+      - name: List the app files in version.json
+        run: |
+          files='[]'
+          for f in arcane-tome.apk arcane-tome.ipa arcane-tome-mac.dmg; do
+            if [ -f "site/$f" ]; then files=$(jq -c --arg f "$f" '. + [$f]' <<<"$files"); fi
+          done
+          jq -c --argjson files "$files" '.files = $files' site/version.json > site/version.next
+          mv site/version.next site/version.json
+          cat site/version.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

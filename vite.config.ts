@@ -9,7 +9,12 @@ import pkg from './package.json' with { type: 'json' };
 //   --mode single   dist-single/ one self-contained index.html that runs from disk, no server
 //   --mode native   dist-native/ the files packed into the Android app (see capacitor.config.json)
 const theme = '#15131b';
-const define = { __APP_VERSION__: JSON.stringify(pkg.version), __BUILD_TIME__: JSON.stringify(new Date().toISOString()) };
+// The build number is CI's run number, the same for the website and every app built together.
+const define = {
+  __APP_VERSION__: JSON.stringify(pkg.version),
+  __APP_BUILD__: JSON.stringify(process.env.GITHUB_RUN_NUMBER ?? '0'),
+  __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+};
 
 const homeScreenTags = (): Plugin => ({
   name: 'home-screen-tags',

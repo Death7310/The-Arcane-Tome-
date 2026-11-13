@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { fx, perform, performCondition, sound, centerOf, type DiceSpeed } from '../fx';
 import { ELEMENTS, type FxLevel, type Shape } from '../fx/types';
 import { CONDITIONS } from '../systems/dnd5e/data';
-import { applyUpdate, install, requestPersist, usePwa } from '../state/pwa';
+import { install, requestPersist, usePwa } from '../state/pwa';
 import { deviceWord, isMacApp, isMacBrowser, isNative, platform, saveFileToDevice, shareFile } from '../state/native';
 import { isDefault, normalizeLayout, resetLayout } from '../state/layout';
 import { listPacks, restoreLibrary } from '../state/library';
@@ -15,6 +15,7 @@ import { sampleCharacter } from '../systems/dnd5e/sample';
 import { SRD_CREDIT } from '../systems/dnd5e/srd';
 import { ImportCharacter } from './ImportCharacter';
 import { GameStatesPanel } from './GameStates';
+import { UpdateSection } from './Updates';
 import { GAME_STATE_FORMAT, readGameState, type GameState } from '../systems/dnd5e/gamestate';
 import { Check, ConfirmButton, Dialog, SelectField } from './ui';
 
@@ -362,11 +363,7 @@ function OfflineSection(props: {
         ) : (
           <p className="hint" style={{ margin: 0 }}>To install, use your browser's <b>Install app</b> option (address bar or menu).</p>
         ))}
-      {pwa.needRefresh && (
-        <button type="button" className="btn" onClick={applyUpdate}>
-          Update to the new version
-        </button>
-      )}
+
       {pwa.mode !== 'native' && <AppDownloadLink />}
       {pwa.mode !== 'native' && pwa.persisted === false && (
         <div className="row">
@@ -458,6 +455,7 @@ export function SettingsDialog(props: {
   return (
     <Dialog title="Settings" onClose={props.onClose}>
       <div style={{ display: 'grid', gap: 12 }}>
+        <UpdateSection autoCheck />
         <OfflineSection characters={props.characters} gameStates={props.gameStates} settings={s} onChange={props.onChange} onRestore={props.onRestore} onRestoreGameStates={props.onRestoreGameStates} />
         <h3 style={{ margin: '8px 0 0' }}>Are the dice fair?</h3>
         <FairnessCheck />

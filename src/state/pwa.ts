@@ -54,11 +54,13 @@ const set = (patch: Partial<PwaSnapshot>) => {
 
 let deferredPrompt: InstallPromptEvent | null = null;
 let updateSW: (reload?: boolean) => Promise<void> = async () => {};
+let registration: ServiceWorkerRegistration | undefined;
 
 if (swSupported) {
   updateSW = registerSW({
     onOfflineReady: () => set({ offlineReady: true, justBecameReady: true }),
     onNeedRefresh: () => set({ needRefresh: true }),
+    onRegisteredSW: (_url: string, r: ServiceWorkerRegistration | undefined) => void (registration = r),
   });
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
@@ -105,6 +107,22 @@ export function applyUpdate() {
   setTimeout(() => window.location.reload(), 3000);
 }
 export const dismissReady = () => set({ justBecameReady: false });
+
+/** Asks the site for a new version now (the website and installed web app). True when one is ready to switch to. */
+export async function checkWebUpdate(): Promise<boolean> {
+  if (!registration) return snap.needRefresh;
+  try {
+    await registration.update();
+  } catch {
+    return snap.needRefresh;
+  }
+  // A new version downloads in the background; wait a little for it to be ready.
+  for (let i = 0; i < 20 && !snap.needRefresh; i++) {
+    if (!registration.installing && !registration.waiting && i > 2) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return snap.needRefresh || !!registration.waiting;
+}
 
 export function usePwa(): PwaSnapshot {
   return useSyncExternalStore(
