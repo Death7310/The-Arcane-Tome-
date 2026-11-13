@@ -3,7 +3,7 @@ import { buildAnaurys } from './anaurys';
 import { availableBoosts, companionAc } from './companion';
 import { evalFormula } from './formula';
 import { normalizeCharacter } from './model';
-import { armorClass, initiative, inventoryWeight, maxHp, pactSlots, passive, savingThrow, skillCheck, spellAttack, spellSaveDc, spellSlots, usesMax } from './rules';
+import { armorClass, initiative, inventoryWeight, maxHp, pactSlots, passive, savingThrow, skillCheck, spellAttack, spellSaveDc, spellSlots, usesMax, weaponAttack } from './rules';
 import { freeCastSources, sourceName } from './spellsource';
 import classes from './srd/classes.json';
 import creatures from './srd/creatures.json';
@@ -33,7 +33,8 @@ describe('Anaurys matches his D&D Beyond sheet', () => {
     expect(savingThrow(c, 'str').total).toBe(2);
     expect(savingThrow(c, 'dex').total).toBe(6);
     expect(savingThrow(c, 'con').total).toBe(-1);
-    expect(inventoryWeight(c)).toBe(131.5);
+    // The sheet's 131.5 lb, with his second scimitar (3 lb) in place of the shortsword (2 lb).
+    expect(inventoryWeight(c)).toBe(132.5);
   });
 
   it('casts each spell with its source’s ability: Wisdom 14 / +6, Charisma 13 / +5', () => {
@@ -77,8 +78,12 @@ describe('Anaurys matches his D&D Beyond sheet', () => {
     expect(availableBoosts(c)[0]).toMatchObject({ dice: '1d6', type: 'poison' });
   });
 
-  it('attacks with the bow and shortsword at +6, and survives a save and reload', () => {
-    expect(c.weapons.map((w) => w.name)).toEqual(['Dragon Wing Shortbow', 'Shortsword']);
+  it('attacks with the bow and his two scimitars at +6, and survives a save and reload', () => {
+    // His sheet lists a Shortsword; he carries two scimitars instead (his own correction).
+    expect(c.weapons.map((w) => w.name)).toEqual(['Dragon Wing Shortbow', 'Scimitar', 'Scimitar (off hand)']);
+    for (const w of c.weapons) expect(weaponAttack(c, w).total).toBe(6);
+    expect(c.inventory.find((i) => i.name === 'Scimitar')!.qty).toBe(2);
+    expect(c.inventory.some((i) => i.name === 'Shortsword')).toBe(false);
     const again = normalizeCharacter(JSON.parse(JSON.stringify(c)));
     expect(again.spells).toHaveLength(c.spells.length);
     expect(again.companions[0].essence).toBe('poison');

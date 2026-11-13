@@ -9,7 +9,7 @@ import { addItemsToLibrary } from '../state/library';
 import { useCatalog } from '../state/catalog';
 import { AddItemDialog } from './Items';
 import { TargetStrip } from './Enemies';
-import { armorClass, armorWarnings, hitDice, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
+import { armorClass, armorWarnings, attacksPerAction, hasNick, hitDice, isLight, lightExtraDamageBonus, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
 import { Check, ConfirmButton, NumField, Panel, SelectField, TextField, mathText } from './ui';
 import { isValid } from '../engine/dice';
 
@@ -140,6 +140,7 @@ export function TurnPanel() {
   const [feet, setFeet] = useState(5);
   const budget = speed(c).total * (1 + c.turn.dashes);
   const left = Math.max(0, budget - c.turn.movementUsed);
+  const perTurn = attacksPerAction(c).count;
   const econ: { key: 'action' | 'bonus' | 'reaction'; label: string }[] = [
     { key: 'action', label: 'Action' },
     { key: 'bonus', label: 'Bonus Action' },
@@ -159,7 +160,7 @@ export function TurnPanel() {
         {econ.map((e) => (
           <button key={e.key} type="button" aria-pressed={c.turn[e.key]} onClick={() => update((d) => void (d.turn[e.key] = !d.turn[e.key]))}>
             {e.label}
-            <small>{c.turn[e.key] ? 'Used' : 'Ready'}</small>
+            <small>{e.key === 'action' && c.turn.attacks > 0 && perTurn > 1 ? `${Math.min(c.turn.attacks, perTurn)} of ${perTurn} attacks` : c.turn[e.key] ? 'Used' : 'Ready'}</small>
           </button>
         ))}
       </div>
@@ -230,10 +231,20 @@ export function AttacksPanel() {
   const [open, setOpen] = useState<string | null>(null);
   const [pick, setPick] = useState('');
   const [adding, setAdding] = useState(false);
+  const per = attacksPerAction(c);
+  // With two Light weapons, each gets a button for the Light property's extra attack.
+  const twoLight = c.weapons.filter(isLight).length >= 2;
   return (
     <Panel title="Attacks" tab="combat">
       <TargetStrip />
       {adding && <AddItemDialog mode="weapon" onClose={() => setAdding(false)} />}
+      {(per.count > 1 || twoLight) && (
+        <p className="hint attack-count" role="status">
+          {per.count > 1 ? `${per.from}: ${per.count} attacks each time you take the Attack action` : 'One attack each time you take the Attack action'}
+          {c.turn.attacks > 0 ? ` · ${Math.min(c.turn.attacks, per.count)} of ${per.count} made this turn` : ''}
+          {twoLight ? ` · Light extra attack ${c.turn.lightExtra ? 'made' : 'ready'}` : ''}
+        </p>
+      )}
       <div className="list">
         {c.weapons.length === 0 && <p className="hint">No weapons yet. Add one below.</p>}
         {c.weapons.map((w, idx) => {
@@ -251,9 +262,12 @@ export function AttacksPanel() {
                     {w.mastery ? ` · ${w.mastery}` : ''}
                   </small>
                 </button>
-                <button type="button" className="cast" title={mathText(atk)} onClick={(e) => t.attack(w, e.currentTarget)}>
-                  Attack {signed(atk.total)}
-                </button>
+                <div className="attack-btns">
+                  <button type="button" className="cast" title={mathText(atk)} onClick={(e) => t.attack(w, e.currentTarget)}>
+                    Attack {signed(atk.total)}
+                  </button>
+                  {twoLight && isLight(w) && <LightExtraButton weapon={w} />}
+                </div>
               </div>
               {open === w.id && (
                 <div className="item-body">
@@ -341,6 +355,31 @@ export function AttacksPanel() {
         </button>
       </div>
     </Panel>
+  );
+}
+
+/**
+ * The Light property's extra attack with this weapon: after attacking with a different Light
+ * weapon in the Attack action, once per turn. A Bonus Action, or part of the Attack action with
+ * the Nick mastery; no ability modifier on the damage unless Two-Weapon Fighting adds it.
+ */
+function LightExtraButton({ weapon: w }: { weapon: Weapon }) {
+  const { char: c } = useChar();
+  const t = useTable();
+  const nick = hasNick(w);
+  const dmg = lightExtraDamageBonus(c, w);
+  const dice = w.damage.map((d, i) => `${i === 0 && dmg.bonus ? `${d.dice}${signed(dmg.bonus)}` : d.dice} ${d.type}`).join(' + ');
+  const ready = c.turn.lightWith.some((id) => id !== w.id) && !c.turn.lightExtra;
+  const title = [
+    `Light extra attack with the ${w.name}: ${dice}.`,
+    nick ? 'Nick: part of the Attack action, so your Bonus Action stays free.' : 'Uses your Bonus Action (the Nick mastery would make it part of the Attack action).',
+    `Damage: ${dmg.why}.`,
+    'Once per turn, after attacking with a different Light weapon in the Attack action.',
+  ].join(' ');
+  return (
+    <button type="button" className={`btn small${ready ? '' : ' ghost'}`} title={title} aria-label={`${nick ? 'Nick' : 'Bonus'} attack with the ${w.name}`} onClick={(e) => t.attack(w, e.currentTarget, { light: true })}>
+      {nick ? 'Nick' : 'Bonus'} {signed(weaponAttack(c, w).total)}
+    </button>
   );
 }
 

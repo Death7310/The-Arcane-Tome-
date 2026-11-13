@@ -21,6 +21,13 @@ const SHADOW_TOUCHED = 'feat:Shadow Touched';
 
 const item = (name: string, qty: number, weight: number, notes = ''): Item => ({ id: uid(), name, qty, weight, notes });
 
+// He fights with two scimitars. Attacking with one in the Attack action opens the Light property's
+// extra attack with the other (a Bonus Action; no Dexterity on its damage without the Two-Weapon
+// Fighting style). Its mastery, Nick, would make that attack part of the Attack action, freeing the
+// Bonus Action to command Artex, but his sheet's two masteries are the Shortbow and the Longsword.
+const SCIMITAR_NOTE =
+  "Light: after you attack with one scimitar in the Attack action, you can attack with the other as a Bonus Action (no Dexterity on its damage). Its mastery property is Nick, which would make that attack part of the Attack action, but your Weapon Mastery choices are the Shortbow and the Longsword; a Ranger can change them after a Long Rest. Type Nick into Mastery here (on both) once you do.";
+
 /** Anaurys, ready to play. Loads the SRD rules first (for his spells and class features). */
 export async function anaurysCharacter(): Promise<Character> {
   return buildAnaurys(await loadSrd());
@@ -143,11 +150,18 @@ export function buildAnaurys(cat: Catalog): Character {
           "Fizban's Treasury of Dragons. A hit deals an extra 1d6 damage of the type of the dragon its wings came from. Set to Poison here: change the second damage type if your bow is another.",
       }),
       blankWeapon({
-        name: 'Shortsword',
-        damage: [{ dice: '1d6', type: 'piercing' }],
+        name: 'Scimitar',
+        damage: [{ dice: '1d6', type: 'slashing' }],
         finesse: true,
         properties: 'Finesse, Light',
-        notes: 'Its mastery property is Vex, but your Weapon Mastery choices are the Longsword and the Shortbow.',
+        notes: SCIMITAR_NOTE,
+      }),
+      blankWeapon({
+        name: 'Scimitar (off hand)',
+        damage: [{ dice: '1d6', type: 'slashing' }],
+        finesse: true,
+        properties: 'Finesse, Light',
+        notes: SCIMITAR_NOTE,
       }),
     ],
     features: [
@@ -318,8 +332,7 @@ export function buildAnaurys(cat: Catalog): Character {
     inventory: [
       item('Dragon Wing Shortbow', 1, 2),
       item('Studded Leather', 1, 13, 'Worn'),
-      item('Scimitar', 1, 3),
-      item('Shortsword', 1, 2),
+      item('Scimitar', 2, 3),
       item('Arrows', 20, 0.05),
       item('Quiver', 1, 1),
       item('Backpack', 1, 5),

@@ -156,7 +156,16 @@ const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
 const conditions = (v: unknown): ConditionId[] => (Array.isArray(v) ? v.filter((x): x is ConditionId => CONDITIONS.some((k) => k.id === x)) : []);
 const turnOf = (v: unknown): Turn => {
   const t = (v && typeof v === 'object' ? v : {}) as Partial<Turn>;
-  return { action: !!t.action, bonus: !!t.bonus, reaction: !!t.reaction, movementUsed: num(t.movementUsed), dashes: num(t.dashes) };
+  return {
+    action: !!t.action,
+    bonus: !!t.bonus,
+    reaction: !!t.reaction,
+    movementUsed: num(t.movementUsed),
+    dashes: num(t.dashes),
+    attacks: num(t.attacks),
+    lightWith: Array.isArray(t.lightWith) ? t.lightWith.filter((x): x is string => typeof x === 'string') : [],
+    lightExtra: !!t.lightExtra,
+  };
 };
 
 /** Reads a saved or imported game state, repairing what it can (the file may come from anywhere). */

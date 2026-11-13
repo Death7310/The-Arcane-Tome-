@@ -406,6 +406,39 @@ export function weaponDamageBonus(c: Character, w: Weapon): number {
   return mod(c, weaponAbility(c, w)) + w.magicBonus;
 }
 
+/**
+ * How many attacks one Attack action gives: Extra Attack (Barbarian, Fighter, Monk, Paladin and
+ * Ranger at 5) makes it two, and the Fighter's Two and Three Extra Attacks three and four. They
+ * don't add up across classes, so the best one counts. Read from the features' names, so one
+ * added by hand counts too.
+ */
+export function attacksPerAction(c: Character): { count: number; from: string } {
+  let best = { count: 1, from: '' };
+  for (const f of c.features) {
+    const name = f.name.trim();
+    const n = /^extra attack\b/i.test(name) ? 2 : /^two extra attacks\b/i.test(name) ? 3 : /^three extra attacks\b/i.test(name) ? 4 : 1;
+    if (n > best.count) best = { count: n, from: name };
+  }
+  return best;
+}
+
+/** A weapon with the Light property (Dagger, Scimitar, Shortsword…), which can make the Light extra attack. */
+export const isLight = (w: Weapon) => /\blight\b/i.test(w.properties);
+
+/** Whether this weapon's mastery is Nick (the Light extra attack is then part of the Attack action, not a Bonus Action). */
+export const hasNick = (w: Weapon) => /^nick$/i.test(w.mastery.trim());
+
+/**
+ * Damage bonus for the Light property's extra attack: no ability modifier unless it's negative,
+ * or with the Two-Weapon Fighting style, which adds it.
+ */
+export function lightExtraDamageBonus(c: Character, w: Weapon): { bonus: number; addsMod: boolean; why: string } {
+  const m = mod(c, weaponAbility(c, w));
+  if (hasFightingStyle(c, 'two-weapon fighting')) return { bonus: m + w.magicBonus, addsMod: true, why: 'Two-Weapon Fighting adds your modifier' };
+  if (m < 0) return { bonus: m + w.magicBonus, addsMod: true, why: 'a negative modifier still counts' };
+  return { bonus: w.magicBonus, addsMod: false, why: `no ${ABILITY_NAMES[weaponAbility(c, w)]} modifier on its damage (Light property)` };
+}
+
 export function usesMax(c: Character, f: Feature): number | null {
   return resolveUses(c, f.usesMax);
 }

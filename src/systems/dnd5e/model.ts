@@ -274,6 +274,12 @@ export interface Turn {
   reaction: boolean;
   movementUsed: number;
   dashes: number;
+  /** Attacks made with the Attack action this turn (Extra Attack allows more than one). */
+  attacks: number;
+  /** The Light weapons attacked with in this turn's Attack action, which open the Light property's extra attack. */
+  lightWith: string[];
+  /** Whether the Light property's extra attack has been made this turn. */
+  lightExtra: boolean;
 }
 
 export interface Character {
@@ -476,7 +482,7 @@ export const uid = (): string =>
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-export const emptyTurn = (): Turn => ({ action: false, bonus: false, reaction: false, movementUsed: 0, dashes: 0 });
+export const emptyTurn = (): Turn => ({ action: false, bonus: false, reaction: false, movementUsed: 0, dashes: 0, attacks: 0, lightWith: [], lightExtra: false });
 
 export function blankSpell(partial: Partial<Spell> = {}): Spell {
   return {
@@ -655,7 +661,7 @@ export function normalizeCharacter(raw: unknown): Character {
     deathSaves: { ...base.deathSaves, ...c.deathSaves },
     spellcasting: { ...base.spellcasting, ...c.spellcasting },
     currency: { ...base.currency, ...c.currency },
-    turn: { ...base.turn, ...c.turn },
+    turn: { ...base.turn, ...c.turn, lightWith: Array.isArray(c.turn?.lightWith) ? c.turn.lightWith.filter((x) => typeof x === 'string') : [] },
     classes: Array.isArray(c.classes) && c.classes.length ? c.classes.map((k) => ({ ...base.classes[0], ...k })) : base.classes,
     spells: Array.isArray(c.spells) ? c.spells.map((s) => blankSpell(s)) : [],
     weapons: Array.isArray(c.weapons) ? c.weapons.map((w) => blankWeapon(w)) : [],

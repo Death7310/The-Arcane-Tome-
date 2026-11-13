@@ -411,6 +411,8 @@ button.stat:hover { border-color: var(--gilt); }
   border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2);
 }
 .item-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 10px; }
+.attack-btns { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.attack-count { margin: 0 0 8px; }
 .item-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; background: none; border: 0; padding: 0; text-align: left; }
 .item-title b { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-title small { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

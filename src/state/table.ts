@@ -37,6 +37,10 @@ import {
   usesSpellPoints,
   weaponAbility,
   weaponAttack,
+  attacksPerAction,
+  hasNick,
+  isLight,
+  lightExtraDamageBonus,
   type Breakdown,
   type TestKind,
 } from '../systems/dnd5e/rules';
@@ -461,20 +465,52 @@ export function useTableState(char: Character, update: Update) {
   const label = (outcome: Outcome, dealt: number, type: string) =>
     outcome === 'miss' ? 'MISS' : outcome === 'crit' ? `CRIT! ${dealt}` : `${dealt}${type ? ` ${type}` : ''}${outcome === 'none' ? '?' : ''}`;
 
+  /**
+   * A weapon attack. Normally one of the attacks of your Attack action (Extra Attack gives more
+   * than one, counted on the turn). With `light`, it's the Light property's extra attack instead:
+   * after attacking with a different Light weapon in the Attack action, once per turn, as a Bonus
+   * Action (or as part of the Attack action with the Nick mastery), with no ability modifier on its
+   * damage unless it's negative or you have the Two-Weapon Fighting style. Things out of turn are
+   * noted on the result, not blocked: the DM rules, and the turn may not have been started.
+   */
   const attack = useCallback(
-    (w: Weapon, originEl?: Element | null) => {
+    (w: Weapon, originEl?: Element | null, opts: { light?: boolean } = {}) => {
       const c = charRef.current;
       const vs = vsTarget(c, w.ranged, true);
       const mode = modeFor({ type: 'attack' }, vs);
       const ability = weaponAbility(c, w);
       const mod = abilityModOf(c, ability);
-      const damage = w.damage.map((d, i) => ({ ...d, known: i === 0 ? [{ label: ABBR(ability), value: mod }, { label: 'MAGIC', value: w.magicBonus }] : [] }));
+      const light = !!opts.light;
+      const extra = light ? lightExtraDamageBonus(c, w) : null;
+      const dmgBonus = extra ? extra.bonus : mod + w.magicBonus;
+      const damage = w.damage.map((d, i) => ({ ...d, known: i === 0 ? [...(extra && !extra.addsMod ? [] : [{ label: ABBR(ability), value: mod }]), { label: 'MAGIC', value: w.magicBonus }] : [] }));
       const element = (w.damage[0]?.type ?? 'bludgeoning') as FxElement;
-      const res = attackOnce(weaponAttack(c, w), mode, damage, mod + w.magicBonus, { orb: false }, vs);
+      const res = attackOnce(weaponAttack(c, w), mode, damage, dmgBonus, { orb: false }, vs);
       const warn = actingWarning();
       const from = centerOf(originEl);
       const to = fx.defaultTarget(from);
-      spendTime('action');
+      const per = attacksPerAction(c);
+      const nick = light && hasNick(w);
+      const turnNotes: string[] = [];
+      if (light) {
+        turnNotes.push(nick ? 'Light extra attack, part of the Attack action (Nick)' : 'Light extra attack: your Bonus Action');
+        if (!c.turn.lightWith.some((id) => id !== w.id)) turnNotes.push('it needs the Attack action with a different Light weapon first this turn');
+        if (c.turn.lightExtra) turnNotes.push('you’ve already made it this turn');
+        else if (!nick && c.turn.bonus) turnNotes.push('your Bonus Action is already used');
+        if (extra) turnNotes.push(extra.why);
+        update((d) => {
+          d.turn.lightExtra = true;
+          if (!nick) d.turn.bonus = true;
+        });
+      } else {
+        const n = c.turn.attacks + 1;
+        if (per.count > 1 || n > 1) turnNotes.push(n <= per.count ? `Attack ${n} of ${per.count}${per.from ? ` (${per.from})` : ''}` : `Attack ${n}: more than your Attack action’s ${per.count} (start a New turn?)`);
+        update((d) => {
+          d.turn.action = true;
+          d.turn.attacks += 1;
+          if (isLight(w) && !d.turn.lightWith.includes(w.id)) d.turn.lightWith.push(w.id);
+        });
+      }
       const phases = [phaseOf([res.attackRow])];
       if (res.hits.length) phases.push(phaseOf([counted(res.hits, res.dealt, unitOf(w.damage.map((d) => d.type)), undefined, res.outcome === 'crit')]));
       stage(
@@ -485,7 +521,7 @@ export function useTableState(char: Character, update: Update) {
           const at = vs ? atTarget(vs, res, w.name, 'you', '') : null;
           push({
             title: vs ? `${w.name} → ${vs.name}` : w.name,
-            subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
+            subtitle: [warn, ...turnNotes, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
             lines: at ? [...res.lines, ...at.lines] : res.lines,
             element,
             ...(res.outcome !== 'miss' ? { boost: { crit: res.outcome === 'crit', attacker: '', used: [] } } : {}),
@@ -496,7 +532,7 @@ export function useTableState(char: Character, update: Update) {
         { look: weaponLook(w.name, w.damage[0]?.type ?? '', w.ranged), element },
       );
     },
-    [push, spendTime, modeFor],
+    [push, modeFor, update],
   );
 
   /** The companion as it is now (the button may hold an older copy). */
@@ -1072,7 +1108,7 @@ export function useTableState(char: Character, update: Update) {
   const newTurn = useCallback(() => {
     const ended = charRef.current.effects.filter((e) => e.rounds !== null && e.rounds <= 1).map((e) => e.name);
     update((d) => {
-      d.turn = { action: false, bonus: false, reaction: false, movementUsed: 0, dashes: 0 };
+      d.turn = emptyTurn();
       // Companions act on your turn (or right after it), so theirs starts over too.
       d.companions.forEach((k) => void (k.turn = emptyTurn()));
       d.effects = d.effects.flatMap((e) => (e.rounds === null ? [e] : e.rounds <= 1 ? [] : [{ ...e, rounds: e.rounds - 1 }]));
@@ -1196,7 +1232,7 @@ export function useTableState(char: Character, update: Update) {
         d.features.forEach((f) => {
           if (f.recharge === 'short' || (kind === 'long' && f.recharge === 'long')) f.usesSpent = 0;
         });
-        d.turn = { action: false, bonus: false, reaction: false, movementUsed: 0, dashes: 0 };
+        d.turn = emptyTurn();
       // Companions act on your turn (or right after it), so theirs starts over too.
       d.companions.forEach((k) => void (k.turn = emptyTurn()));
         if (kind === 'long') {
