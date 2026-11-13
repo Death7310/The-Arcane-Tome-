@@ -10,7 +10,7 @@
 // guessed at.
 
 import { CONDITIONS, type ConditionId } from './data';
-import { blankEnemy, normalizeCharacter, uid, type Character, type Counter, type Effect, type Enemy, type Fight, type Turn } from './model';
+import { blankEnemy, normalizeCharacter, readBattle, uid, type Battle, type Character, type Counter, type Effect, type Enemy, type Fight, type Turn } from './model';
 
 export interface PlayState {
   hp: { current: number; temp: number };
@@ -28,6 +28,8 @@ export interface PlayState {
   targetId: string | null;
   party: string[];
   fight: Fight | null;
+  /** The battle going on (its log so far); missing from game states saved before battles. */
+  battle?: Battle | null;
   counters: Counter[];
   currency: Character['currency'];
   items: { name: string; qty: number }[];
@@ -71,6 +73,7 @@ export function capturePlay(c: Character): PlayState {
     targetId: c.targetId,
     party: [...c.party],
     fight: copy(c.fight),
+    battle: copy(c.battle),
     counters: copy(c.counters),
     currency: { ...c.currency },
     items: c.inventory.map((i) => ({ name: i.name, qty: i.qty })),
@@ -138,6 +141,8 @@ export function applyPlay(d: Character, s: PlayState): string[] {
         order: s.fight.order.map((x) => (x.kind === 'companion' ? { ...x, ref: d.companions.find((k) => norm(k.name) === norm(x.name))?.id ?? x.ref } : { ...x })),
       }
     : null;
+  // The battle so far comes back with it (a game state from before battles has none).
+  d.battle = s.battle ? structuredClone(s.battle) : null;
   d.counters = structuredClone(s.counters);
   d.currency = { ...s.currency };
   for (const it of s.items) {
@@ -214,6 +219,7 @@ export function readGameState(raw: unknown): GameState {
       targetId: as.targetId,
       party: as.party,
       fight: as.fight,
+      battle: readBattle(s.battle),
       counters: as.counters,
       currency: as.currency,
       items: list(s.items, (x) => (typeof x.name === 'string' ? { name: x.name, qty: Math.max(0, num(x.qty)) } : null)),

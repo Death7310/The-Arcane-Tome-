@@ -8,6 +8,8 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { enemySummary, nextTurn, skipped, startFight } from '../systems/dnd5e/enemies';
+import { allyWho, battleName, endBattle, enemyWho } from '../systems/dnd5e/battle';
+import { LogTurn } from './Battle';
 import { ConfirmButton, Panel } from './ui';
 
 export function InitiativePanel() {
@@ -137,8 +139,22 @@ export function InitiativePanel() {
           Next turn
         </button>
         <span className="hint">Now: {now?.kind === 'you' ? 'you' : now?.name}</span>
-        <ConfirmButton label="End the fight" confirmLabel="End it?" className="btn small ghost" onConfirm={() => update((d) => void (d.fight = null))} />
+        <ConfirmButton
+          label="End the fight"
+          confirmLabel="End it?"
+          className="btn small ghost"
+          onConfirm={() => {
+            // The battle ends with it, and is kept (with its stats) under Battle → Past battles.
+            const kept = c.battle?.events.length ? battleName(c.battle) : '';
+            update((d) => {
+              endBattle(d, creatures);
+              d.fight = null;
+            });
+            if (kept) t.note('Battle kept', `${kept}: under Battle → Past battles, on the Enemies page.`);
+          }}
+        />
       </div>
+      {now && (now.kind === 'enemy' || now.kind === 'ally') && <LogTurn by={now.kind === 'enemy' ? enemyWho({ id: now.ref, name: now.name }) : allyWho(now.name)} title={`Log ${now.name}’s turn`} />}
       {missing.length > 0 && (
         <div className="row" style={{ marginTop: 6 }}>
           <span className="hint">Not in the order yet:</span>

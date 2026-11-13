@@ -9,9 +9,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { describe, isValid, naturalD20, rollDie, safeRoll, withModifier, type RollResult } from '../engine/dice';
 import { centerOf, fx, perform, performAction, sound, throwPhases, weaponLook, type DicePhase, type StrikeLook, type Verdict } from '../fx';
 import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/types';
-import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type StandardActionId } from '../systems/dnd5e/data';
+import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type Ability, type StandardActionId } from '../systems/dnd5e/data';
 import { evalFormula } from '../systems/dnd5e/formula';
-import { emptyTurn, uid, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type Spell, type Weapon } from '../systems/dnd5e/model';
+import { emptyTurn, uid, type BattleWho, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type RolledDamage, type Spell, type Weapon } from '../systems/dnd5e/model';
+import { allyWho, companionWho, enemyWho, inBattle, logEvent, retarget, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
 import { actionDice, actionExtra, actionType, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
 import type { CreatureDef } from '../systems/dnd5e/srd';
@@ -76,6 +77,8 @@ export interface RollEntry {
   boost?: { crit: boolean; attacker: string; used: string[] };
   /** Damage taken while concentrating: the save to keep the spell going, until it's rolled. */
   concentration?: { dc: number; spell: string; done: boolean };
+  /** A saving throw in a battle, until you say whether it was made (for the battle's stats). */
+  saveCheck?: { who: BattleWho; ability: Ability; done: boolean };
   /** What this roll was at: one attack (or one per beam or dart) or one saving-throw spell over several enemies. */
   targets?: RollTarget[];
 }
@@ -96,7 +99,7 @@ export interface DamagePiece {
   amount: number;
   type: string;
   what: string;
-  who: 'you' | 'companion';
+  who: 'you' | 'companion' | 'party';
   name: string;
 }
 
@@ -116,6 +119,12 @@ export interface RollTarget {
   half?: boolean;
   enemies: { id: string; name: string; state: 'pending' | 'hit' | 'miss' | 'failed' | 'saved' }[];
 }
+
+/** Something someone else did, told by the DM or the player: see logAction. */
+export type LoggedAction =
+  | { kind: 'attack'; by: BattleWho; target: BattleWho; result: 'hit' | 'crit' | 'miss'; amount: number; type: string; what: string }
+  | { kind: 'save'; by: BattleWho | null; who: BattleWho; ability: Ability; made: boolean; concentration: boolean; dc: number | null; what: string }
+  | { kind: 'damage'; by: BattleWho; target: BattleWho; amount: number; type: string; what: string; save: 'none' | 'failed' | 'saved' | 'unknown'; half: boolean; ability: Ability };
 
 export type SlotChoice = { kind: 'slot'; level: number } | { kind: 'pact'; level: number } | { kind: 'points'; level: number; cost: number } | { kind: 'free'; level: number };
 
@@ -275,7 +284,10 @@ export function useTableState(char: Character, update: Update) {
   const test = useCallback(
     (title: string, b: Breakdown, originEl?: Element | null, subtitle?: string, kind: TestKind = { type: 'check', ability: 'str' }) => {
       const mode = modeFor(kind);
+      const c = charRef.current;
+      const battleSave = kind.type === 'save' && inBattle(c);
       if (mode.autoFail) {
+        if (battleSave) update((d) => void logEvent(d, { kind: 'save', by: forcedBy(d), target: youWho(d), what: title, ability: kind.ability, dc: null, saved: false, low: 0, high: 0, type: '', roll: uid() }));
         push({
           title,
           subtitle,
@@ -288,10 +300,11 @@ export function useTableState(char: Character, update: Update) {
         title,
         subtitle: [subtitle, mode.note].filter(Boolean).join(' · ') || undefined,
         lines: [{ label: title, total: r.total, detail: describe(r), kind: 'd20' as const, nat: natOf(r) }],
+        ...(battleSave ? { saveCheck: { who: youWho(c), ability: kind.ability, done: false } } : {}),
       };
       stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () => push(entry), { headline: 'NATURAL 20!' });
     },
-    [push, modeFor],
+    [push, modeFor, update],
   );
 
   /** Rolls your initiative (with any Advantage you have) and returns it, for the turn order. */
@@ -421,17 +434,58 @@ export function useTableState(char: Character, update: Update) {
     return e ? vsFor(e, ranged, yours) : undefined;
   };
 
-  /** Records damage on an enemy (after its resistances); returns notes on what changed it. */
-  const applyPieces = (enemyId: string, pieces: DamagePiece[], key: string): string => {
+  /** What damage does to an enemy, in words: "Goblin 1 takes 7 (resists fire: halved)". */
+  const landText = (enemyId: string, pieces: Pick<DamagePiece, 'amount' | 'type'>[]): string => {
     const e = charRef.current.enemies.find((x) => x.id === enemyId);
     if (!e) return '';
     const notes = pieces.map((p) => damageTo(e, p.amount, p.type).note).filter(Boolean);
+    const took = pieces.reduce((a, p) => a + damageTo(e, p.amount, p.type).amount, 0);
+    return `${e.name} takes ${took}${notes.length ? ` (${[...new Set(notes)].join('; ')})` : ''}`;
+  };
+
+  /** Records damage on an enemy (after its resistances); returns notes on what changed it. */
+  const applyPieces = (enemyId: string, pieces: DamagePiece[], key: string): string => {
+    const text = landText(enemyId, pieces);
+    if (!text) return '';
     update((d) => {
       const x = d.enemies.find((y) => y.id === enemyId);
       if (x) for (const p of pieces) hurt(x, { roll: key, who: p.who, name: p.name, amount: p.amount, type: p.type, what: p.what });
     });
-    const took = pieces.reduce((a, p) => a + damageTo(e, p.amount, p.type).amount, 0);
-    return `${e.name} takes ${took}${notes.length ? ` (${[...new Set(notes)].join('; ')})` : ''}`;
+    return text;
+  };
+
+  /** Who's acting now in initiative, when it's someone else's turn (their damage to you is theirs). */
+  const actingNow = (c: Character): BattleWho | null => {
+    const x = c.fight?.order[c.fight.turn];
+    if (!x) return null;
+    if (x.kind === 'enemy') return enemyWho({ id: x.ref, name: x.name });
+    if (x.kind === 'ally') return allyWho(x.name);
+    return null;
+  };
+  /** A save made on an enemy's turn is against that enemy; on anyone else's, against no one in particular. */
+  const forcedBy = (c: Character): BattleWho | null => {
+    const w = actingNow(c);
+    return w?.side === 'enemy' ? w : null;
+  };
+
+  /**
+   * An attack roll, kept in the battle (with its damage: certain, or from nothing to all of it
+   * while the DM hasn't said whether it hit). At an enemy it also lands or waits, as atTarget does.
+   */
+  const noteAttack = (
+    vs: Vs | undefined,
+    res: { outcome: Outcome; pieces: { amount: number; type: string; what: string }[]; total: number; nat?: number },
+    what: string,
+    who: DamagePiece['who'],
+    name: string,
+    by: BattleWho,
+  ): { target: RollTarget; lines: RollLine[] } | null => {
+    const at = vs ? atTarget(vs, res, what, who, name) : null;
+    const pieces: RolledDamage[] = res.pieces.map((p) => ({ ...p, what: p.what || what, who, name }));
+    const result = res.outcome === 'none' ? 'unknown' : res.outcome === 'crit' ? 'crit' : res.outcome === 'miss' ? 'miss' : 'hit';
+    const roll = at?.target.key ?? uid();
+    update((d) => void logEvent(d, withDamage(d, { kind: 'attack', by, target: vs ? enemyWho(vs) : null, what, result, pieces, roll })));
+    return at;
   };
 
   /**
@@ -518,7 +572,7 @@ export function useTableState(char: Character, update: Update) {
         from,
         () => {
           perform({ element, shape: w.ranged ? 'bolt' : 'touch', from: w.ranged ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
-          const at = vs ? atTarget(vs, res, w.name, 'you', '') : null;
+          const at = noteAttack(vs, res, w.name, 'you', '', youWho(charRef.current));
           push({
             title: vs ? `${w.name} → ${vs.name}` : w.name,
             subtitle: [warn, ...turnNotes, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
@@ -608,7 +662,7 @@ export function useTableState(char: Character, update: Update) {
           from,
           () => {
             perform({ element, shape: action.attack === 'ranged' ? 'bolt' : 'touch', from: action.attack === 'ranged' ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
-            const at = vs ? atTarget(vs, res, action.name, 'companion', comp.name) : null;
+            const at = noteAttack(vs, res, action.name, 'companion', comp.name, companionWho(comp));
             push({
               title: vs ? `${title} → ${vs.name}` : title,
               subtitle: [warn, action.reach, mode.note].filter(Boolean).join(' · ') || undefined,
@@ -656,12 +710,19 @@ export function useTableState(char: Character, update: Update) {
     (comp: Companion, what: string, bonus: number, originEl?: Element | null, kind: TestKind = { type: 'check', ability: 'str' }) => {
       const mode = companionMode(liveCompanion(comp), kind);
       const title = `${comp.name}: ${what}`;
+      const battleSave = kind.type === 'save' && inBattle(charRef.current);
       if (mode.autoFail) {
+        if (battleSave) update((d) => void logEvent(d, { kind: 'save', by: forcedBy(d), target: companionWho(comp), what, ability: kind.ability, dc: null, saved: false, low: 0, high: 0, type: '', roll: uid() }));
         push({ title, lines: [{ label: what, total: 0, detail: `Fails automatically: ${mode.autoFail}`, kind: 'info' }] });
         return;
       }
       const r = safeRoll(d20Expr(bonus, mode.adv));
-      const entry = { title, subtitle: mode.note || undefined, lines: [{ label: what, total: r.total, detail: describe(r), kind: 'd20' as const, nat: natOf(r) }] };
+      const entry = {
+        title,
+        subtitle: mode.note || undefined,
+        lines: [{ label: what, total: r.total, detail: describe(r), kind: 'd20' as const, nat: natOf(r) }],
+        ...(battleSave ? { saveCheck: { who: companionWho(comp), ability: kind.ability, done: false } } : {}),
+      };
       stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () => push(entry), { headline: 'NATURAL 20!' });
     },
     [push],
@@ -689,7 +750,7 @@ export function useTableState(char: Character, update: Update) {
         from,
         () => {
           perform({ element, shape: w.ranged ? 'bolt' : 'touch', from: w.ranged ? from : to, to, power: 0, outcome: res.outcome, label: label(res.outcome, res.dealt, '') });
-          const at = vs ? atTarget(vs, res, w.name, 'companion', comp.name) : null;
+          const at = noteAttack(vs, res, w.name, 'companion', comp.name, companionWho(comp));
           push({
             title: `${comp.name}: ${w.name}${vs ? ` → ${vs.name}` : ''}`,
             subtitle: [warn, mode.note, w.mastery ? `Mastery: ${w.mastery}` : ''].filter(Boolean).join(' · ') || undefined,
@@ -736,6 +797,9 @@ export function useTableState(char: Character, update: Update) {
       if (t) {
         for (const en of t.enemies) if (en.state === 'hit') lines.push({ label: 'Damage dealt', total: 0, text: '✓', detail: applyPieces(en.id, [piece], t.key), kind: 'info' });
       }
+      // In the battle: the companion's damage, certain on a hit, or waiting on the same Hit or Miss.
+      const en0 = t?.enemies[0];
+      update((d) => void logEvent(d, withDamage(d, { kind: 'damage', by: companionWho(comp), target: en0 ? enemyWho(en0) : null, what: action.name, ...(en0?.state === 'pending' ? { result: 'unknown' as const } : {}), pieces: [piece], roll: t?.key ?? uid() })));
       const next: RollEntry = {
         ...entry,
         lines,
@@ -759,11 +823,15 @@ export function useTableState(char: Character, update: Update) {
     const t = entry?.targets?.[index];
     const en = t?.enemies.find((x) => x.id === enemyId);
     if (!entry || !t || !en || en.state !== 'pending') return;
+    const answer: Answer = hit ? 'hit' : 'miss';
+    const fallback = { pieces: t.pieces, half: false };
+    const plan = settlePlan(charRef.current, t.key, enemyId, answer, fallback);
     update((d) => {
       const x = d.enemies.find((y) => y.id === enemyId);
       if (x && t.total !== undefined) learnAc(x, t.total, hit, t.nat);
+      settleRoll(d, t.key, enemyId, answer, fallback);
     });
-    const detail = hit ? applyPieces(enemyId, t.pieces, t.key) : `Missed ${en.name}`;
+    const detail = plan.already ? `Already answered in the battle` : hit ? landText(enemyId, plan.land) : `Missed ${en.name}`;
     amend(entryId, (e) => ({
       ...e,
       lines: [...e.lines, { label: hit ? 'Damage dealt' : 'Missed', total: 0, text: hit ? '✓' : '✕', detail: `${detail}. Noted toward its AC.`, kind: 'info', outcome: hit ? 'hit' : 'miss' }],
@@ -779,8 +847,11 @@ export function useTableState(char: Character, update: Update) {
     const t = entry?.targets?.[index];
     const en = t?.enemies.find((x) => x.id === enemyId);
     if (!entry || !t || !en || en.state !== 'pending') return;
-    const pieces = saved ? (t.half ? t.pieces.map((p) => ({ ...p, amount: Math.floor(p.amount / 2) })) : []) : t.pieces;
-    const detail = pieces.some((p) => p.amount > 0) ? applyPieces(enemyId, pieces, t.key) : `${en.name} takes no damage`;
+    const answer: Answer = saved ? 'saved' : 'failed';
+    const fallback = { pieces: t.pieces, half: !!t.half };
+    const plan = settlePlan(charRef.current, t.key, enemyId, answer, fallback);
+    update((d) => settleRoll(d, t.key, enemyId, answer, fallback));
+    const detail = plan.already ? 'Already answered in the battle' : plan.land.some((p) => p.amount > 0) ? landText(enemyId, plan.land) : `${en.name} takes no damage`;
     amend(entryId, (e) => ({
       ...e,
       lines: [...e.lines, { label: `${en.name}: ${saved ? 'saved' : 'failed'}`, total: 0, text: saved ? '½' : '✓', detail, kind: 'info' }],
@@ -801,6 +872,8 @@ export function useTableState(char: Character, update: Update) {
     update((d) => {
       const a = d.enemies.find((y) => y.id === fromId);
       if (a) a.hits = a.hits.filter((h) => h.roll !== t.key);
+      const b = d.enemies.find((y) => y.id === toId);
+      if (b) retarget(d, t.key, fromId, b);
     });
     const detail = landed && pieces.length ? applyPieces(toId, pieces, t.key) : `Now at ${to.name}`;
     amend(entryId, (e) => ({
@@ -828,14 +901,22 @@ export function useTableState(char: Character, update: Update) {
       };
       if (c.spellcasting.concentratingOn !== k.spell) return finish({ label: 'Concentration', total: 0, detail: `You're no longer concentrating on ${k.spell}.`, kind: 'info' });
       const mode = modeFor({ type: 'save', ability: 'con' });
+      const noteSave = (kept: boolean) => (d: Character) =>
+        void logEvent(d, { kind: 'save', by: null, target: youWho(d), what: k.spell, ability: 'con', dc: k.dc, saved: kept, concentration: true, low: 0, high: 0, type: '', roll: uid() });
       if (mode.autoFail) {
-        update((d) => void endConcentration(d));
+        update((d) => {
+          endConcentration(d);
+          noteSave(false)(d);
+        });
         return finish({ label: `Concentration save (DC ${k.dc})`, total: 0, detail: `${mode.autoFail}: concentration on ${k.spell} ends.`, kind: 'info', outcome: 'miss' });
       }
       const r = safeRoll(d20Expr(savingThrow(c, 'con').total, mode.adv) + mode.extra);
       const kept = r.total >= k.dc;
       const marked = c.enemies.filter((e) => e.marks.some((m) => m.spell === k.spell)).map((e) => e.name);
-      if (!kept) update((d) => void endConcentration(d));
+      update((d) => {
+        if (!kept) endConcentration(d);
+        noteSave(kept)(d);
+      });
       stage(plain(diceOf(r, undefined, true)), centerOf(originEl), () =>
         finish({
           label: `Concentration save (DC ${k.dc})`,
@@ -936,8 +1017,8 @@ export function useTableState(char: Character, update: Update) {
           const res = attackOnce(spellAttack(c, spell), mode, damage, 0, { element: spell.element, orb: true }, vs);
           const prefix = plan.instances > 1 ? `#${i + 1} ` : '';
           res.lines.forEach((l) => lines.push({ ...l, label: prefix + l.label }));
-          if (vs) {
-            const at = atTarget(vs, res, `${spell.name}${plan.instances > 1 ? ` #${i + 1}` : ''}`, 'you', '');
+          const at = noteAttack(vs, res, `${spell.name}${plan.instances > 1 ? ` #${i + 1}` : ''}`, 'you', '', youWho(c));
+          if (at) {
             targets.push(at.target);
             at.lines.forEach((l) => targetLines.push({ ...l, label: prefix + l.label }));
           }
@@ -984,6 +1065,25 @@ export function useTableState(char: Character, update: Update) {
             return { id: e.id, name: e.name, state: 'pending' as const };
           });
           targets.push({ key, kind: spell.resolution === 'auto' ? 'auto' : 'save', pieces, half: spell.halfOnSave, enemies });
+          // The battle keeps each enemy's share: certain once it lands, half-to-full while its save isn't known.
+          update((d) => {
+            for (const en of enemies)
+              logEvent(
+                d,
+                withDamage(d, {
+                  kind: spell.resolution === 'auto' ? 'damage' : 'save',
+                  by: youWho(d),
+                  target: enemyWho(en),
+                  what: spell.name,
+                  ...(spell.resolution === 'save' ? { ability: spell.saveAbility, dc, saved: en.state === 'failed' ? false : null, half: spell.halfOnSave } : {}),
+                  pieces,
+                  roll: key,
+                }),
+              );
+          });
+        } else if (pieces.length) {
+          // At no enemy in particular: kept as one target's worth (half to full while unknown).
+          update((d) => void logEvent(d, withDamage(d, { kind: spell.resolution === 'auto' ? 'damage' : 'save', by: youWho(d), target: null, what: spell.name, ...(spell.resolution === 'save' ? { ability: spell.saveAbility, dc, saved: null, half: spell.halfOnSave } : {}), pieces, roll: uid() })));
         }
       } else if (spell.resolution === 'heal') {
         const r = safeRoll(plan.healing || '0');
@@ -1118,9 +1218,11 @@ export function useTableState(char: Character, update: Update) {
   }, [push, update]);
 
   const damageSelf = useCallback(
-    (amount: number, originEl?: Element | null) => {
+    /** opts.from: who did it (default: whoever's turn it is); opts.log false when the battle already has it. */
+    (amount: number, originEl?: Element | null, opts: { from?: BattleWho | null; log?: boolean; what?: string } = {}) => {
       if (amount <= 0) return;
       const c = charRef.current;
+      if (opts.log !== false) update((d) => void logEvent(d, { kind: 'damage', by: opts.from === undefined ? actingNow(d) : opts.from, target: youWho(d), what: opts.what ?? '', low: amount, high: amount, type: '', roll: uid() }));
       const max = maxHp(c).total;
       let rest = amount;
       const fromTemp = Math.min(c.hp.temp, rest);
@@ -1267,6 +1369,150 @@ export function useTableState(char: Character, update: Update) {
     [push, update],
   );
 
+  /**
+   * A concentration save for damage taken outside the app (HP kept on paper, a hit entered by
+   * hand): the DC from the damage, and the save one tap away on the result.
+   */
+  const concentrationCheck = useCallback(
+    (damage: number) => {
+      const spell = charRef.current.spellcasting.concentratingOn;
+      if (!spell || damage <= 0) return;
+      const dc = concentrationDc(damage);
+      push({ title: 'Concentration', lines: [{ label: 'Damage taken', total: damage, detail: `DC ${dc} Constitution save to keep ${spell} (DC 10, or half the damage if that's more).`, kind: 'info' }], concentration: { dc, spell, done: false } });
+    },
+    [push],
+  );
+
+  /** Whether a save rolled in a battle was made (the DM knows the DC): kept for the battle's stats. */
+  const settleSaveCheck = useCallback(
+    (entryId: number, made: boolean) => {
+      const entry = logRef.current.find((e) => e.id === entryId);
+      const k = entry?.saveCheck;
+      if (!entry || !k || k.done) return;
+      const total = entry.lines[0]?.total ?? 0;
+      update((d) => {
+        logEvent(d, { kind: 'save', by: forcedBy(d), target: k.who, what: entry.title, ability: k.ability, dc: null, saved: made, low: 0, high: 0, type: '', roll: uid() });
+      });
+      amend(entryId, (e) => ({
+        ...e,
+        saveCheck: { ...k, done: true },
+        lines: [...e.lines, { label: made ? 'Made it' : 'Failed', total: 0, text: made ? '✓' : '✕', detail: `${total} ${made ? 'made' : 'failed'} the save: kept in the battle.`, kind: 'info', outcome: made ? 'hit' : 'miss' }],
+      }));
+    },
+    [update],
+  );
+
+  /**
+   * Answers an open roll from the battle's list: through its roll card when that's still in the
+   * history (so the card shows it too), otherwise straight in the battle.
+   */
+  const settleOpen = useCallback(
+    (roll: string, ref: string, answer: Answer) => {
+      const entry = logRef.current.find((e) => e.targets?.some((t) => t.key === roll && t.enemies.some((x) => x.id === ref && x.state === 'pending')));
+      const index = entry?.targets?.findIndex((t) => t.key === roll) ?? -1;
+      if (entry && index >= 0) {
+        if (answer === 'hit' || answer === 'miss') settleHit(entry.id, index, ref, answer === 'hit');
+        else settleSave(entry.id, index, ref, answer === 'saved');
+        return;
+      }
+      update((d) => settleRoll(d, roll, ref, answer));
+    },
+    [settleHit, settleSave, update],
+  );
+
+  /**
+   * Something someone else did on their turn, as the DM or they tell it: an attack (hit, crit or
+   * miss, and its damage), a saving throw (made or failed), or damage from a spell or effect
+   * (with its save made, failed, or not known). Damage lands where the app keeps it: on an enemy,
+   * on you (with your concentration save), or on a companion.
+   */
+  const logAction = useCallback(
+    (a: LoggedAction) => {
+      const c = charRef.current;
+      const landOn = (target: BattleWho, amount: number, by: BattleWho, type: string, what: string) => {
+        if (amount <= 0) return '';
+        if (target.side === 'you') {
+          damageSelf(amount, null, { from: by, log: false, what });
+          return '';
+        }
+        if (target.side === 'enemy') {
+          const piece: DamagePiece = { amount, type, what, who: by.side === 'you' ? 'you' : by.side === 'companion' ? 'companion' : 'party', name: by.side === 'you' ? '' : by.name };
+          return applyPieces(target.ref, [piece], uid());
+        }
+        if (target.side === 'companion') {
+          const k = c.companions.find((x) => x.id === target.ref || x.name === target.name);
+          if (k) {
+            update((d) => {
+              const x = d.companions.find((y) => y.id === k.id);
+              if (!x) return;
+              const fromTemp = Math.min(x.tempHp, amount);
+              x.tempHp -= fromTemp;
+              x.hp = Math.max(0, x.hp - (amount - fromTemp));
+            });
+            return `${k.name} takes ${amount}`;
+          }
+        }
+        return '';
+      };
+      const piece = (by: BattleWho, amount: number, type: string, what: string): RolledDamage => ({ amount, type, what, who: by.side === 'you' ? 'you' : by.side === 'companion' ? 'companion' : 'party', name: by.side === 'you' ? '' : by.name });
+      let detail = '';
+      if (a.kind === 'attack') {
+        const lands = a.result !== 'miss';
+        update((d) => void logEvent(d, withDamage(d, { kind: 'attack', by: a.by, target: a.target, what: a.what, result: a.result, pieces: lands && a.amount > 0 ? [piece(a.by, a.amount, a.type, a.what)] : [], roll: uid() })));
+        detail = lands ? landOn(a.target, a.amount, a.by, a.type, a.what) : '';
+        push({
+          title: `${a.by.name} → ${a.target.name}`,
+          subtitle: a.what || undefined,
+          lines: [{ label: a.result === 'crit' ? 'Critical hit' : a.result === 'hit' ? 'Hit' : 'Miss', total: lands ? a.amount : 0, text: a.result === 'miss' ? '✕' : undefined, detail: [detail, 'Kept in the battle.'].filter(Boolean).join(' · '), kind: lands && a.amount ? 'damage' : 'info', outcome: a.result === 'miss' ? 'miss' : a.result }],
+        });
+      } else if (a.kind === 'save') {
+        update((d) => {
+          logEvent(d, { kind: 'save', by: a.by, target: a.who, what: a.what || (a.concentration ? 'Concentration' : ''), ability: a.ability, dc: a.dc, saved: a.made, ...(a.concentration ? { concentration: true } : {}), low: 0, high: 0, type: '', roll: uid() });
+          // You failing a concentration save, logged here: the spell ends as if you'd rolled it.
+          if (a.who.side === 'you' && a.concentration && !a.made) endConcentration(d);
+        });
+        push({ title: `${a.who.name}: ${ABILITY_NAMES[a.ability]}${a.concentration ? ' concentration' : ''} save`, lines: [{ label: a.made ? 'Made it' : 'Failed', total: 0, text: a.made ? '✓' : '✕', detail: 'Kept in the battle.', kind: 'info', outcome: a.made ? 'hit' : 'miss' }] });
+      } else {
+        const roll = uid();
+        const pieces = a.amount > 0 ? [piece(a.by, a.amount, a.type, a.what)] : [];
+        const saved = a.save === 'unknown' ? null : a.save === 'saved';
+        update((d) =>
+          void logEvent(
+            d,
+            withDamage(d, {
+              kind: a.save === 'none' ? 'damage' : 'save',
+              by: a.by,
+              target: a.target,
+              what: a.what,
+              ...(a.save === 'none' ? {} : { ability: a.ability, dc: null, saved, half: a.half }),
+              pieces,
+              roll,
+            }),
+          ),
+        );
+        // Known now: it lands. Not known: the battle keeps the range, to answer when the DM says.
+        if (a.save !== 'unknown') {
+          const landed = a.save === 'saved' ? (a.half ? Math.floor(a.amount / 2) : 0) : a.amount;
+          detail = landOn(a.target, landed, a.by, a.type, a.what);
+        }
+        const half = a.half ? Math.floor(a.amount / 2) : 0;
+        push({
+          title: `${a.by.name} → ${a.target.name}`,
+          subtitle: a.what || undefined,
+          lines: [
+            {
+              label: a.save === 'unknown' ? `Damage: ${half}–${a.amount}` : 'Damage',
+              total: a.save === 'unknown' ? a.amount : a.save === 'saved' ? half : a.amount,
+              detail: [a.save === 'unknown' ? 'Its save isn’t known: the battle counts the range until you answer it there.' : a.save === 'none' ? '' : a.save === 'saved' ? 'Save made' : 'Save failed', detail, 'Kept in the battle.'].filter(Boolean).join(' · '),
+              kind: 'damage',
+            },
+          ],
+        });
+      }
+    },
+    [push, update, damageSelf],
+  );
+
   const preview = useCallback((element: FxElement, shape: Spell['shape'], power: number, originEl?: Element | null) => {
     const from = centerOf(originEl);
     perform({ element, shape, from, to: shape === 'touch' ? undefined : fx.defaultTarget(from), power, outcome: 'hit', label: 'Preview' });
@@ -1289,6 +1535,10 @@ export function useTableState(char: Character, update: Update) {
       rollInitiative,
       moveRoll,
       concentrationSave,
+      concentrationCheck,
+      settleSaveCheck,
+      settleOpen,
+      logAction,
       latest,
       dismissLatest: () => setLatest(null),
       clearLog: () => setLog([]),
@@ -1313,7 +1563,7 @@ export function useTableState(char: Character, update: Update) {
       rest,
       preview,
     }),
-    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, settleHit, settleSave, rollInitiative, moveRoll, concentrationSave, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
+    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, settleHit, settleSave, rollInitiative, moveRoll, concentrationSave, concentrationCheck, settleSaveCheck, settleOpen, logAction, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
   );
 }
 

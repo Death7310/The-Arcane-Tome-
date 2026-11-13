@@ -132,6 +132,7 @@ export function SpellsPanel() {
           <span style={{ flex: 1 }}>
             Concentrating on <b>{c.spellcasting.concentratingOn}</b>
           </span>
+          <ConcentrationDamage />
           <button type="button" className="btn small" onClick={() => update((d) => void endConcentration(d))} title="Ends the spell, and takes its marks off your enemies">
             End
           </button>
@@ -863,5 +864,29 @@ function FillSpellFromText({ spell: s, set }: { spell: Spell; set: (fn: (sp: Spe
         </button>
       </div>
     </div>
+  );
+}
+
+/** Took damage the app didn't see? Its concentration save: type the damage, roll the save. */
+function ConcentrationDamage() {
+  const t = useTable();
+  const [dmg, setDmg] = useState('');
+  const n = parseInt(dmg, 10);
+  return (
+    <span className="row" style={{ gap: 4, flexWrap: 'nowrap' }}>
+      <input className="input" inputMode="numeric" style={{ width: 64 }} placeholder="dmg" value={dmg} onChange={(e) => setDmg(e.target.value)} aria-label="Damage you took, for a concentration save" />
+      <button
+        type="button"
+        className="btn small"
+        disabled={!(n > 0)}
+        title="Damage you took that the app didn't see: the Constitution save to keep concentrating (DC 10 or half the damage)"
+        onClick={() => {
+          t.concentrationCheck(n);
+          setDmg('');
+        }}
+      >
+        Save
+      </button>
+    </span>
   );
 }

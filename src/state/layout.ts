@@ -18,6 +18,7 @@ export const PANELS = {
   conditions: ['combat'],
   initiative: ['combat'],
   enemies: ['enemies'],
+  battle: ['enemies'],
   counters: ['counters'],
   turn: ['combat'],
   attacks: ['combat'],
@@ -91,7 +92,7 @@ export const ownTab = (p: Pick<Page, 'id' | 'custom'>): boolean => p.custom || O
 
 const DEFAULT_COLUMNS: PanelKey[][] = [
   ['identity', 'abilities', 'glance', 'languages', 'feats', 'counters'],
-  ['initiative', 'enemies', 'vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
+  ['initiative', 'enemies', 'battle', 'vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
   ['spells', 'compendium', 'features', 'inventory', 'notes', 'backgrounds'],
 ];
 
@@ -99,7 +100,7 @@ const DEFAULT_COLUMNS: PanelKey[][] = [
 const DEFAULT_PAGE_PANELS: Record<string, PanelKey[]> = {
   stats: ['identity', 'abilities', 'skills', 'features', 'glance'],
   combat: ['glance', 'initiative', 'vitals', 'conditions', 'turn', 'attacks', 'companions'],
-  enemies: ['enemies'],
+  enemies: ['enemies', 'battle'],
   counters: ['counters'],
   magic: ['spells'],
   gear: ['inventory', 'notes'],

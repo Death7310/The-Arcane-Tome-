@@ -87,6 +87,23 @@ function ConcentrationButton({ e }: { e: RollEntry }) {
   );
 }
 
+/** A saving throw in a battle: did it make the DC? Kept for the battle's stats (save rates, CON saves). */
+function SaveCheckButtons({ e }: { e: RollEntry }) {
+  const t = useTable();
+  if (!e.saveCheck || e.saveCheck.done) return null;
+  return (
+    <div className="row boosts">
+      <span className="hint">For the battle:</span>
+      <button type="button" className="btn small" onClick={() => t.settleSaveCheck(e.id, true)}>
+        Made it
+      </button>
+      <button type="button" className="btn small" onClick={() => t.settleSaveCheck(e.id, false)}>
+        Failed
+      </button>
+    </div>
+  );
+}
+
 /**
  * A roll at enemies, still to settle: the DM's Hit or Miss for an unknown AC, each enemy's
  * Failed or Saved for a save spell, and moving it to another enemy if it went to the wrong one.
@@ -151,6 +168,7 @@ export function EntryActions({ e }: { e: RollEntry }) {
       <TargetActions e={e} />
       <BoostButtons e={e} />
       <ConcentrationButton e={e} />
+      <SaveCheckButtons e={e} />
     </>
   );
 }
@@ -162,7 +180,10 @@ export function ResultCard() {
   const [hover, setHover] = useState(false);
   // A hit a companion can still add to stays up longer, so there's time to decide.
   const offering =
-    (!!e?.boost && availableBoosts(c, e.boost.attacker).some((b) => !b.blocked && !e.boost!.used.includes(`${b.comp.id}:${b.action.id}`))) || (!!e?.concentration && !e.concentration.done) || !!e?.targets?.some((r) => r.enemies.some((x) => x.state === 'pending'));
+    (!!e?.boost && availableBoosts(c, e.boost.attacker).some((b) => !b.blocked && !e.boost!.used.includes(`${b.comp.id}:${b.action.id}`))) ||
+    (!!e?.concentration && !e.concentration.done) ||
+    (!!e?.saveCheck && !e.saveCheck.done) ||
+    !!e?.targets?.some((r) => r.enemies.some((x) => x.state === 'pending'));
   // A roll waiting on the DM (Hit or Miss, an enemy's save) stays up until it's answered or closed.
   const waiting = !!e?.targets?.some((r) => r.enemies.some((x) => x.state === 'pending'));
   useEffect(() => {

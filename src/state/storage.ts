@@ -230,8 +230,9 @@ export function downloadText(filename: string, text: string): boolean {
 
 /** Adds a save point for a character, keeping its newest SAVE_POINTS_PER_CHARACTER. */
 export function addSavePoint(points: SavePoint[], c: Character, name: string): SavePoint[] {
-  // The portrait is left out: it rarely changes, and copying it into every save point would fill storage.
-  const point: SavePoint = { id: uid(), characterId: c.id, name, createdAt: Date.now(), data: { ...structuredClone(c), portrait: null } };
+  // The portrait and past battles are left out: copying them into every save point would fill
+  // storage, and loading a save point keeps the ones you have (see App: onLoadSavePoint).
+  const point: SavePoint = { id: uid(), characterId: c.id, name, createdAt: Date.now(), data: { ...structuredClone({ ...c, battles: [] }), portrait: null } };
   const mine = [point, ...points.filter((p) => p.characterId === c.id)].slice(0, SAVE_POINTS_PER_CHARACTER);
   return [...mine, ...points.filter((p) => p.characterId !== c.id)];
 }

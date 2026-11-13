@@ -44,6 +44,14 @@ describe('save points', async () => {
     expect(points[0].name).toBe('Before the dragon');
   });
 
+  it('leave past battles out (loading one keeps the battles you have)', () => {
+    const c = sampleCharacter();
+    c.battles = [{ id: 'b1', name: 'Goblins', started: 1, ended: 2, rounds: 3, combatants: [], events: [], enemies: [] }];
+    const points = addSavePoint([], c, 'Before the dragon');
+    expect(points[0].data.battles).toEqual([]);
+    expect(c.battles).toHaveLength(1);
+  });
+
   it("keep each character's newest saves and leave other characters' alone", () => {
     const a = sampleCharacter();
     const b = blankCharacter();

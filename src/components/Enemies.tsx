@@ -24,6 +24,7 @@ import {
   tally,
 } from '../systems/dnd5e/enemies';
 import { uid, type Character, type Enemy, type EnemyStatus, type Spell } from '../systems/dnd5e/model';
+import { allyWho, enemyWho, logEvent, openEvents, rangeText, withDamage } from '../systems/dnd5e/battle';
 import { pactSlots, signed, spellSlots, weaponAttack } from '../systems/dnd5e/rules';
 import { freeCastSources } from '../systems/dnd5e/spellsource';
 import type { CreatureDef } from '../systems/dnd5e/srd';
@@ -119,6 +120,10 @@ function EnemyCard({ e, creatures }: { e: Enemy; creatures: CreatureDef[] }) {
   const ac = knownAc(e, creatures);
   const max = knownMaxHp(e, creatures);
   const t = tally(e);
+  // Damage still waiting on the DM (a save or a hit not known): from the least to the most it adds.
+  const open = openEvents(c.battle)
+    .filter((x) => x.target?.ref === e.id)
+    .reduce((a, x) => ({ low: a.low + x.low, high: a.high + x.high }), { low: 0, high: 0 });
   const melee = attackAgainst(e, false);
   const ranged = attackAgainst(e, true);
   const effect = (a: ReturnType<typeof attackAgainst>) =>
@@ -227,7 +232,10 @@ function EnemyCard({ e, creatures }: { e: Enemy; creatures: CreatureDef[] }) {
       </section>
 
       <section>
-        <h4>Damage taken: {t.total}</h4>
+        <h4>
+          Damage taken: {t.total}
+          {open.high > 0 && <span className="hint"> (+{rangeText(open)} not settled)</span>}
+        </h4>
         <p className="hint" style={{ margin: 0 }}>
           {[`You ${t.you}`, ...t.companions.map(([n, v]) => `${n} ${v}`), ...t.party.map(([n, v]) => `${n} ${v}`)].join(' · ')}
         </p>
@@ -511,7 +519,10 @@ function PartyDamage({ e }: { e: Enemy }) {
       const x = d.enemies.find((y) => y.id === e.id);
       const name = who.trim() || 'Party';
       if (!x || !Number.isFinite(n) || n <= 0) return;
-      hurt(x, { roll: uid(), who: 'party', name, amount: n, type, what: '' });
+      const roll = uid();
+      // In the battle too, as that party member's damage (after this enemy's resistances).
+      logEvent(d, withDamage(d, { kind: 'damage', by: allyWho(name), target: enemyWho(x), what: '', pieces: [{ amount: n, type, what: '', who: 'party', name }], roll }));
+      hurt(x, { roll, who: 'party', name, amount: n, type, what: '' });
       if (name !== 'Party' && !d.party.includes(name)) d.party.push(name);
     });
   return (

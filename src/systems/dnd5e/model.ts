@@ -358,6 +358,10 @@ export interface Character {
   party: string[];
   /** The initiative order of the current fight, or null outside a fight. */
   fight: Fight | null;
+  /** The battle going on (every attack, save and damage, for its stats), or null between battles. */
+  battle: Battle | null;
+  /** Battles you've ended, newest first. */
+  battles: Battle[];
   /** Your own counters (arrows, gold, ki, a quest's days…) on the Counters page. */
   counters: Counter[];
   updatedAt: number;
@@ -429,6 +433,74 @@ export interface Enemy {
   /** Added from the creature list: its id there, and whether you've chosen to see and use its stats. */
   creatureId: string;
   revealed: boolean;
+}
+
+// ── Battles ──────────────────────────────────────────────────────────────────
+// What happened in a fight, kept for its stats: every attack (hit, miss or not yet known), every
+// saving throw (made, failed or not yet known), and the damage each dealt. A save the DM never
+// tells you about leaves a range: the least it can have done (the save made) to the most (failed).
+
+/** Someone in a battle. Enemies are known by their id; everyone else by name. */
+export interface BattleWho {
+  side: 'you' | 'companion' | 'ally' | 'enemy';
+  name: string;
+  /** The enemy's or companion's id ("" for you and allies). */
+  ref: string;
+}
+
+/** Damage as rolled (before an enemy's resistances), and whose it was. */
+export interface RolledDamage {
+  amount: number;
+  type: string;
+  what: string;
+  who: EnemyHit['who'];
+  name: string;
+}
+
+export interface BattleEvent {
+  id: string;
+  time: number;
+  /** The initiative round (0 outside initiative). */
+  round: number;
+  kind: 'attack' | 'save' | 'damage';
+  /** Who did it (null when nobody did: a trap, a fall). */
+  by: BattleWho | null;
+  /** Who it was at, or who made the save (null when it was at no one in particular). */
+  target: BattleWho | null;
+  /** The weapon, spell or thing: "Scimitar", "Fireball", "Concentration". */
+  what: string;
+  /** Attacks (and damage riding on one): hit, crit, miss, or unknown while the DM hasn't said. */
+  result?: 'hit' | 'crit' | 'miss' | 'unknown';
+  /** Saves: the ability, the DC when known, and whether it was made (null while unknown). */
+  ability?: Ability;
+  dc?: number | null;
+  saved?: boolean | null;
+  /** A save to keep concentrating. */
+  concentration?: boolean;
+  /** Damage on a made save: half (true) or none. */
+  half?: boolean;
+  /** The damage it dealt: certain (low = high), or a range while a hit or a save is unknown. */
+  low: number;
+  high: number;
+  type: string;
+  /** The roll it came from: the DM's answer to that roll settles every part of it. */
+  roll: string;
+  /** The damage as rolled, so it can be worked out again (the DM's answer, a move to another enemy). */
+  pieces?: RolledDamage[];
+}
+
+export interface Battle {
+  id: string;
+  name: string;
+  started: number;
+  /** When it ended (null while it's going on). */
+  ended: number | null;
+  rounds: number;
+  /** Everyone who was in it, including those who did nothing. */
+  combatants: BattleWho[];
+  events: BattleEvent[];
+  /** How each enemy ended up, when the battle ended. */
+  enemies: { ref: string; name: string; status: EnemyStatus }[];
 }
 
 /** One place in the initiative order. */
@@ -599,6 +671,8 @@ export function blankCharacter(): Character {
     targetId: null,
     party: [],
     fight: null,
+    battle: null,
+    battles: [],
     counters: [],
     tiles: [],
     languageNotes: {},
@@ -676,6 +750,8 @@ export function normalizeCharacter(raw: unknown): Character {
     targetId: typeof c.targetId === 'string' && Array.isArray(c.enemies) && c.enemies.some((e) => e?.id === c.targetId) ? c.targetId : null,
     party: Array.isArray(c.party) ? c.party.filter((n): n is string => typeof n === 'string' && !!n.trim()) : [],
     fight: normalizeFight(c.fight),
+    battle: readBattle(c.battle),
+    battles: Array.isArray(c.battles) ? c.battles.map(readBattle).filter((b): b is Battle => !!b).slice(0, MAX_BATTLES) : [],
     counters: Array.isArray(c.counters) ? c.counters.filter((k) => k && typeof k === 'object').map((k) => blankCounter(k)) : [],
     tiles: Array.isArray(c.tiles)
       ? c.tiles.filter((t) => t && typeof t.id === 'string').map((t) => blankTile({ ...t, entries: Array.isArray(t.entries) ? t.entries.map((e) => blankTileEntry(e?.kind ?? 'note', e)) : [] }))
@@ -726,6 +802,74 @@ function normalizeFight(raw: unknown): Fight | null {
     : [];
   if (!order.length) return null;
   return { round: Math.max(1, Number(f.round) || 1), turn: Math.min(order.length - 1, Math.max(0, Number(f.turn) || 0)), order };
+}
+
+/** The most ended battles kept on a character (the oldest go first; Save as a file keeps any for good). */
+export const MAX_BATTLES = 50;
+
+const SIDES = ['you', 'companion', 'ally', 'enemy'] as const;
+const HIT_WHO = ['you', 'companion', 'party'] as const;
+const STATUSES: EnemyStatus[] = ['healthy', 'bloodied', 'badly', 'down'];
+const bnum = (v: unknown, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const bstr = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
+
+function readWho(raw: unknown): BattleWho | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const w = raw as Partial<BattleWho>;
+  if (!SIDES.includes(w.side as never)) return null;
+  return { side: w.side as BattleWho['side'], name: bstr(w.name).slice(0, 80), ref: bstr(w.ref) };
+}
+
+function readEvent(raw: unknown): BattleEvent | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const e = raw as Partial<BattleEvent>;
+  if (e.kind !== 'attack' && e.kind !== 'save' && e.kind !== 'damage') return null;
+  const low = Math.max(0, bnum(e.low));
+  const ev: BattleEvent = {
+    id: bstr(e.id) || uid(),
+    time: bnum(e.time),
+    round: Math.max(0, bnum(e.round)),
+    kind: e.kind,
+    by: readWho(e.by),
+    target: readWho(e.target),
+    what: bstr(e.what).slice(0, 120),
+    low,
+    high: Math.max(low, bnum(e.high)),
+    type: bstr(e.type).slice(0, 40),
+    roll: bstr(e.roll),
+  };
+  if (e.result === 'hit' || e.result === 'crit' || e.result === 'miss' || e.result === 'unknown') ev.result = e.result;
+  if (ABILITIES.includes(e.ability as never)) ev.ability = e.ability;
+  if (e.dc === null || typeof e.dc === 'number') ev.dc = e.dc === null || !Number.isFinite(e.dc) ? null : e.dc;
+  if (e.saved === null || typeof e.saved === 'boolean') ev.saved = e.saved;
+  if (e.concentration) ev.concentration = true;
+  if (typeof e.half === 'boolean') ev.half = e.half;
+  if (Array.isArray(e.pieces))
+    ev.pieces = e.pieces
+      .filter((p): p is RolledDamage => !!p && typeof p === 'object')
+      .map((p) => ({ amount: Math.max(0, bnum(p.amount)), type: bstr(p.type), what: bstr(p.what), who: HIT_WHO.includes(p.who as never) ? p.who : 'party', name: bstr(p.name) }));
+  return ev;
+}
+
+/** Reads a saved or imported battle, repairing what it can; null if it isn't one. */
+export function readBattle(raw: unknown): Battle | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const b = raw as Partial<Battle>;
+  if (!Array.isArray(b.events)) return null;
+  return {
+    id: bstr(b.id) || uid(),
+    name: bstr(b.name).slice(0, 120),
+    started: bnum(b.started),
+    ended: typeof b.ended === 'number' && Number.isFinite(b.ended) ? b.ended : null,
+    rounds: Math.max(0, bnum(b.rounds)),
+    combatants: Array.isArray(b.combatants) ? b.combatants.map(readWho).filter((w): w is BattleWho => !!w) : [],
+    events: b.events.map(readEvent).filter((e): e is BattleEvent => !!e),
+    enemies: Array.isArray(b.enemies)
+      ? b.enemies
+          .filter((x) => x && typeof x === 'object')
+          .map((x) => ({ ref: bstr(x.ref), name: bstr(x.name), status: STATUSES.includes(x.status) ? x.status : 'healthy' }))
+      : [],
+  };
 }
 
 export function blankCounter(partial: Partial<Counter> = {}): Counter {

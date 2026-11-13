@@ -16,6 +16,7 @@ import { SpellCompendiumPanel } from './components/SpellBrowser';
 import { FeatLibraryPanel } from './components/Feats';
 import { BackgroundLibraryPanel } from './components/Backgrounds';
 import { DownWatch, EnemiesPanel } from './components/Enemies';
+import { BattlePanel } from './components/Battle';
 import { InitiativePanel } from './components/Initiative';
 import { CountersPanel } from './components/Counters';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -57,6 +58,7 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   compendium: SpellCompendiumPanel,
   feats: FeatLibraryPanel,
   enemies: EnemiesPanel,
+  battle: BattlePanel,
   initiative: InitiativePanel,
   counters: CountersPanel,
   backgrounds: BackgroundLibraryPanel,
@@ -81,6 +83,7 @@ const PANEL_NAMES: Record<PanelId, string> = {
   compendium: 'Spell compendium',
   feats: 'Feat library',
   enemies: 'Enemies',
+  battle: 'Battle',
   initiative: 'Initiative',
   counters: 'Counters',
   backgrounds: 'Background library',
@@ -636,7 +639,8 @@ export default function App() {
                 const current = s.characters.find((c) => c.id === point.characterId);
                 // Keep a way back: the state you're leaving becomes a save point too.
                 const points = current ? addSavePoint(s.savePoints, current, `Before loading “${point.name}”`) : s.savePoints;
-                const loaded = { ...structuredClone(point.data), id: point.characterId, portrait: current?.portrait ?? null, updatedAt: Date.now() };
+                // Your portrait and past battles stay as they are: a save point doesn't carry them.
+                const loaded = { ...structuredClone(point.data), id: point.characterId, portrait: current?.portrait ?? null, battles: current?.battles ?? point.data.battles, updatedAt: Date.now() };
                 return { ...s, savePoints: points, characters: s.characters.map((c) => (c.id === point.characterId ? loaded : c)) };
               })
             }
