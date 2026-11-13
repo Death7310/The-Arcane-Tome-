@@ -159,6 +159,7 @@ jobs:
         working-directory: desktop
         run: |
           npm ci
+          node --test updater-checks.cjs
           cp -R ../dist-native app
           version=$(node -p "require('../package.json').version")
           # The icon at every size macOS uses.
@@ -172,7 +173,7 @@ jobs:
             --icon=build/icon.icns --app-bundle-id=io.github.death7310.arcanetome \
             --app-version="$version" --build-version=${{ github.run_number }} \
             --app-category-type=public.app-category.role-playing-games \
-            --ignore='^/(build|out|dmg|node_modules|icon-1024\.png|\.gitignore)' --out=out --overwrite
+            --ignore='^/(build|out|dmg|node_modules|updater-checks\.cjs|icon-1024\.png|\.gitignore)' --out=out --overwrite
           app="out/Arcane Tome-darwin-universal/Arcane Tome.app"
           # Signed ad hoc, so macOS offers "Open Anyway" once instead of calling it damaged.
           codesign --force --deep --sign - "$app"
@@ -188,6 +189,19 @@ jobs:
             sleep 5
           done
           test -f ../mac/arcane-tome-mac.dmg
+          # The in-app updater's swap, for real: an installed copy is replaced from this DMG.
+          apps="$RUNNER_TEMP/Applications"
+          mkdir -p "$apps"
+          cp -R "$app" "$apps/Arcane Tome.app"
+          touch "$apps/Arcane Tome.app/Contents/OLD-COPY"
+          node -e "require('fs').writeFileSync(process.argv[1], require('./updater.cjs').SWAP_SCRIPT)" "$RUNNER_TEMP/swap.sh"
+          cp ../mac/arcane-tome-mac.dmg "$RUNNER_TEMP/update.dmg"
+          NO_OPEN=1 TMPDIR="$RUNNER_TEMP" sh "$RUNNER_TEMP/swap.sh" 999999 "$RUNNER_TEMP/update.dmg" "$apps/Arcane Tome.app" || { cat "$RUNNER_TEMP/arcane-tome-update.log"; exit 1; }
+          cat "$RUNNER_TEMP/arcane-tome-update.log"
+          test ! -e "$apps/Arcane Tome.app/Contents/OLD-COPY"
+          test "$(ls -A "$apps")" = "Arcane Tome.app"
+          codesign --verify --deep --strict "$apps/Arcane Tome.app"
+          "$apps/Arcane Tome.app/Contents/MacOS/Arcane Tome" --smoke-test
           echo "Built the Mac app $version (build ${{ github.run_number }}), $(du -h ../mac/arcane-tome-mac.dmg | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
@@ -232,7 +246,12 @@ jobs:
           for f in arcane-tome.apk arcane-tome.ipa arcane-tome-mac.dmg; do
             if [ -f "site/$f" ]; then files=$(jq -c --arg f "$f" '. + [$f]' <<<"$files"); fi
           done
-          jq -c --argjson files "$files" '.files = $files' site/version.json > site/version.next
+          # Each file's SHA-256, so the apps can check a download is whole and the same file.
+          sums='{}'
+          for f in arcane-tome.apk arcane-tome.ipa arcane-tome-mac.dmg; do
+            if [ -f "site/$f" ]; then sums=$(jq -c --arg f "$f" --arg h "$(sha256sum "site/$f" | cut -d' ' -f1)" '. + {($f): $h}' <<<"$sums"); fi
+          done
+          jq -c --argjson files "$files" --argjson sums "$sums" '.files = $files | .sha256 = $sums' site/version.json > site/version.next
           mv site/version.next site/version.json
           cat site/version.json
       - uses: actions/upload-pages-artifact@v3

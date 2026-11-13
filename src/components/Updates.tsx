@@ -16,6 +16,24 @@ export function UpdateSection(props: { autoCheck?: boolean }) {
   const kind = appKind();
   const pwa = usePwa();
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  // The Mac app can replace itself in place (desktop/updater.cjs): whether this copy can, and how far along it is.
+  const bridge = typeof window !== 'undefined' ? window.arcaneDesktop?.selfUpdate : undefined;
+  const [self, setSelf] = useState<{ ok: boolean; why: string } | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const [selfMessage, setSelfMessage] = useState<{ text: string; good: boolean } | null>(null);
+  useEffect(() => {
+    if (!bridge) return;
+    void bridge.available().then(setSelf).catch(() => setSelf({ ok: false, why: '' }));
+    return bridge.onProgress((p) => setProgress(p.total ? Math.round((100 * p.received) / p.total) : null));
+  }, [bridge]);
+  const selfUpdate = async () => {
+    if (!bridge) return;
+    setSelfMessage(null);
+    setProgress(0);
+    const r = await bridge.run().catch((e: Error) => ({ ok: false, message: e.message }));
+    if (!r.ok) setProgress(null);
+    setSelfMessage({ text: r.message, good: r.ok });
+  };
 
   const check = async () => {
     setStatus({ kind: 'checking' });
@@ -61,6 +79,10 @@ export function UpdateSection(props: { autoCheck?: boolean }) {
           <button type="button" className="btn primary" onClick={applyUpdate}>
             Update now
           </button>
+        ) : status.kind === 'available' && kind === 'mac' && self?.ok && !fileMissing && selfMessage?.good !== true ? (
+          <button type="button" className="btn primary" disabled={progress !== null} onClick={() => void selfUpdate()}>
+            {progress === null ? 'Update and restart' : `Downloading… ${progress}%`}
+          </button>
         ) : status.kind === 'available' && file && !fileMissing ? (
           <button type="button" className="btn primary" onClick={() => openOutside(`${SITE}${file}`)}>
             Download the update
@@ -78,9 +100,22 @@ export function UpdateSection(props: { autoCheck?: boolean }) {
           {status.kind === 'error' && status.message}
         </span>
       </div>
+      {progress !== null && (
+        <div className="points-bar" aria-hidden="true">
+          <span style={{ width: `${progress}%` }} />
+        </div>
+      )}
+      {selfMessage && (
+        <p className="hint" role="alert" style={{ margin: 0, color: selfMessage.good ? 'var(--good)' : 'var(--bad)' }}>
+          {selfMessage.text}
+        </p>
+      )}
       {status.kind === 'available' && file && !fileMissing && kind !== 'web' && (
         <p className="hint" style={{ margin: 0 }}>
-          {HOW[kind]} If you want a copy first, use Save a backup below.
+          {kind === 'mac' && self?.ok
+            ? 'Update and restart downloads it, checks it’s the published file, then Arcane Tome closes, replaces itself in Applications and opens again on the new version. Your characters stay.'
+            : HOW[kind]}
+          {kind === 'mac' && self && !self.ok && self.why ? ` (${self.why})` : ''} If you want a copy first, use Save a backup below.
         </p>
       )}
     </>
