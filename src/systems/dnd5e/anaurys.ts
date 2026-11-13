@@ -22,11 +22,12 @@ const SHADOW_TOUCHED = 'feat:Shadow Touched';
 const item = (name: string, qty: number, weight: number, notes = ''): Item => ({ id: uid(), name, qty, weight, notes });
 
 // He fights with two scimitars. Attacking with one in the Attack action opens the Light property's
-// extra attack with the other (a Bonus Action; no Dexterity on its damage without the Two-Weapon
-// Fighting style). Its mastery, Nick, would make that attack part of the Attack action, freeing the
-// Bonus Action to command Artex, but his sheet's two masteries are the Shortbow and the Longsword.
+// extra attack with the other; their mastery, Nick, makes that attack part of the Attack action, so
+// his Bonus Action stays free to command Artex. No Dexterity on its damage without the Two-Weapon
+// Fighting style. His D&D Beyond sheet chose the Longsword (Sap); he swapped it for the Scimitar,
+// which a Ranger can do after a Long Rest.
 const SCIMITAR_NOTE =
-  "Light: after you attack with one scimitar in the Attack action, you can attack with the other as a Bonus Action (no Dexterity on its damage). Its mastery property is Nick, which would make that attack part of the Attack action, but your Weapon Mastery choices are the Shortbow and the Longsword; a Ranger can change them after a Long Rest. Type Nick into Mastery here (on both) once you do.";
+  'Light and Nick: after you attack with one scimitar in the Attack action, you can attack with the other as part of the same Attack action (Nick), once per turn, leaving your Bonus Action free for Artex. No Dexterity on that attack’s damage (Light). Use the Nick button on the other scimitar.';
 
 /** Anaurys, ready to play. Loads the SRD rules first (for his spells and class features). */
 export async function anaurysCharacter(): Promise<Character> {
@@ -154,6 +155,7 @@ export function buildAnaurys(cat: Catalog): Character {
         damage: [{ dice: '1d6', type: 'slashing' }],
         finesse: true,
         properties: 'Finesse, Light',
+        mastery: 'Nick',
         notes: SCIMITAR_NOTE,
       }),
       blankWeapon({
@@ -161,6 +163,7 @@ export function buildAnaurys(cat: Catalog): Character {
         damage: [{ dice: '1d6', type: 'slashing' }],
         finesse: true,
         properties: 'Finesse, Light',
+        mastery: 'Nick',
         notes: SCIMITAR_NOTE,
       }),
     ],
@@ -202,10 +205,10 @@ export function buildAnaurys(cat: Catalog): Character {
         recharge: 'none',
       }),
       blankFeature({
-        name: 'Weapon Masteries: Shortbow (Vex), Longsword (Sap)',
+        name: 'Weapon Masteries: Shortbow (Vex), Scimitar (Nick)',
         source: 'Ranger 1',
         description:
-          "Vex (Shortbow): when you hit a creature and deal damage to it, you have Advantage on your next attack roll against it before the end of your next turn. Sap (Longsword): a creature you hit has Disadvantage on its next attack roll before the start of your next turn.",
+          "Vex (Shortbow): when you hit a creature and deal damage to it, you have Advantage on your next attack roll against it before the end of your next turn. Nick (Scimitar): when you make the Light property's extra attack, you can make it as part of the Attack action instead of as a Bonus Action, once per turn. (His D&D Beyond sheet chose the Longsword, Sap; a Ranger can change these after a Long Rest.)",
         usesMax: null,
         recharge: 'none',
       }),

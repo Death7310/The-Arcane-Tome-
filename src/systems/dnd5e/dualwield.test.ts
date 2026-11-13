@@ -47,8 +47,10 @@ describe('Two Light weapons', () => {
   it('knows which weapons are Light and which have Nick set', () => {
     expect(isLight(bow)).toBe(false);
     expect(isLight(scimitar) && isLight(offHand)).toBe(true);
-    expect(hasNick(offHand)).toBe(false); // his masteries are the Shortbow and the Longsword
-    expect(hasNick({ ...offHand, mastery: 'Nick' })).toBe(true);
+    // He swapped the Longsword (Sap) on his sheet for the Scimitar (Nick).
+    expect(hasNick(scimitar) && hasNick(offHand)).toBe(true);
+    expect(c.features.some((f) => f.name === 'Weapon Masteries: Shortbow (Vex), Scimitar (Nick)')).toBe(true);
+    expect(hasNick({ ...offHand, mastery: '' })).toBe(false);
   });
 
   it('leaves Dexterity off the extra attack’s damage, unless Two-Weapon Fighting adds it', () => {
