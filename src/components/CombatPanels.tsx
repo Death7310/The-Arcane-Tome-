@@ -139,6 +139,7 @@ export function TurnPanel() {
   const { char: c, update } = useChar();
   const t = useTable();
   const [feet, setFeet] = useState(5);
+  const [attacking, setAttacking] = useState(false);
   const budget = speed(c).total * (1 + c.turn.dashes);
   const left = Math.max(0, budget - c.turn.movementUsed);
   const aa = actionAttacks(c);
@@ -246,16 +247,114 @@ export function TurnPanel() {
       </div>
       <h3>Actions</h3>
       <div className="actions-grid">
+        <button type="button" className="btn small primary" aria-expanded={attacking} onClick={() => setAttacking((v) => !v)} title="Your Attack action, attack by attack">
+          Attack
+        </button>
         {STANDARD_ACTIONS.map((a) => (
           <button key={a.id} type="button" className="btn small" title={a.summary} onClick={(e) => t.standardAction(a.id, e.currentTarget)}>
             {a.name}
           </button>
         ))}
       </div>
+      {attacking && c.weapons.length > 0 && <AttackAction />}
+      {attacking && !c.weapons.length && <p className="hint">No weapons yet: add them in Attacks.</p>}
       <p className="hint" style={{ marginBottom: 0 }}>
         Attacks, spells and features mark the Action, Bonus Action or Reaction they use. Hover an action for its rule.
       </p>
     </Panel>
+  );
+}
+
+/**
+ * Your Attack action, attack by attack: each attack it gives (two with Extra Attack), then the
+ * off-hand swing with your other Light weapon (the Light property's extra attack, which D&D Beyond
+ * lists as Two-Weapon Fighting; Nick makes it part of this Action), each with the weapons to make
+ * it with and where it comes from. Your Bonus Action and companions follow, so the whole turn is
+ * on one card. Roll results show as usual.
+ */
+function AttackAction() {
+  const { char: c, update } = useChar();
+  const t = useTable();
+  const per = attacksPerAction(c);
+  const lights = c.weapons.filter(isLight);
+  const offHand = lights.length >= 2;
+  const nick = offHand && lights.some(hasNick);
+  const made = c.turn.attacks;
+  const swing = (w: Weapon, light = false) => {
+    const atk = weaponAttack(c, w);
+    const bonus = light ? lightExtraDamageBonus(c, w).bonus : weaponDamageBonus(c, w);
+    const dmg = w.damage.map((d, i) => `${i === 0 && bonus ? `${d.dice}${signed(bonus)}` : d.dice} ${d.type}`).join(' + ');
+    return (
+      <button key={w.id} type="button" className="btn small" onClick={(e) => t.attack(w, e.currentTarget, light ? { light: true } : {})} title={`${w.name}: ${signed(atk.total)} to hit, ${dmg}`}>
+        {w.name} {signed(atk.total)} · {dmg}
+      </button>
+    );
+  };
+  const step = (key: string, label: string, from: string, done: boolean, now: boolean, buttons: React.ReactNode) => (
+    <li key={key} className={`attack-step${done ? ' done' : now ? ' now' : ''}`}>
+      <span className="attack-step-head">
+        <b>
+          {done ? '✓ ' : ''}
+          {label}
+        </b>
+        <small>{from}</small>
+      </span>
+      {!done && <span className="row attack-step-buttons">{buttons}</span>}
+    </li>
+  );
+  // The off-hand swing needs an attack with a Light weapon first, then the other one.
+  const otherLights = lights.filter((w) => c.turn.lightWith.some((id) => id !== w.id));
+  const total = per.count + (offHand ? 1 : 0);
+  const doneCount = Math.min(made, per.count) + (c.turn.lightExtra ? 1 : 0);
+  // A companion you command with your Bonus Action (a Drakewarden's drake); others act without one.
+  const commanded = (k: (typeof c.companions)[number]) => /bonus action/i.test(k.notes) || k.actions.some((a) => /infused strikes/i.test(a.name));
+  return (
+    <section className="attack-action" aria-label="Attack action">
+      <h4>
+        Your Attack action: {doneCount} of {total} made
+      </h4>
+      <ol className="attack-steps">
+        {Array.from({ length: per.count }, (_, i) =>
+          step(`a${i}`, `Attack ${i + 1}`, i === 0 ? 'The Attack action' : `${per.from}: the Attack action is ${per.count} attacks`, made > i, made === i, c.weapons.map((w) => swing(w))),
+        )}
+        {offHand &&
+          step(
+            'light',
+            'Off-hand swing',
+            `Your other Light weapon (D&D Beyond lists this as Two-Weapon Fighting), once per turn, after attacking with a Light weapon. ${nick ? 'Nick: part of this Action.' : 'Uses your Bonus Action.'}${hasTwoWeaponFighting(c) ? ' Adds your modifier (Two-Weapon Fighting style).' : ' No modifier on its damage.'}`,
+            c.turn.lightExtra,
+            !c.turn.lightExtra && otherLights.length > 0,
+            otherLights.length ? otherLights.map((w) => swing(w, true)) : <span className="hint">Attack with a Light weapon first, then swing the other one.</span>,
+          )}
+      </ol>
+      <p className="hint attack-turn">
+        <b>Bonus Action:</b> {c.turn.bonus ? 'used' : nick || !offHand ? 'free' : 'free, unless the off-hand swing takes it'}
+        {c.companions
+          .filter(commanded)
+          .map((k) => (
+            <span key={k.id} className="row" style={{ marginTop: 4 }}>
+              {k.actions
+                .filter((a) => a.attack)
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className="btn small"
+                    disabled={c.turn.bonus}
+                    onClick={(e) => {
+                      update((d) => void (d.turn.bonus = true));
+                      t.companionAct(k, a, e.currentTarget);
+                    }}
+                    title={`Command ${k.name} with your Bonus Action`}
+                  >
+                    Command {k.name}: {a.name}
+                  </button>
+                ))}
+            </span>
+          ))}
+        {c.companions.some((k) => k.actions.some((a) => a.boost)) && <span style={{ display: 'block', marginTop: 4 }}>Reaction: {c.companions.find((k) => k.actions.some((a) => a.boost))!.name}’s Infused Strikes is offered on your hits.</span>}
+      </p>
+    </section>
   );
 }
 
