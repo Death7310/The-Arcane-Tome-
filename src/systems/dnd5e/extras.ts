@@ -6,7 +6,7 @@
 // numbers live on the companion (see systems/dnd5e/anaurys.ts and syncDrake below).
 
 import type { Character, CompanionAction } from './model';
-import type { SubclassDef } from './srd';
+import type { FeatDef, SubclassDef } from './srd';
 
 const FTOD = "Fizban's Treasury of Dragons";
 
@@ -73,6 +73,31 @@ export const DRAKEWARDEN: SubclassDef = {
 
 /** Subclasses from books the app describes itself, added to the rules alongside the SRD's. */
 export const EXTRA_SUBCLASSES: SubclassDef[] = [DRAKEWARDEN];
+
+/**
+ * Dual Wielder (Player's Handbook, 2024), a General feat the SRD leaves out. In this app's words;
+ * check the book for its exact text. With two Nick weapons it's a fourth attack, on the Bonus
+ * Action a Drakewarden also uses to command the drake.
+ */
+export const DUAL_WIELDER: FeatDef = {
+  id: 'phb2024:dual-wielder',
+  name: 'Dual Wielder',
+  category: 'general',
+  repeatable: false,
+  minLevel: 4,
+  abilities: ['str', 'dex'],
+  text: `General Feat (Prerequisite: Level 4+, Strength or Dexterity 13+). Player's Handbook (2024); described in this app's own words.
+
+***Ability Score Increase.*** Increase your Strength or Dexterity by 1, to a maximum of 20.
+
+***Enhanced Dual Wielding.*** When you take the Attack action on your turn and attack with a Light weapon, you can make one extra attack as a Bonus Action later that turn with a different weapon, which must be a Melee weapon without the Two-Handed property. Its damage doesn't add your ability modifier unless that modifier is negative.
+
+***Quick Draw.*** You can draw or stow two weapons that lack the Two-Handed property when you could normally draw or stow only one.`,
+  source: "Player's Handbook (2024)",
+};
+
+/** Feats from books the app describes itself, added to the rules alongside the SRD's. */
+export const EXTRA_FEATS: FeatDef[] = [DUAL_WIELDER];
 
 const isDrakewarden = (c: Character) => c.classes.find((k) => k.classId === 'ranger' && (k.subclassId === DRAKEWARDEN.id || /^drakewarden$/i.test(k.subclass.trim())));
 

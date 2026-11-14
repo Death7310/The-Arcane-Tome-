@@ -80,3 +80,16 @@ describe('the switches', () => {
     expect(c.weapons.map((w) => w.mastery)).toEqual(['Vex', 'Nick', 'Nick', 'Vex']);
   });
 });
+
+describe('the Dual Wielder feat, if a character takes it', () => {
+  it('with Nick: a fourth attack on the Bonus Action; without: the Bonus Action is one or the other', () => {
+    const c = buildAnaurys(cat);
+    applyLevelUp(c, cat, planLevelUp(c, cat, 'ranger')!, { hpRoll: null, spells: [] });
+    c.features.push({ ...c.features[0], id: 'dw', name: 'Dual Wielder', source: 'Feat' });
+    expect(turnPlan(c).attacks).toBe(4);
+    expect(turnPlan(c).text).toContain('4 attacks in all');
+    setNick(c, false);
+    expect(turnPlan(c).attacks).toBe(3);
+    expect(turnPlan(c).text).toContain('one or the other');
+  });
+});

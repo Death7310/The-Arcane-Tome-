@@ -97,7 +97,7 @@ export function statsLine(def: ClassFeatureDef, level: number): string {
   return `At level ${level}: ${def.stats.map((s) => `${s.label} ${fmt(stepAt(s.steps, level))}`).join(' · ')}`;
 }
 
-function sheetFeature(def: ClassFeatureDef, origin: FeatureOrigin, source: string, classLevel: number): Omit<Feature, 'id' | 'usesSpent'> {
+function sheetFeature(def: ClassFeatureDef, origin: FeatureOrigin | undefined, source: string, classLevel: number): Omit<Feature, 'id' | 'usesSpent'> {
   const uses: UsesFormula | null = typeof def.uses === 'string' ? (def.uses as UsesFormula) : (stepAt(def.uses, classLevel) ?? null);
   const stats = statsLine(def, classLevel);
   return {
@@ -110,9 +110,15 @@ function sheetFeature(def: ClassFeatureDef, origin: FeatureOrigin, source: strin
     rollKind: def.rollKind === 'healing' ? 'healing' : def.rollKind === 'damage' ? 'damage' : 'other',
     castingTime: def.castingTime,
     ...elementOf(def),
-    origin,
+    ...(origin ? { origin } : {}),
   };
 }
+
+/**
+ * A class or subclass feature from the rules, for a sheet whatever its classes (the Feature
+ * library): its uses and dice at `classLevel`, and no Level up bookkeeping, so it stays as added.
+ */
+export const featureFromRules = (def: ClassFeatureDef, source: string, classLevel: number) => sheetFeature(def, undefined, source, classLevel);
 
 /**
  * Brings class and subclass features in line with the rules for every class's level: adds

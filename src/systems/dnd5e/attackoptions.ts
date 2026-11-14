@@ -56,7 +56,11 @@ export function turnPlan(c: Character): { attacks: number; light: 'none' | 'bonu
   const lights = c.weapons.filter(isLight);
   const light = lights.length < 2 ? 'none' : lights.some(hasNick) ? 'nick' : 'bonus';
   const twf = hasTwoWeaponFighting(c);
-  const attacks = per.count + (light === 'none' ? 0 : 1);
+  // Dual Wielder (a feat): one more swing as a Bonus Action, with a different one-handed melee
+  // weapon. Only with Nick is the Bonus Action still free for it.
+  const dual = c.features.some((f) => /^(?:feat\s*:\s*)?dual wielder$/i.test(f.name.trim()));
+  const dualSwing = dual && light === 'nick';
+  const attacks = per.count + (light === 'none' ? 0 : 1) + (dualSwing ? 1 : 0);
   const action = per.count === 1 ? 'Your Attack action is one attack' : `Your Attack action is ${per.count} attacks (${per.from})`;
   const extra =
     light === 'nick'
@@ -65,5 +69,12 @@ export function turnPlan(c: Character): { attacks: number; light: 'none' | 'bonu
         ? `, plus one off-hand swing with your other Light weapon as your Bonus Action: ${attacks} attacks`
         : '';
   const damage = light === 'none' ? '' : twf ? ' The off-hand swing adds your modifier to its damage (Two-Weapon Fighting).' : ' The off-hand swing deals its dice without your modifier (Two-Weapon Fighting would add it).';
-  return { attacks, light, twf, text: `${action}${extra}.${damage}` };
+  const dw = !dual
+    ? ''
+    : dualSwing
+      ? ` Dual Wielder: one more swing as your Bonus Action with a different one-handed melee weapon, ${attacks} attacks in all (and no Bonus Action left for anything else).`
+      : light === 'bonus'
+        ? ' Dual Wielder’s Bonus Action swing and the off-hand swing both need your one Bonus Action: one or the other.'
+        : '';
+  return { attacks, light, twf, text: `${action}${dualSwing ? extra.replace(', and your Bonus Action stays free', '') : extra}.${damage}${dw}` };
 }

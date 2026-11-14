@@ -54,7 +54,7 @@ describe('reading a saved layout', () => {
 describe('moving panels', () => {
   it('drops a panel into another column at a position', () => {
     const l = movePanel(defaultLayout(), 'spells', 0, 1);
-    expect(l.columns[0]).toEqual(['identity', 'spells', 'abilities', 'glance', 'languages', 'feats', 'counters']);
+    expect(l.columns[0]).toEqual(['identity', 'spells', 'abilities', 'glance', 'languages', 'feats', 'featureLibrary', 'counters']);
     expect(l.columns[2]).not.toContain('spells');
   });
 
@@ -63,10 +63,10 @@ describe('moving panels', () => {
     // to just above At a glance (the last Stats panel in the first column).
     const stats = defaultLayout().pages.find((p) => p.id === 'stats')!.panels;
     const up = stepPanel(defaultLayout(), 'skills', -1, (k) => stats.includes(k));
-    expect(up.columns[0]).toEqual(['identity', 'abilities', 'skills', 'glance', 'languages', 'feats', 'counters']);
+    expect(up.columns[0]).toEqual(['identity', 'abilities', 'skills', 'glance', 'languages', 'feats', 'featureLibrary', 'counters']);
     expect(up.columns[1]).not.toContain('skills');
     const down = stepPanel(defaultLayout(), 'identity', 1);
-    expect(down.columns[0]).toEqual(['abilities', 'identity', 'glance', 'languages', 'feats', 'counters']);
+    expect(down.columns[0]).toEqual(['abilities', 'identity', 'glance', 'languages', 'feats', 'featureLibrary', 'counters']);
     expect(stepPanel(defaultLayout(), 'identity', -1)).toEqual(defaultLayout());
   });
 
@@ -110,9 +110,9 @@ describe('pages', () => {
 
   it('keeps the spell, feat and background lists on the Library, off the main sheet', () => {
     const l = defaultLayout();
-    expect(page(l, 'library').panels).toEqual(['compendium', 'feats', 'backgrounds']);
+    expect(page(l, 'library').panels).toEqual(['compendium', 'feats', 'featureLibrary', 'backgrounds']);
     expect(page(l, 'magic').panels).toEqual(['spells']);
-    for (const id of ['compendium', 'feats', 'backgrounds'] as const) expect(onSheet(l, id)).toBe(false);
+    for (const id of ['compendium', 'feats', 'featureLibrary', 'backgrounds'] as const) expect(onSheet(l, id)).toBe(false);
     expect(onSheet(l, 'spells')).toBe(true);
   });
 

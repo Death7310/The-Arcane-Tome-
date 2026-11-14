@@ -17,6 +17,7 @@ import { FeatLibraryPanel } from './components/Feats';
 import { BackgroundLibraryPanel } from './components/Backgrounds';
 import { DownWatch, EnemiesPanel } from './components/Enemies';
 import { BattlePanel } from './components/Battle';
+import { FeatureLibraryPanel } from './components/FeatureLibrary';
 import { InitiativePanel } from './components/Initiative';
 import { CountersPanel } from './components/Counters';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -57,6 +58,7 @@ const PANEL_VIEWS: Record<PanelId, () => React.JSX.Element> = {
   languages: LanguagesPanel,
   compendium: SpellCompendiumPanel,
   feats: FeatLibraryPanel,
+  featureLibrary: FeatureLibraryPanel,
   enemies: EnemiesPanel,
   battle: BattlePanel,
   initiative: InitiativePanel,
@@ -82,6 +84,7 @@ const PANEL_NAMES: Record<PanelId, string> = {
   languages: 'Languages',
   compendium: 'Spell compendium',
   feats: 'Feat library',
+  featureLibrary: 'Feature library',
   enemies: 'Enemies',
   battle: 'Battle',
   initiative: 'Initiative',
