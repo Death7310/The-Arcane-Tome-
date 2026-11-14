@@ -4,6 +4,7 @@ import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { ARMOR, DAMAGE_TYPES, STANDARD_ACTIONS, UNARMORED_DEFENSES, WEAPONS, type Ability, type DamageType } from '../systems/dnd5e/data';
 import { blankWeapon, uid, type Weapon } from '../systems/dnd5e/model';
+import { extraAttackFeature, hasTwoWeaponFighting, nickWeapons, setExtraAttack, setNick, setTwoWeaponFighting, SWITCHED_ON, turnPlan } from '../systems/dnd5e/attackoptions';
 import { itemDefFromWeapon, parseItemText } from '../systems/dnd5e/items';
 import { addItemsToLibrary } from '../state/library';
 import { useCatalog } from '../state/catalog';
@@ -276,20 +277,13 @@ export function AttacksPanel() {
   const [open, setOpen] = useState<string | null>(null);
   const [pick, setPick] = useState('');
   const [adding, setAdding] = useState(false);
-  const per = attacksPerAction(c);
   // With two Light weapons, each gets a button for the Light property's extra attack.
   const twoLight = c.weapons.filter(isLight).length >= 2;
   return (
     <Panel title="Attacks" tab="combat">
       <TargetStrip />
       {adding && <AddItemDialog mode="weapon" onClose={() => setAdding(false)} />}
-      {(per.count > 1 || twoLight) && (
-        <p className="hint attack-count" role="status">
-          {per.count > 1 ? `${per.from}: ${per.count} attacks each time you take the Attack action` : 'One attack each time you take the Attack action'}
-          {c.turn.attacks > 0 ? ` · ${Math.min(c.turn.attacks, per.count)} of ${per.count} made this turn` : ''}
-          {twoLight ? ` · Light extra attack ${c.turn.lightExtra ? 'made' : 'ready'}` : ''}
-        </p>
-      )}
+      {c.weapons.length > 0 && <AttackOptions twoLight={twoLight} />}
       <div className="list">
         {c.weapons.length === 0 && <p className="hint">No weapons yet. Add one below.</p>}
         {c.weapons.map((w, idx) => {
@@ -425,6 +419,66 @@ function LightExtraButton({ weapon: w }: { weapon: Weapon }) {
     <button type="button" className={`btn small${ready ? '' : ' ghost'}`} title={title} aria-label={`${nick ? 'Nick' : 'Bonus'} attack with the ${w.name}`} onClick={(e) => t.attack(w, e.currentTarget, { light: true })}>
       {nick ? 'Nick' : 'Bonus'} {signed(weaponAttack(c, w).total)}
     </button>
+  );
+}
+
+/**
+ * The features that change how you attack, as switches: Extra Attack, the Two-Weapon Fighting
+ * style and the Nick mastery. Each switch puts the real feature (or the mastery) on the sheet,
+ * and the line under them says what they add up to on your turn, by the 2024 rules.
+ */
+function AttackOptions({ twoLight }: { twoLight: boolean }) {
+  const { char: c, update } = useChar();
+  const per = attacksPerAction(c);
+  const granted = extraAttackFeature(c);
+  const fromClass = !!granted && granted.source !== SWITCHED_ON;
+  const twf = hasTwoWeaponFighting(c);
+  const nicks = nickWeapons(c);
+  const nickOn = nicks.some(hasNick);
+  const plan = turnPlan(c);
+  // A Fighting Style other than this one (a Ranger's Druidic Warrior): you have one, not two.
+  const otherStyle = c.features.find((f) => /^fighting style\s*:/i.test(f.name) && !/two-weapon/i.test(f.name));
+  const row = (id: string, label: string, checked: boolean, onChange: (b: boolean) => void, note: string, disabled = false) => (
+    <label className="option" htmlFor={id}>
+      <input id={id} type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <span>
+        <b>{label}</b>
+        <small>{note}</small>
+      </span>
+    </label>
+  );
+  return (
+    <section className="attack-options" aria-label="Attack options">
+      {row(
+        'opt-extra',
+        per.count > 2 ? per.from : 'Extra Attack',
+        per.count > 1,
+        (b) => update((d) => setExtraAttack(d, b)),
+        fromClass ? `${per.count} attacks each Attack action · from ${granted!.source || 'your class'}` : per.count > 1 ? '2 attacks each Attack action · turned on here' : 'Off: one attack each Attack action. A class gives it at 5th level (Ranger, Fighter, Paladin…)',
+        fromClass,
+      )}
+      {twoLight &&
+        row(
+          'opt-twf',
+          'Two-Weapon Fighting',
+          twf,
+          (b) => update((d) => setTwoWeaponFighting(d, b)),
+          `${twf ? 'On' : 'Off'}: the off-hand swing ${twf ? 'adds' : 'doesn’t add'} your modifier to its damage. It gives no extra attacks.${otherStyle && !twf ? ` Your Fighting Style is ${otherStyle.name.replace(/^fighting style\s*:\s*/i, '')}: turn this on only if you took this one instead.` : ''}`,
+        )}
+      {twoLight &&
+        nicks.length > 0 &&
+        row(
+          'opt-nick',
+          `Nick (${[...new Set(nicks.map((w) => w.name.replace(/\s*\(.*\)$/, '')))].join(', ')})`,
+          nickOn,
+          (b) => update((d) => setNick(d, b)),
+          nickOn ? 'On: the off-hand swing is part of the Attack action, so your Bonus Action stays free' : 'Off: the off-hand swing uses your Bonus Action. Nick needs Weapon Mastery with the weapon',
+        )}
+      <p className="hint turn-plan">
+        {plan.text}
+        {c.turn.attacks > 0 || c.turn.lightExtra ? ` This turn: ${Math.min(c.turn.attacks, per.count)} of ${per.count} made${plan.light !== 'none' ? `, off-hand swing ${c.turn.lightExtra ? 'made' : 'ready'}` : ''}.` : ''}
+      </p>
+    </section>
   );
 }
 

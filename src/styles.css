@@ -905,3 +905,9 @@ button.stat:hover { border-color: var(--gilt); }
 .archived-enemy b { font-size: 15px; }
 .summon-box { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 6px; }
 .summon-box .input { width: auto; min-width: 0; }
+.attack-options { display: grid; gap: 6px; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.attack-options .option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: start; cursor: pointer; }
+.attack-options .option input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--verdigris); }
+.attack-options .option span { display: grid; gap: 1px; min-width: 0; }
+.attack-options .option small { color: var(--muted); font-size: 12.5px; }
+.attack-options .turn-plan { margin: 2px 0 0; }
