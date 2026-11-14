@@ -27,6 +27,7 @@ export const PANELS = {
   features: ['stats'],
   feats: ['library'],
   featureLibrary: ['library'],
+  species: ['library'],
   spells: ['magic'],
   compendium: ['library'],
   backgrounds: ['library'],
@@ -92,7 +93,7 @@ const OWN_TAB_PAGES: readonly string[] = ['library'];
 export const ownTab = (p: Pick<Page, 'id' | 'custom'>): boolean => p.custom || OWN_TAB_PAGES.includes(p.id);
 
 const DEFAULT_COLUMNS: PanelKey[][] = [
-  ['identity', 'abilities', 'glance', 'languages', 'feats', 'featureLibrary', 'counters'],
+  ['identity', 'abilities', 'glance', 'languages', 'feats', 'featureLibrary', 'species', 'counters'],
   ['initiative', 'enemies', 'battle', 'vitals', 'conditions', 'turn', 'attacks', 'companions', 'skills'],
   ['spells', 'compendium', 'features', 'inventory', 'notes', 'backgrounds'],
 ];
@@ -106,7 +107,7 @@ const DEFAULT_PAGE_PANELS: Record<string, PanelKey[]> = {
   magic: ['spells'],
   gear: ['inventory', 'notes'],
   languages: ['languages'],
-  library: ['compendium', 'feats', 'featureLibrary', 'backgrounds'],
+  library: ['species', 'compendium', 'feats', 'featureLibrary', 'backgrounds'],
 };
 
 const defaultPages = (): Page[] => BUILT_IN_PAGES.map((p) => ({ id: p.id, name: p.name, panels: [...DEFAULT_PAGE_PANELS[p.id]], custom: false }));

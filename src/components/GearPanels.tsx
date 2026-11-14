@@ -12,6 +12,8 @@ import { AddItemDialog } from './Items';
 import { LanguagesField } from './Languages';
 import { RulesText } from './RulesText';
 import { ConfirmButton, NumField, Panel, Pips, SelectField, TextField } from './ui';
+import TRINKETS from '../systems/dnd5e/srd/trinkets.json';
+import { rollDie } from '../engine/dice';
 
 const USES = [
   { id: 'none', name: 'Unlimited / passive' },
@@ -190,6 +192,7 @@ export function InventoryPanel() {
   const [name, setName] = useState('');
   const [adding, setAdding] = useState<'list' | 'paste' | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [trinket, setTrinket] = useState('');
   const coins = ['pp', 'gp', 'ep', 'sp', 'cp'] as const;
   return (
     <Panel
@@ -203,9 +206,26 @@ export function InventoryPanel() {
           <button type="button" className="btn small ghost" onClick={() => setAdding('paste')} title="Paste an item's stat block">
             Paste
           </button>
+          <button
+            type="button"
+            className="btn small ghost"
+            title="Roll on the free rules' table of 100 trinkets and add what you get"
+            onClick={() => {
+              const t = TRINKETS[rollDie(TRINKETS.length) - 1];
+              update((d) => void d.inventory.push({ id: uid(), name: t.name, qty: 1, weight: 0, notes: `Trinket: ${t.text}` }));
+              setTrinket(t.text);
+            }}
+          >
+            Roll a trinket
+          </button>
         </span>
       }
     >
+      {trinket && (
+        <p className="note good" role="status" style={{ marginTop: 0 }}>
+          You find: {trinket} It’s in your items.
+        </p>
+      )}
       {adding && <AddItemDialog mode="any" start={adding} onClose={() => setAdding(null)} />}
       <div className="grid-auto" style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 6 }}>
         {coins.map((k) => (

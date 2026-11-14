@@ -6,7 +6,7 @@
 // numbers live on the companion (see systems/dnd5e/anaurys.ts and syncDrake below).
 
 import type { Character, CompanionAction } from './model';
-import type { FeatDef, SubclassDef } from './srd';
+import type { FeatDef, SpeciesDef, SubclassDef } from './srd';
 
 const FTOD = "Fizban's Treasury of Dragons";
 
@@ -133,3 +133,52 @@ export function syncDrake(d: Character) {
     k.speed = level >= 15 ? `${base}, fly ${walk} ft.` : level >= 7 ? `${base}, fly ${walk} ft. (not while ridden)` : base;
   }
 }
+
+/**
+ * Aasimar (Player's Handbook, 2024), a species the SRD leaves out. In this app's words; check
+ * the book for its exact text.
+ */
+export const AASIMAR: SpeciesDef = {
+  id: 'aasimar',
+  name: 'Aasimar',
+  source: "Player's Handbook (2024)",
+  size: 'Medium or Small',
+  speed: 30,
+  type: 'Humanoid',
+  description:
+    "Mortals touched by the Upper Planes, with a spark of celestial power. Player's Handbook (2024); described in this app's own words.",
+  darkvision: 60,
+  resist: ['necrotic', 'radiant'],
+  hpPerLevel: 0,
+  lineageLabel: '',
+  lineages: [],
+  traits: [
+    { key: 'celestial-resistance', name: 'Celestial Resistance', text: 'You have Resistance to Necrotic damage and Radiant damage.', castingTime: 'other', spells: [] },
+    { key: 'darkvision', name: 'Darkvision', text: 'You have Darkvision with a range of 60 feet.', castingTime: 'other', spells: [] },
+    {
+      key: 'healing-hands',
+      name: 'Healing Hands',
+      text: 'As a Magic action, you touch a creature and roll a number of d4s equal to your Proficiency Bonus. The creature regains that many Hit Points. Once you use this trait, you can’t again until you finish a Long Rest.',
+      uses: 1,
+      recharge: 'long',
+      roll: [[1, '{PB}d4']],
+      rollKind: 'healing',
+      castingTime: 'action',
+      spells: [],
+    },
+    { key: 'light-bearer', name: 'Light Bearer', text: 'You know the Light cantrip. Charisma is your spellcasting ability for it.', castingTime: 'other', spells: ['Light'] },
+    {
+      key: 'celestial-revelation',
+      name: 'Celestial Revelation',
+      text: 'From character level 3, as a Bonus Action you transform for 1 minute (or until you end it, no action required). Choose the form each time: Heavenly Wings (spectral wings give you a Fly Speed equal to your Speed), Inner Radiance (you shed Bright Light in a 10-foot radius and Dim Light 10 feet beyond, and at the end of each of your turns each creature within 10 feet of you takes Radiant damage equal to your Proficiency Bonus), or Necrotic Shroud (creatures other than your allies within 10 feet of you must succeed on a Charisma save, DC 8 + your Charisma modifier + your Proficiency Bonus, or be Frightened of you until the end of your next turn). Once on each of your turns while transformed, you can deal extra damage equal to your Proficiency Bonus to one target when you deal damage to it with an attack or a spell: Necrotic for the Necrotic Shroud, Radiant otherwise. Once per Long Rest.',
+      level: 3,
+      uses: 1,
+      recharge: 'long',
+      castingTime: 'bonus',
+      spells: [],
+    },
+  ],
+};
+
+/** Species from books the app describes itself, added alongside the SRD's. */
+export const EXTRA_SPECIES: SpeciesDef[] = [AASIMAR];

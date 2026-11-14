@@ -220,7 +220,8 @@ export function ConfirmButton(props: { label: string; confirmLabel?: string; onC
   return (
     <button
       type="button"
-      className={`btn small ${armed ? 'danger' : 'ghost'} ${props.className ?? ''}`}
+      // A primary button keeps its fill (ghost would clear it and leave light text on nothing).
+      className={`btn small ${armed ? 'danger' : /\bprimary\b/.test(props.className ?? '') ? '' : 'ghost'} ${props.className ?? ''}`}
       onClick={() => (armed ? (setArmed(false), props.onConfirm()) : setArmed(true))}
     >
       {armed ? (props.confirmLabel ?? 'Tap again to confirm') : props.label}

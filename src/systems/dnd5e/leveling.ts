@@ -11,6 +11,7 @@
 
 import { ABILITIES, ABILITY_NAMES, classById, FULL_CASTER_SLOTS, PACT_SLOTS, type Ability, type SkillId } from './data';
 import { syncDrake } from './extras';
+import { syncHeritage } from './species';
 import { blankFeature, uid, type Character, type ClassEntry, type Feature, type FeatureOrigin, type LevelStep, type UsesFormula } from './model';
 import { abilityMod, maxHp, pactSlots, spellSlots, totalLevel } from './rules';
 import { stepAt, type Catalog, type ClassDef, type ClassFeatureDef, type FeatDef, type SpellDef, type SubclassDef } from './srd';
@@ -153,6 +154,8 @@ export function syncFeatures(d: Character, cat: Catalog) {
   }
   d.features = d.features.filter((f) => !f.origin || f.origin.kind === 'feat' || !f.origin.auto || keep.has(f.id));
   syncDrake(d);
+  // A species' lineage spells at character levels 3 and 5, and Breath Weapon's dice.
+  syncHeritage(d, cat);
 }
 
 // ── Planning a level ─────────────────────────────────────────────────────────

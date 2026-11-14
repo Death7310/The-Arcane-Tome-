@@ -592,6 +592,119 @@ const items = [
   ...release.content.filter((c) => c.type === 'magicItem' || (c.type === 'template' && c.id.startsWith('magic-items.') && c.appliesTo)),
 ].map(item);
 
+// Mounts and vehicles, as gear in the item list: what they cost and carry, how fast they go.
+const SPEED_CAT = { airborne: 'Airborne vehicle', land: 'Land vehicle', waterborne: 'Waterborne vehicle', water: 'Waterborne vehicle' };
+const travel = release.content
+  .filter((c) => c.type === 'mount' || c.type === 'vehicle')
+  .map((c) => {
+    const f = c.fields ?? {};
+    const facts = [
+      f.speed ? `Speed ${f.speed} ft.` : '',
+      f.speedMph ? `Speed ${f.speedMph} mph` : '',
+      f.carryingCapacity ? `Carrying capacity ${f.carryingCapacity} lb.` : '',
+      f.crew ? `Crew ${f.crew}` : '',
+      f.passengers ? `Passengers ${f.passengers}` : '',
+      f.cargoTons ? `Cargo ${f.cargoTons} ton${f.cargoTons === 1 ? '' : 's'}` : '',
+      f.ac ? `AC ${f.ac}` : '',
+      f.hp ? `HP ${f.hp}` : '',
+    ].filter(Boolean);
+    return { id: `${c.type}:${short(c.id)}`, name: text(`${c.id}.name`), text: [text(`${c.id}.description`), facts.join(' · ')].filter(Boolean).join('\n\n'), weight: f.weight ?? 0, cost: f.cost ?? 0, kind: 'gear', category: c.type === 'mount' ? 'Mount' : (SPEED_CAT[f.category] ?? 'Vehicle') };
+  });
+items.push(...travel);
+
+// ── Species ──────────────────────────────────────────────────────────────────
+// The nine SRD species, each with its traits (rules text from the SRD) and its lineages
+// (Drow, High Elf, Wood Elf; the dragon ancestries; the giant ancestries; the fiendish
+// legacies; the gnomish lineages): what each changes (Speed, Darkvision, Resistance, damage
+// type) and the spells it gives at levels 1, 3 and 5. A trait's uses aren't fields in the pack
+// but rules in its text, so the few traits with limited uses are given them here.
+
+const TRAIT_USES = {
+  'breath-weapon': { uses: 'pb', recharge: 'long', roll: [[1, '1d10'], [5, '2d10'], [11, '3d10'], [17, '4d10']], rollKind: 'damage', castingTime: 'action' },
+  stonecunning: { uses: 'pb', recharge: 'long', castingTime: 'bonus' },
+  'adrenaline-rush': { uses: 'pb', recharge: 'short', castingTime: 'bonus' },
+  'relentless-endurance': { uses: 1, recharge: 'long', castingTime: 'other' },
+  'giant-ancestry': { uses: 'pb', recharge: 'long', castingTime: 'other' },
+  'large-form': { level: 5, uses: 1, recharge: 'long', castingTime: 'bonus' },
+  'draconic-flight': { level: 5, uses: 1, recharge: 'long', castingTime: 'bonus' },
+};
+const RESIST_OF_TRAIT = { 'dwarven-resilience': ['poison'] };
+const SIZE_OF = { medium: 'Medium', small: 'Small', choice: 'Medium or Small' };
+const spellName = (id) => text(`${id}.name`) || cap(short(id).replace(/-/g, ' '));
+
+function lineage(c) {
+  const out = { id: short(c.id), name: text(`${c.id}.name`), text: text(`${c.id}.description`), speed: 0, darkvision: 0, resist: [], damageType: c.fields?.damageType ?? '', spells: [] };
+  for (const e of c.effects ?? []) {
+    if (e.target === 'combat.speed' && e.op === 'add') out.speed += Number(e.value) || 0;
+    if (e.target === 'senses.darkvision') out.darkvision = Math.max(out.darkvision, Number(e.value) || 0);
+    if (e.target === 'damage.resistances' && e.value?.tag) out.resist.push(e.value.tag.replace(/^damage\./, ''));
+    if (e.target === 'spells.species' && e.value?.item) {
+      const level = Number((/level\.total >= (\d+)/.exec(e.when ?? '') ?? [0, 1])[1]);
+      out.spells.push({ name: spellName(e.value.item), level, free: false });
+    }
+    if (e.target === 'spells.free' && e.value?.item) {
+      const sp = out.spells.find((x) => x.name === spellName(e.value.item));
+      if (sp) sp.free = true;
+    }
+  }
+  return out;
+}
+
+const species = release.content
+  .filter((c) => c.type === 'species')
+  .map((c) => {
+    const traitIds = (c.grants ?? []).map((g) => g.item).filter((id) => id?.startsWith('traits.'));
+    const traits = traitIds.map((id) => {
+      const k = short(id);
+      const t = byId.get(id) ?? {};
+      return {
+        key: k,
+        name: text(`${id}.name`),
+        text: text(`${id}.description`),
+        castingTime: 'other',
+        ...TRAIT_USES[k],
+        // Spells a trait itself gives (Otherworldly Presence: Thaumaturgy).
+        spells: (t.grants ?? []).filter((g) => g.item?.startsWith('spells.')).map((g) => spellName(g.item)),
+      };
+    });
+    const lineages = release.content.filter((l) => l.type === 'lineage' && l.fields?.species === c.id).map(lineage);
+    const prompt = text(`${c.id}.choices.lineage.prompt`).replace(/:.*$/, '');
+    return {
+      id: short(c.id),
+      name: text(`${c.id}.name`),
+      source: 'SRD 5.2.1',
+      size: SIZE_OF[c.fields?.size] ?? 'Medium',
+      speed: c.fields?.speed ?? 30,
+      type: 'Humanoid',
+      description: text(`${c.id}.description`),
+      darkvision: traitIds.includes('traits.darkvision-120') ? 120 : traitIds.includes('traits.darkvision') ? 60 : 0,
+      resist: traitIds.flatMap((id) => RESIST_OF_TRAIT[short(id)] ?? []),
+      hpPerLevel: traitIds.includes('traits.dwarven-toughness') ? 1 : 0,
+      lineageLabel: lineages.length ? prompt || 'Lineage' : '',
+      lineages,
+      traits,
+    };
+  });
+for (const sp of species) for (const t of sp.traits) if (TRAIT_USES[t.key]) console.log(`  ${sp.name} · ${t.name}: ${JSON.stringify(TRAIT_USES[t.key])}\n    ${t.text.replace(/\s+/g, ' ').slice(0, 260)}`);
+
+// ── Class options: Eldritch Invocations and Metamagic ───────────────────────
+
+const classOptions = release.content
+  .filter((c) => c.type === 'invocation' || c.type === 'metamagic')
+  .map((c) => ({
+    id: short(c.id),
+    kind: c.type,
+    classId: c.type === 'invocation' ? 'warlock' : 'sorcerer',
+    name: text(`${c.id}.name`),
+    level: Math.max(1, ...(c.prerequisites ?? []).map((p) => Number((/level >= (\d+)/.exec(p.when ?? '') ?? [0, 1])[1]))),
+    repeatable: !!c.repeatable,
+    text: text(`${c.id}.description`),
+  }));
+
+// ── Trinkets ─────────────────────────────────────────────────────────────────
+
+const trinkets = release.content.filter((c) => c.type === 'trinket').map((c) => ({ name: text(`${c.id}.name`), text: text(`${c.id}.description`) }));
+
 // ── Write ────────────────────────────────────────────────────────────────────
 
 mkdirSync(OUT, { recursive: true });
@@ -605,4 +718,7 @@ write('feats', feats);
 write('spells', spells);
 write('creatures', creatures);
 write('items', items);
+write('species', species);
+write('classoptions', classOptions);
+write('trinkets', trinkets);
 writeFileSync(`${OUT}/credit.json`, JSON.stringify({ source: 'System Reference Document 5.2.1', via: `@opencharacter/5e-srd-5.2 ${release.manifest.version}`, credit: release.manifest.credit }));

@@ -1,6 +1,7 @@
 // The Feature library: every class and subclass feature the rules hold (the SRD's twelve classes
-// and their subclasses, the Drakewarden, and any pack in your rules library), to read and to put
-// on any character's sheet: a Barbarian's Rage, a Rogue's Sneak Attack, a Fighter's Second Wind.
+// and their subclasses, the Drakewarden, and any pack in your rules library), with the Warlock's
+// Eldritch Invocations and the Sorcerer's Metamagic, to read and to put on any character's sheet:
+// a Barbarian's Rage, a Rogue's Sneak Attack, Agonizing Blast, Quickened Spell.
 
 import { blankFeature, type Character, type Feature } from './model';
 import { featureFromRules } from './leveling';
@@ -25,6 +26,11 @@ export function libraryFeatures(cat: Catalog): LibraryFeature[] {
     for (const sub of cat.subclasses.filter((s) => s.classId === cls.id))
       for (const def of [...sub.features].sort((a, b) => a.level - b.level))
         out.push({ key: `${sub.id}:${def.id || def.key}`, def, classId: cls.id, className: cls.name, subclass: sub.name, source: `${sub.name} ${def.level}` });
+    // A Warlock's Eldritch Invocations and a Sorcerer's Metamagic options, after the class's features.
+    for (const o of (cat.options ?? []).filter((x) => x.classId === cls.id)) {
+      const kind = o.kind === 'invocation' ? 'Eldritch Invocation' : 'Metamagic';
+      out.push({ key: `${o.kind}:${o.id}`, def: { key: o.id, id: `${o.kind}s.${o.id}`, name: o.name, level: o.level, text: o.text, castingTime: 'other' }, classId: cls.id, className: cls.name, subclass: kind, source: kind });
+    }
   }
   return out;
 }

@@ -23,7 +23,7 @@ export interface ClassEntry {
 
 /** Where a feature on the sheet came from, so leveling can add, update and remove it. */
 export interface FeatureOrigin {
-  kind: 'class' | 'subclass' | 'feat';
+  kind: 'class' | 'subclass' | 'feat' | 'species';
   /** The class entry it belongs to (class and subclass features). */
   entryId?: string;
   /** Rules id, e.g. 'features.fighter.second-wind' or 'feats.alert'. */
@@ -32,6 +32,26 @@ export interface FeatureOrigin {
   level: number;
   /** Kept in step with the rules on every level change; false once you edit it yourself. */
   auto: boolean;
+}
+
+/**
+ * The species a character took (from the Species library): one species, or mixed heritage
+ * from two, with whose traits it uses. `applied` remembers what it changed, to undo it.
+ */
+export interface SpeciesPick {
+  a: { species: string; lineage: string };
+  b: { species: string; lineage: string } | null;
+  /** Whose traits: a's, b's (the 2024 rule for mixed heritage), or a blend of both (homebrew). */
+  rules: 'a' | 'b' | 'blend';
+  /** A blend's traits: "a:luck", "b:fey-ancestry". */
+  traits: string[];
+  /** The ability its lineage spells use (Intelligence, Wisdom or Charisma). */
+  ability: Ability;
+  /** Medium or Small, for a species that lets you choose. */
+  size: string;
+  /** Your own name for it ("" for one made from its parts). */
+  name: string;
+  applied?: { hpPerLevel: number; name: string };
 }
 
 /** One level gained through Level up, remembered so it can be undone exactly. */
@@ -290,6 +310,8 @@ export interface Character {
   name: string;
   player: string;
   species: string;
+  /** How the species was taken from the Species library (null: typed in, or from before). */
+  speciesPick: SpeciesPick | null;
   background: string;
   alignment: string;
   xp: number;
@@ -641,6 +663,7 @@ export function blankCharacter(): Character {
     name: 'New Adventurer',
     player: '',
     species: '',
+    speciesPick: null,
     background: '',
     alignment: '',
     xp: 0,
@@ -756,6 +779,7 @@ export function normalizeCharacter(raw: unknown): Character {
     targetId: typeof c.targetId === 'string' && Array.isArray(c.enemies) && c.enemies.some((e) => e?.id === c.targetId) ? c.targetId : null,
     party: Array.isArray(c.party) ? c.party.filter((n): n is string => typeof n === 'string' && !!n.trim()) : [],
     fight: normalizeFight(c.fight),
+    speciesPick: readSpeciesPick(c.speciesPick),
     battle: readBattle(c.battle),
     battles: Array.isArray(c.battles) ? c.battles.map(readBattle).filter((b): b is Battle => !!b).slice(0, MAX_BATTLES) : [],
     counters: Array.isArray(c.counters) ? c.counters.filter((k) => k && typeof k === 'object').map((k) => blankCounter(k)) : [],
@@ -808,6 +832,25 @@ function normalizeFight(raw: unknown): Fight | null {
     : [];
   if (!order.length) return null;
   return { round: Math.max(1, Number(f.round) || 1), turn: Math.min(order.length - 1, Math.max(0, Number(f.turn) || 0)), order };
+}
+
+/** Reads a saved species pick, or null if it isn't one. */
+export function readSpeciesPick(raw: unknown): SpeciesPick | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Partial<SpeciesPick>;
+  const part = (x: unknown) => (x && typeof x === 'object' && typeof (x as { species?: unknown }).species === 'string' ? { species: (x as { species: string }).species, lineage: String((x as { lineage?: unknown }).lineage ?? '') } : null);
+  const a = part(p.a);
+  if (!a) return null;
+  return {
+    a,
+    b: part(p.b),
+    rules: p.rules === 'b' || p.rules === 'blend' ? p.rules : 'a',
+    traits: Array.isArray(p.traits) ? p.traits.filter((t): t is string => typeof t === 'string') : [],
+    ability: ABILITIES.includes(p.ability as never) ? (p.ability as Ability) : 'wis',
+    size: p.size === 'Small' ? 'Small' : 'Medium',
+    name: typeof p.name === 'string' ? p.name.slice(0, 80) : '',
+    ...(p.applied && typeof p.applied === 'object' ? { applied: { hpPerLevel: Number(p.applied.hpPerLevel) || 0, name: String(p.applied.name ?? '') } } : {}),
+  };
 }
 
 /** The most ended battles kept on a character (the oldest go first; Save as a file keeps any for good). */

@@ -57,3 +57,26 @@ describe('the Feature library', () => {
     expect(dw.text).toContain('Enhanced Dual Wielding');
   });
 });
+
+describe('the rest of the free rules', () => {
+  it('has the Warlock’s Eldritch Invocations and the Sorcerer’s Metamagic in the Feature library', async () => {
+    const options = (await import('./srd/classoptions.json')).default as never[];
+    const withOptions = libraryFeatures({ ...cat, options } as Catalog);
+    expect(withOptions.length).toBe(225 + 38);
+    const blast = withOptions.find((e) => e.def.name === 'Agonizing Blast')!;
+    expect(blast).toMatchObject({ classId: 'warlock', source: 'Eldritch Invocation', subclass: 'Eldritch Invocation' });
+    expect(blast.def.level).toBe(2);
+    expect(withOptions.filter((e) => e.source === 'Metamagic').map((e) => e.def.name)).toContain('Quickened Spell');
+    expect(withOptions.find((e) => e.def.name === 'Pact of the Blade')).toBeDefined();
+  });
+
+  it('has the mounts and vehicles in the item list, and the hundred trinkets', async () => {
+    const items = (await import('./srd/items.json')).default as { name: string; category: string; cost: number; text: string }[];
+    expect(items.find((i) => i.name === 'Camel')).toMatchObject({ category: 'Mount', cost: 50 });
+    expect(items.find((i) => i.name === 'Airship')).toMatchObject({ category: 'Airborne vehicle', cost: 40000 });
+    expect(items.find((i) => i.name === 'Airship')!.text).toContain('Speed 8 mph');
+    const trinkets = (await import('./srd/trinkets.json')).default as { name: string; text: string }[];
+    expect(trinkets).toHaveLength(100);
+    expect(trinkets.every((t) => t.name && t.text)).toBe(true);
+  });
+});

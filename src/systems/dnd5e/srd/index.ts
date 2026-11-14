@@ -7,7 +7,7 @@
 // companions treat your own classes, spells and creatures exactly like the official ones.
 
 import type { CastingTime, Companion, Spell, Weapon } from '../model';
-import { EXTRA_FEATS, EXTRA_SUBCLASSES } from '../extras';
+import { EXTRA_FEATS, EXTRA_SPECIES, EXTRA_SUBCLASSES } from '../extras';
 import type { Ability } from '../data';
 
 /** Values that change with class level, as change points: [[1, 2], [3, 3], [6, 4]…]. */
@@ -199,6 +199,71 @@ export interface Catalog {
   spells: SpellDef[];
   creatures: CreatureDef[];
   items: ItemDef[];
+  /** Species (the SRD's nine, and Aasimar). */
+  species?: SpeciesDef[];
+  /** Class options picked from a list: Eldritch Invocations, Metamagic. */
+  options?: ClassOptionDef[];
+}
+
+/** A species trait, with its rules text; limited ones have uses (and a roll, for Breath Weapon). */
+export interface SpeciesTraitDef {
+  key: string;
+  name: string;
+  text: string;
+  /** The character level it starts working at (Draconic Flight, Large Form: 5). */
+  level?: number;
+  uses?: number | 'pb';
+  recharge?: 'short' | 'long';
+  roll?: Steps<string>;
+  rollKind?: 'damage' | 'healing';
+  castingTime: CastingTime;
+  /** Spells the trait itself gives (Otherworldly Presence: Thaumaturgy). */
+  spells: string[];
+}
+
+/** A species' lineage, ancestry or legacy (Drow, Red Dragon, Fire Giant, Infernal…). */
+export interface LineageDef {
+  id: string;
+  name: string;
+  text: string;
+  /** Speed it adds (a Wood Elf's 5), the Darkvision it gives (a Drow's 120), its Resistances, its damage type. */
+  speed: number;
+  darkvision: number;
+  resist: string[];
+  damageType: string;
+  /** Spells it gives at character levels 1, 3 and 5; free: once without a slot per Long Rest. */
+  spells: { name: string; level: number; free: boolean }[];
+}
+
+export interface SpeciesDef {
+  id: string;
+  name: string;
+  source: string;
+  /** "Medium", "Small", or "Medium or Small" (you choose). */
+  size: string;
+  speed: number;
+  type: string;
+  description: string;
+  darkvision: number;
+  resist: string[];
+  /** Hit Points it adds per level (a Dwarf's Dwarven Toughness: 1). */
+  hpPerLevel: number;
+  /** What its lineages are called ("Elven Lineage"); "" for a species without them. */
+  lineageLabel: string;
+  lineages: LineageDef[];
+  traits: SpeciesTraitDef[];
+}
+
+/** An Eldritch Invocation or a Metamagic option. */
+export interface ClassOptionDef {
+  id: string;
+  kind: 'invocation' | 'metamagic';
+  classId: string;
+  name: string;
+  /** The class level it needs. */
+  level: number;
+  repeatable: boolean;
+  text: string;
 }
 
 /** The value at `level` from change points (the last one at or below it). */
@@ -216,14 +281,25 @@ let loading: Promise<Catalog> | null = null;
 
 /** The SRD catalog, loaded once on first use. */
 export function loadSrd(): Promise<Catalog> {
-  loading ??= Promise.all([import('./classes.json'), import('./subclasses.json'), import('./feats.json'), import('./spells.json'), import('./creatures.json'), import('./items.json')]).then(
-    ([classes, subclasses, feats, spells, creatures, items]) => ({
+  loading ??= Promise.all([
+    import('./classes.json'),
+    import('./subclasses.json'),
+    import('./feats.json'),
+    import('./spells.json'),
+    import('./creatures.json'),
+    import('./items.json'),
+    import('./species.json'),
+    import('./classoptions.json'),
+  ]).then(
+    ([classes, subclasses, feats, spells, creatures, items, species, options]) => ({
       classes: (classes.default as ClassDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       subclasses: [...(subclasses.default as SubclassDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })), ...EXTRA_SUBCLASSES],
       feats: [...(feats.default as FeatDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })), ...EXTRA_FEATS],
       spells: (spells.default as SpellDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       creatures: (creatures.default as unknown as CreatureDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
       items: (items.default as ItemDef[]).map((c) => ({ ...c, source: 'SRD 5.2.1' })),
+      species: [...(species.default as unknown as SpeciesDef[]), ...EXTRA_SPECIES],
+      options: options.default as unknown as ClassOptionDef[],
     }),
   );
   return loading;

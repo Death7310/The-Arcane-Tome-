@@ -13,7 +13,16 @@ let pending: Promise<Catalog> | null = null;
 const listeners = new Set<(c: Catalog) => void>();
 
 function merge(base: Catalog, packs: Partial<Catalog>[]): Catalog {
-  const out: Catalog = { classes: [...base.classes], subclasses: [...base.subclasses], feats: [...base.feats], spells: [...base.spells], creatures: [...base.creatures], items: [...base.items] };
+  const out: Catalog = {
+    classes: [...base.classes],
+    subclasses: [...base.subclasses],
+    feats: [...base.feats],
+    spells: [...base.spells],
+    creatures: [...base.creatures],
+    items: [...base.items],
+    species: [...(base.species ?? [])],
+    options: [...(base.options ?? [])],
+  };
   for (const p of packs) {
     out.classes.push(...(p.classes ?? []));
     out.subclasses.push(...(p.subclasses ?? []));
@@ -21,6 +30,8 @@ function merge(base: Catalog, packs: Partial<Catalog>[]): Catalog {
     out.spells.push(...(p.spells ?? []));
     out.creatures.push(...(p.creatures ?? []));
     out.items.push(...(p.items ?? []));
+    out.species!.push(...(p.species ?? []));
+    out.options!.push(...(p.options ?? []));
   }
   return out;
 }
