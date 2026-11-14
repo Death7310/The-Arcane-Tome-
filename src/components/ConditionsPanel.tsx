@@ -6,6 +6,7 @@ import { useTable } from '../state/table';
 import { CONDITIONS, EFFECT_PRESETS, INCAPACITATING, type ConditionId } from '../systems/dnd5e/data';
 import { endConcentration } from '../systems/dnd5e/enemies';
 import { blankEffect, type Effect } from '../systems/dnd5e/model';
+import { actionAttacks } from '../systems/dnd5e/rules';
 import { Check, ConfirmButton, NumField, Panel, TextField } from './ui';
 
 const appliesText = (e: Effect) =>
@@ -176,7 +177,12 @@ export function StatusStrip({ onOpen }: { onOpen: () => void }) {
   const combat = f
     ? [
         { key: 'round', text: `Round ${f.round} · ${now?.kind === 'you' ? 'your turn' : `${now?.name ?? '?'}’s turn`}`, kind: now?.kind === 'you' ? 'fight mine' : 'fight' },
-        ...(['action', 'bonus', 'reaction'] as const).map((part) => ({ key: part, text: `${part === 'action' ? 'Action' : part === 'bonus' ? 'Bonus' : 'Reaction'}${c.turn[part] ? ' ✓' : ''}`, kind: c.turn[part] ? 'used' : 'ready' })),
+        ...(['action', 'bonus', 'reaction'] as const).map((part) => {
+          // The Action with attacks still left in it (Extra Attack, the Nick swing): how many.
+          const aa = part === 'action' ? actionAttacks(c) : null;
+          if (aa?.state === 'partial') return { key: part, text: `Action · ${aa.left} left`, kind: 'ready' };
+          return { key: part, text: `${part === 'action' ? 'Action' : part === 'bonus' ? 'Bonus' : 'Reaction'}${c.turn[part] ? ' ✓' : ''}`, kind: c.turn[part] ? 'used' : 'ready' };
+        }),
       ]
     : [];
   const items = [

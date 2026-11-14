@@ -9,7 +9,7 @@ import { addItemsToLibrary } from '../state/library';
 import { useCatalog } from '../state/catalog';
 import { AddItemDialog } from './Items';
 import { TargetStrip } from './Enemies';
-import { armorClass, armorWarnings, attacksPerAction, hasNick, hitDice, isLight, lightExtraDamageBonus, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
+import { actionAttacks, armorClass, armorWarnings, attacksPerAction, hasNick, hitDice, isLight, lightExtraDamageBonus, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
 import { Check, ConfirmButton, NumField, Panel, SelectField, TextField, mathText } from './ui';
 import { isValid } from '../engine/dice';
 
@@ -140,7 +140,18 @@ export function TurnPanel() {
   const [feet, setFeet] = useState(5);
   const budget = speed(c).total * (1 + c.turn.dashes);
   const left = Math.max(0, budget - c.turn.movementUsed);
-  const perTurn = attacksPerAction(c).count;
+  const aa = actionAttacks(c);
+  // Markers for the Action: one per attack of the Attack action, and one for the Nick swing.
+  const marked = aa.per > 1 || aa.nick !== 'none';
+  const actionText =
+    aa.state === 'used'
+      ? 'Used'
+      : aa.state === 'partial'
+        ? `${aa.left} attack${aa.left === 1 ? '' : 's'} left`
+        : marked
+          ? `${aa.per} attack${aa.per === 1 ? '' : 's'}${aa.nick !== 'none' ? ' + Nick' : ''}`
+          : 'Ready';
+  const actionLabel = `Action: ${actionText}${aa.nick === 'ready' ? ', Nick swing ready' : aa.nick === 'used' ? ', Nick swing used' : ''}. Tap to mark it ${c.turn.action ? 'unused (clears this turn’s attacks)' : 'used'}.`;
   const econ: { key: 'action' | 'bonus' | 'reaction'; label: string }[] = [
     { key: 'action', label: 'Action' },
     { key: 'bonus', label: 'Bonus Action' },
@@ -157,12 +168,46 @@ export function TurnPanel() {
       }
     >
       <div className="economy">
-        {econ.map((e) => (
-          <button key={e.key} type="button" aria-pressed={c.turn[e.key]} onClick={() => update((d) => void (d.turn[e.key] = !d.turn[e.key]))}>
-            {e.label}
-            <small>{e.key === 'action' && c.turn.attacks > 0 && perTurn > 1 ? `${Math.min(c.turn.attacks, perTurn)} of ${perTurn} attacks` : c.turn[e.key] ? 'Used' : 'Ready'}</small>
-          </button>
-        ))}
+        {econ.map((e) =>
+          e.key === 'action' ? (
+            <button
+              key={e.key}
+              type="button"
+              aria-pressed={c.turn.action}
+              data-state={aa.state}
+              aria-label={actionLabel}
+              title={actionLabel}
+              onClick={() =>
+                update((d) => {
+                  d.turn.action = !d.turn.action;
+                  // Marking the Action unused starts its attacks over (a mis-tap, or the wrong turn).
+                  if (!d.turn.action) {
+                    if (aa.nick !== 'none') d.turn.lightExtra = false;
+                    d.turn.attacks = 0;
+                    d.turn.lightWith = [];
+                  }
+                })
+              }
+            >
+              {e.label}
+              {marked && (
+                <span className="pips" aria-hidden="true">
+                  {Array.from({ length: aa.per }, (_, i) => (
+                    // Spent: an attack made, or the Action used on something else (a spell, a Dash).
+                    <i key={i} className={i < aa.made || (c.turn.action && !c.turn.attacks) ? 'spent' : ''} />
+                  ))}
+                  {aa.nick !== 'none' && <i className={`nick ${aa.nick === 'ready' && aa.state !== 'used' ? '' : 'spent'}`} />}
+                </span>
+              )}
+              <small>{actionText}</small>
+            </button>
+          ) : (
+            <button key={e.key} type="button" aria-pressed={c.turn[e.key]} data-state={c.turn[e.key] ? 'used' : 'ready'} onClick={() => update((d) => void (d.turn[e.key] = !d.turn[e.key]))}>
+              {e.label}
+              <small>{c.turn[e.key] ? 'Used' : 'Ready'}</small>
+            </button>
+          ),
+        )}
       </div>
       <div className="row" style={{ marginTop: 10 }}>
         <label className="row" style={{ gap: 6, flexWrap: 'nowrap' }} htmlFor="target-ac">

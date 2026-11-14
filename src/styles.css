@@ -401,6 +401,16 @@ button.stat:hover { border-color: var(--gilt); }
 .economy button small { font-weight: 500; font-size: 11px; color: var(--muted); }
 .economy button[aria-pressed='true'] { opacity: 0.5; text-decoration: line-through; }
 .economy button[aria-pressed='false'] { border-color: var(--verdigris); }
+/* Ready: solid green. Partly used (attacks left): outlined green. Used: faded, struck through. */
+.economy button[data-state='ready'] { background: var(--verdigris); border-color: var(--verdigris); color: var(--bg); }
+.economy button[data-state='ready'] small { color: inherit; opacity: 0.85; }
+.economy button[data-state='partial'] { opacity: 1; text-decoration: none; background: var(--surface-2); border: 2px solid var(--verdigris); color: var(--fg); }
+.economy button[data-state='partial'] small { color: var(--verdigris); font-weight: 700; }
+.pips { display: flex; gap: 5px; justify-content: center; align-items: center; margin: 2px 0; }
+.pips i { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid currentColor; background: currentColor; }
+.pips i.spent { background: transparent; opacity: 0.6; }
+.pips i.nick { border-radius: 2px; width: 9px; height: 9px; transform: rotate(45deg); margin-left: 3px; }
+.economy button[data-state='partial'] .pips i { color: var(--verdigris); }
 .meter { height: 10px; border-radius: 99px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--line); }
 .meter > i { display: block; height: 100%; background: var(--verdigris); transition: width 0.3s; }
 .actions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }

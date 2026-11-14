@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { buildAnaurys } from './anaurys';
 import { applyLevelUp, planLevelUp } from './leveling';
 import { blankFeature, emptyTurn, normalizeCharacter } from './model';
-import { attacksPerAction, hasNick, isLight, lightExtraDamageBonus, weaponDamageBonus } from './rules';
+import { actionAttacks, attacksPerAction, hasNick, isLight, lightExtraDamageBonus, weaponDamageBonus } from './rules';
 import { readGameState } from './gamestate';
 import classes from './srd/classes.json';
 import creatures from './srd/creatures.json';
@@ -78,5 +78,42 @@ describe('Two Light weapons', () => {
     expect(broken.turn.lightWith).toEqual([]);
     const g = readGameState({ state: { turn: { ...turn, lightExtra: true, lightWith: [scimitar.id, 7] } } });
     expect(g.state.turn).toMatchObject({ attacks: 1, lightWith: [scimitar.id], lightExtra: true });
+  });
+});
+
+describe('the Action button’s attack markers', () => {
+  const ranger5 = () => {
+    const c = buildAnaurys(cat);
+    applyLevelUp(c, cat, planLevelUp(c, cat, 'ranger')!, { hpRoll: null, spells: [] });
+    return c;
+  };
+
+  it('starts solid: two attacks and the Nick swing', () => {
+    expect(actionAttacks(ranger5())).toEqual({ per: 2, made: 0, nick: 'ready', left: 3, state: 'ready' });
+  });
+
+  it('is partly used while attacks or the Nick swing are left, and used when none are', () => {
+    const c = ranger5();
+    const [, s1, s2] = c.weapons;
+    c.turn = { ...emptyTurn(), action: true, attacks: 1, lightWith: [s1.id] };
+    expect(actionAttacks(c)).toMatchObject({ made: 1, left: 2, state: 'partial' });
+    c.turn = { ...c.turn, lightExtra: true };
+    expect(actionAttacks(c)).toMatchObject({ nick: 'used', left: 1, state: 'partial' });
+    c.turn = { ...c.turn, attacks: 2, lightWith: [s1.id, s2.id] };
+    expect(actionAttacks(c)).toMatchObject({ made: 2, left: 0, state: 'used' });
+  });
+
+  it('has no Nick swing after attacking with a non-Light weapon, and is used by a spell or a Dash', () => {
+    const c = ranger5();
+    c.turn = { ...emptyTurn(), action: true, attacks: 2, lightWith: [] };
+    expect(actionAttacks(c)).toMatchObject({ nick: 'off', left: 0, state: 'used' });
+    c.turn = { ...emptyTurn(), action: true };
+    expect(actionAttacks(c).state).toBe('used');
+  });
+
+  it('shows one attack and no Nick for a character without Extra Attack or two Light weapons', () => {
+    const c = buildAnaurys(cat);
+    c.weapons = c.weapons.slice(0, 2);
+    expect(actionAttacks(c)).toEqual({ per: 1, made: 0, nick: 'none', left: 1, state: 'ready' });
   });
 });

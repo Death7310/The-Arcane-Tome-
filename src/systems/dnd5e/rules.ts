@@ -422,6 +422,24 @@ export function attacksPerAction(c: Character): { count: number; from: string } 
   return best;
 }
 
+/**
+ * Your Attack action this turn, for its button: how many attacks it gives and how many are made,
+ * and the Nick swing (the Light extra attack, made part of the Attack action by a Nick weapon):
+ * none (no two Light weapons, or no Nick), ready, used, or off (this turn's attacks weren't with
+ * a Light weapon, so it can't be made). ready: the Action is unused; partial: attacks are made
+ * and some are left; used: nothing left (or the Action went on something else).
+ */
+export function actionAttacks(c: Character): { per: number; made: number; nick: 'none' | 'ready' | 'used' | 'off'; left: number; state: 'ready' | 'partial' | 'used' } {
+  const per = attacksPerAction(c).count;
+  const made = Math.min(c.turn.attacks, per);
+  const lights = c.weapons.filter(isLight);
+  const nickWeapon = lights.length >= 2 && lights.some(hasNick);
+  const nick = !nickWeapon ? 'none' : c.turn.lightExtra ? 'used' : c.turn.attacks > 0 && !c.turn.lightWith.length ? 'off' : 'ready';
+  const left = per - made + (nick === 'ready' ? 1 : 0);
+  const state = !c.turn.action ? 'ready' : c.turn.attacks > 0 && left > 0 ? 'partial' : 'used';
+  return { per, made, nick, left, state };
+}
+
 /** A weapon with the Light property (Dagger, Scimitar, Shortsword…), which can make the Light extra attack. */
 export const isLight = (w: Weapon) => /\blight\b/i.test(w.properties);
 
