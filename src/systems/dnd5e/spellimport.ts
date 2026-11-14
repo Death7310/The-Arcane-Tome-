@@ -61,9 +61,52 @@ const tidy = (l: string) =>
 /** A line without bold around the whole of it ("**Fireball**" → "Fireball"). */
 const unbold = (l: string) => l.replace(/^\*\*([^*]+)\*\*$/, '$1').trim();
 
+/**
+ * A header field written without its colon ("Casting Time 1 Bonus Action", or a tab between,
+ * as some pages and PDFs copy): the label and value, when the value looks like that field's.
+ * Description sentences that merely start with "Range" or "Duration" aren't taken.
+ */
+const BARE_FIELDS: [RegExp, RegExp][] = [
+  [/^(casting time)\s+(.+)$/i, /^(\d|action|bonus|reaction|ritual)/i],
+  [/^(range\s*\/\s*area|range)\s+(.+)$/i, /^(\d|self|touch|sight|special|unlimited)/i],
+  [/^(components?)\s+(.+)$/i, /^[VSM](\b|,|\s|$)/],
+  [/^(duration)\s+(.+)$/i, /^(instantaneous|concentration|until|up to|special|permanent|\d)/i],
+  [/^(school)\s+(.+)$/i, new RegExp(`^(${SCHOOL_RE})\\b`, 'i')],
+  [/^(attack\s*\/\s*save)\s+(.+)$/i, /^(none|melee|ranged|str|dex|con|int|wis|cha)/i],
+  [/^(damage\s*\/\s*effect)\s+(.+)$/i, /^[A-Z]/i],
+];
+function bareField(l: string): string | null {
+  if (l.length > 140 || /:/.test(l.split(/\s/).slice(0, 3).join(' '))) return null;
+  for (const [re, value] of BARE_FIELDS) {
+    const m = re.exec(l);
+    if (m && value.test(m[2].trim())) return `${m[1]}: ${m[2].trim()}`;
+  }
+  return null;
+}
+
+/** "Conjuration · 2nd Level" or "2nd Level · Conjuration" → "2nd-level Conjuration" (the usual order). */
+function levelOrder(l: string): string {
+  const sep = '\\s*(?:[·•|,–-]\\s*)?';
+  const lvl = '(\\d)(?:st|nd|rd|th)?[-\\s]level|level\\s*(\\d)';
+  let m = new RegExp(`^(${SCHOOL_RE})${sep}(?:${lvl})\\s*(\\(.*\\))?$`, 'i').exec(l);
+  if (m) return `${m[2] ?? m[3]}th-level ${m[1]}${m[4] ? ` ${m[4]}` : ''}`.replace(/^1th/, '1st').replace(/^2th/, '2nd').replace(/^3th/, '3rd');
+  m = new RegExp(`^(?:${lvl})${sep}(${SCHOOL_RE})\\s*(\\(.*\\))?$`, 'i').exec(l);
+  if (m && /[·•|,–]/.test(l)) return `${m[1] ?? m[2]}th-level ${m[3]}${m[4] ? ` ${m[4]}` : ''}`.replace(/^1th/, '1st').replace(/^2th/, '2nd').replace(/^3th/, '3rd');
+  m = new RegExp(`^(?:cantrip${sep}(${SCHOOL_RE})|(${SCHOOL_RE})${sep}cantrip)\\s*(\\(.*\\))?$`, 'i').exec(l);
+  if (m && /[·•|,–]/.test(l)) return `${m[1] ?? m[2]} cantrip${m[3] ? ` ${m[3]}` : ''}`;
+  return l;
+}
+
 /** One "Label: value" per line, from "LABEL" / "value" pairs and D&D Beyond's one-line header row. */
 function normalise(text: string): string[] {
-  const raw = text.replace(/\r/g, '').split('\n').map(tidy);
+  const raw = text
+    .replace(/\r/g, '')
+    .split('\n')
+    .map(tidy)
+    .map((l) => bareField(l) ?? l)
+    .map(levelOrder)
+    // wikidot's footer: "Spell Lists. Ranger, Wizard".
+    .map((l) => l.replace(/^(spell lists?)\.\s+/i, '$1: '));
   const out: string[] = [];
   for (let i = 0; i < raw.length; i++) {
     const l = raw[i];
@@ -108,10 +151,53 @@ function castingTime(text: string): [CastingTime, string] {
   return ['other', text.replace(/,.*$/, '').replace(/\s+or\s+ritual$/i, '')];
 }
 
+/**
+ * A book or page reference, or a badge, that sites put between a spell's name and its header:
+ * "Player's Handbook (2024)", "PHB p241", "pg. 289", "Legacy". Whole book titles only, so a spell
+ * named for someone ("Tasha's Hideous Laughter") is still a name.
+ */
+const isSourceLine = (l: string) =>
+  l.length <= 70 &&
+  !/[.!?]$/.test(l) &&
+  (/\b(player'?s handbook|dungeon master'?s guide|xanathar'?s guide|tasha'?s cauldron|fizban'?s treasury|sword coast adventurer|explorer'?s guide|monsters of the multiverse|basic rules|free rules|system reference|sourcebook)\b/i.test(l) ||
+    /^(phb|xphb|xge|xgte|tce|tcoe|ftd|ftod|scag|egw|aag|bmt|sato|dmg|srd)\b/i.test(l) ||
+    /\bp(?:g|age)?\.?\s*\d{1,3}\b/i.test(l) ||
+    /\((?:19|20)\d\d\)\s*$/.test(l) ||
+    /^(legacy|homebrew|official|unofficial|expanded|ua|unearthed arcana)$/i.test(l));
+
+/** A labelled line a site adds to a spell's header that this app has no field for ("Target: …", "Material: …"). */
+const otherField = (l: string): [string, string] | null => {
+  const m = /^([A-Z][A-Za-z' /-]{1,30}?)\s*:\s*(\S.*)$/.exec(l);
+  return m && m[1].split(' ').length <= 4 ? [m[1].toLowerCase(), m[2].trim()] : null;
+};
+
 const isNameLine = (raw: string) => {
   const l = unbold(raw);
-  return l.length >= 2 && l.length <= 70 && /^[A-Z0-9'"(]/i.test(l) && !/[.!?;]$/.test(l) && !fieldOf(l) && !labelOf(l) && l.split(' ').length <= 10;
+  return l.length >= 2 && l.length <= 70 && /^[A-Z0-9'"(]/i.test(l) && !/[.!?;]$/.test(l) && !fieldOf(l) && !labelOf(l) && !isSourceLine(l) && !LEVEL_LINE.test(l) && l.split(' ').length <= 10;
 };
+
+/** Walks up from a spell's casting time past its header (fields, level line, a source line) to its name; -1 if none. */
+function nameAbove(lines: string[], anchor: number): number {
+  let i = anchor - 1;
+  while (i >= 0 && i > anchor - 12 && (fieldOf(lines[i]) || LEVEL_LINE.test(lines[i]) || isSourceLine(lines[i]) || otherField(lines[i]) || continues(lines, i))) i--;
+  return i >= 0 && isNameLine(lines[i]) ? i : -1;
+}
+
+/** A line that finishes the one above it (a wrapped "M (a tiny ball of bat" / "guano and sulfur)"). */
+const continues = (lines: string[], i: number) => i > 0 && !!fieldOf(lines[i - 1]) && open(fieldOf(lines[i - 1])![1]) > 0 && !fieldOf(lines[i]) && lines[i].length <= 80;
+
+/** How many brackets a text leaves open. */
+const open = (t: string) => (t.match(/\(/g)?.length ?? 0) - (t.match(/\)/g)?.length ?? 0);
+
+/** "FIREBALL" → "Fireball", "WALL OF FIRE" → "Wall of Fire"; other names as written. */
+function nameCase(name: string): string {
+  if (!/[A-Z]{3}/.test(name) || name !== name.toUpperCase()) return name;
+  return name
+    .toLowerCase()
+    .split(' ')
+    .map((w, i) => (i > 0 && /^(of|the|and|a|an|to|in|on|from|with|or|for)$/.test(w) ? w : w.replace(/(^|[-'(/])([a-z])/g, (_, p, ch) => p + ch.toUpperCase())))
+    .join(' ');
+}
 
 /** Class names as the library stores them: lower-case slugs ("Wizard" → "wizard"). */
 export function classSlugs(text: string): string[] {
@@ -135,9 +221,8 @@ export function readSpellText(text: string, source: string): SpellDef[] {
   const anchors = lines.map((l, i) => (fieldOf(l)?.[0] === 'time' ? i : -1)).filter((i) => i >= 0);
   const starts: number[] = [];
   for (const a of anchors) {
-    let i = a - 1;
-    while (i >= 0 && i > a - 10 && (fieldOf(lines[i]) || LEVEL_LINE.test(lines[i]))) i--;
-    if (i >= 0 && isNameLine(lines[i]) && (!starts.length || i > starts[starts.length - 1])) starts.push(i);
+    const i = nameAbove(lines, a);
+    if (i >= 0 && (!starts.length || i > starts[starts.length - 1])) starts.push(i);
   }
   const out = starts.map((start, k) => spellFromBlock(lines.slice(start, starts[k + 1] ?? lines.length), source).def);
   // The same spell twice (a document repeating itself) is kept once.
@@ -207,17 +292,35 @@ function spellFromBlock(block: string[], source: string): { def: SpellDef; parts
   const fields = new Map<string, string>();
   let levelLine: RegExpExecArray | null = null;
   let headerEnd = 1;
+  // Fields this app has no box for, kept at the top of the description ("Target: …").
+  const others: string[] = [];
+  let last = '';
   for (let j = 1; j < block.length; j++) {
     const f = fieldOf(block[j]);
-    const lv: RegExpExecArray | null = !levelLine && j <= 4 ? LEVEL_LINE.exec(block[j]) : null;
-    if (lv && j === headerEnd) (levelLine = lv), (headerEnd = j + 1);
-    else if (f && j === headerEnd) {
-      // The header is one unbroken run of fields under the name.
+    const lv: RegExpExecArray | null = !levelLine && j <= 6 ? LEVEL_LINE.exec(block[j]) : null;
+    const inHeader = j === headerEnd;
+    if (lv && inHeader) (levelLine = lv), (headerEnd = j + 1);
+    else if (f && inHeader) {
+      // The header is one run of fields under the name.
       if (!fields.has(f[0])) fields.set(f[0], f[1]);
+      last = f[0];
+      headerEnd = j + 1;
+    } else if (inHeader && last && open(fields.get(last) ?? '') > 0 && block[j].length <= 80) {
+      // A value that wrapped onto the next line (a PDF's "M (a tiny ball of bat" / "guano and sulfur)").
+      fields.set(last, `${fields.get(last)} ${block[j]}`);
+      headerEnd = j + 1;
+    } else if (inHeader && j <= 3 && isSourceLine(block[j])) headerEnd = j + 1;
+    else if (inHeader && otherField(block[j]) && headerEnd > 1) {
+      // Roll20's "Material:" joins the components; its "Save:" says the save; others stay as text.
+      const [k, v] = otherField(block[j])!;
+      if (/^materials?$/.test(k)) fields.set('material', v);
+      else if (/^save$/.test(k)) fields.set('attack', fields.get('attack') ?? `${v} save`);
+      else others.push(block[j]);
+      last = '';
       headerEnd = j + 1;
     } else if (f && ['classes', 'tags', 'source'].includes(f[0]) && !fields.has(f[0])) fields.set(f[0], f[1]); // a footer (D&D Beyond's "Available For")
   }
-  let name = unbold(block[0]).replace(/\s*\[.*?\]\s*$/, '').trim();
+  let name = nameCase(unbold(block[0]).replace(/\s*\[.*?\]\s*$/, '').trim());
   const inline = INLINE_LEVEL.exec(name);
   if (inline) name = name.slice(0, inline.index).trim();
   name = name.replace(/\s*[-:]\s*$/, '').replace(/\s*\((?:R|C|ritual|concentration)\)\s*$/i, '');
@@ -240,7 +343,8 @@ function spellFromBlock(block: string[], source: string): { def: SpellDef; parts
   const duration = fields.get('duration') ?? '';
   for (const k of ['range', 'components', 'duration'] as const) if (fields.has(k)) parts.add(k);
   // The description: what's left after the header, minus D&D Beyond's footer lines and the card lines.
-  let components = fields.get('components') ?? '';
+  let components = (fields.get('components') ?? '').replace(/^([VSM])\s+([VSM])(?:\s+([VSM]))?(?=\s*(\(|$))/, (_, a, b, c2) => [a, b, c2].filter(Boolean).join(', '));
+  if (fields.has('material') && !/\(/.test(components)) components = `${components || 'M'} (${fields.get('material')})`;
   const desc: string[] = [];
   let card: Card = {};
   const cardParts = new Set<SpellPart>();
@@ -261,7 +365,7 @@ function spellFromBlock(block: string[], source: string): { def: SpellDef; parts
     }
     desc.push(l);
   }
-  const description = desc.join('\n').trim();
+  const description = [...others, ...desc].join('\n').trim();
   const auto = spellMechanics(description, level, range);
   if (auto.damage.length) parts.add('damage');
   if (auto.healing) parts.add('healing');
@@ -323,9 +427,8 @@ export function readPastedSpells(text: string, fallbackName = 'New spell'): { de
   const anchors = lines.map((l, i) => (fieldOf(l)?.[0] === 'time' ? i : -1)).filter((i) => i >= 0);
   const starts: number[] = [];
   for (const a of anchors) {
-    let i = a - 1;
-    while (i >= 0 && i > a - 10 && (fieldOf(lines[i]) || LEVEL_LINE.test(lines[i]))) i--;
-    if (i >= 0 && isNameLine(lines[i]) && (!starts.length || i > starts[starts.length - 1])) starts.push(i);
+    const i = nameAbove(lines, a);
+    if (i >= 0 && (!starts.length || i > starts[starts.length - 1])) starts.push(i);
   }
   if (starts.length) return starts.map((start, k) => spellFromBlock(lines.slice(start, starts[k + 1] ?? lines.length), 'pasted'));
   const named = lines.length > 1 && isNameLine(lines[0]) && !cardLine(lines[0]);

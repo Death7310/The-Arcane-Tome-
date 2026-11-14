@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { describeSpellDef, readPastedSpells, spellToText } from './spellimport';
 import srdSpells from './srd/spells.json';
 import type { SpellDef } from './srd';
+import { MORE, SAMPLES } from './spellpaste-samples';
 
 const SRD = srdSpells as unknown as SpellDef[];
 const KEYS = ['name', 'level', 'school', 'castingTime', 'castingTimeText', 'range', 'components', 'duration', 'concentration', 'ritual', 'resolution', 'damage', 'healing', 'upcastDice', 'instances', 'upcastInstances', 'scaling', 'element', 'shape'] as const;
@@ -72,5 +73,67 @@ describe('pasting a spell', () => {
   it('describes what it read', () => {
     const fb = SRD.find((s) => s.name === 'Fireball')!;
     expect(describeSpellDef(fb)).toEqual(expect.arrayContaining(['Level 3 Evocation', 'Roll: Dexterity save, half damage on a success', 'Damage: 8d6 fire', '+1d6 per slot level above 3']));
+  });
+});
+
+describe('pasting a spell copied from anywhere fills in every field', () => {
+  const read = (text: string) => readPastedSpells(text).map((r) => r.def);
+  const header = (d: SpellDef) => ({ name: d.name, level: d.level, school: d.school, castingTime: d.castingTime, castingTimeText: d.castingTimeText, range: d.range, components: d.components, duration: d.duration, concentration: d.concentration });
+  const fireball = (range: string, components: string) => ({ name: 'Fireball', level: 3, school: 'Evocation', castingTime: 'action', castingTimeText: 'Action', range, components, duration: 'Instantaneous', concentration: false });
+  const mark = (range: string, duration: string) => ({ name: "Hunter's Mark", level: 1, school: 'Divination', castingTime: 'bonus', castingTimeText: 'Bonus Action', range, components: 'V', duration, concentration: true });
+
+  it('reads D&D Beyond’s labels with no colon ("Casting Time 1 Bonus Action")', () => {
+    expect(header(read(SAMPLES.ddbInlineNoColon)[0])).toEqual(mark('90 ft.', 'Concentration 1 Hour'));
+  });
+
+  it('reads labels and values split by a tab', () => {
+    expect(header(read(SAMPLES.tabbed)[0])).toEqual(fireball('150 feet', 'V, S, M (a tiny ball of bat guano and sulfur)'));
+  });
+
+  it('reads past Roll20’s extra fields, joining its Material to the components and keeping Target as text', () => {
+    const [d] = read(SAMPLES.roll20);
+    expect(header(d)).toEqual(fireball('150 feet', 'V, S, M (A tiny ball of bat guano and sulfur)'));
+    expect(d.description.split('\n')[0]).toBe('Target: A point you choose within range');
+    expect(d.classes).toEqual(['sorcerer', 'wizard']);
+  });
+
+  it('skips a book line under the name instead of taking it for the name', () => {
+    expect(header(read(SAMPLES.sourceUnderName)[0])).toEqual(mark('90 feet', 'Concentration, up to 1 hour'));
+    expect(read(MORE.fiveETools)[0]).toMatchObject({ name: 'Fireball', range: '150 feet', classes: ['sorcerer', 'wizard'] });
+    expect(read(MORE.tasha)[0]).toMatchObject({ name: "Tasha's Hideous Laughter", level: 1, school: 'Enchantment', concentration: true });
+  });
+
+  it('joins a value wrapped onto the next line, and tidies an all-capitals name', () => {
+    expect(header(read(SAMPLES.pdfWrapped)[0])).toEqual(fireball('150 feet', 'V, S, M (a tiny ball of bat guano and sulfur)'));
+  });
+
+  it('reads "Conjuration · 2nd Level" as the level and school, not the name', () => {
+    expect(read(SAMPLES.schoolDotLevel)[0]).toMatchObject({ name: 'Misty Step', level: 2, school: 'Conjuration', castingTime: 'bonus', range: 'Self' });
+  });
+
+  it('still reads D&D Beyond’s spell page, the 2024 book and wikidot (with its Spell Lists)', () => {
+    expect(read(SAMPLES.ddbPage)[0]).toMatchObject({ ...fireball('150 ft. (20 ft. )', 'V, S, M (A tiny ball of bat guano and sulfur)'), resolution: 'save', saveAbility: 'dex', halfOnSave: true, upcastDice: '1d6', classes: ['sorcerer', 'wizard'] });
+    expect(read(SAMPLES.phb2024)[0]).toMatchObject({ ...fireball('150 feet', 'V, S, M (a ball of bat guano and sulfur)'), classes: ['sorcerer', 'wizard'], upcastDice: '1d6' });
+    expect(read(SAMPLES.wikidot)[0]).toMatchObject({ ...mark('90 feet', 'Concentration, up to 1 hour'), classes: ['ranger'] });
+  });
+
+  it('reads two spells pasted together, each with its own fields', () => {
+    expect(read(MORE.two).map((d) => [d.name, d.level, d.castingTime, d.range, d.duration])).toEqual([
+      ['Misty Step', 2, 'bonus', 'Self', 'Instantaneous'],
+      ['Shield', 1, 'reaction', 'Self', '1 round'],
+    ]);
+  });
+
+  it('leaves description lines that merely start with a label word alone', () => {
+    const [d] = read(`Arcane Gate
+6th-level conjuration
+Casting Time: 1 action
+Range: 500 feet
+Components: V, S
+Duration: Concentration, up to 10 minutes
+Range of the portals is limited to what you can see.
+Duration matters little once you pass through.`);
+    expect(d.range).toBe('500 feet');
+    expect(d.description).toBe('Range of the portals is limited to what you can see.\nDuration matters little once you pass through.');
   });
 });
