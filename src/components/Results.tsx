@@ -131,6 +131,17 @@ function TargetActions({ e }: { e: RollEntry }) {
                 </button>
               </>
             )}
+            {en.state === 'pending' && r.kind === 'effect' && (
+              <>
+                <span className="hint">Did it land on {en.name}?</span>
+                <button type="button" className="btn small primary" onClick={() => t.settleHit(e.id, i, en.id, true)}>
+                  Yes ({sum(r.pieces)})
+                </button>
+                <button type="button" className="btn small" onClick={() => t.settleHit(e.id, i, en.id, false)}>
+                  No
+                </button>
+              </>
+            )}
             {en.state === 'pending' && r.kind === 'save' && (
               <>
                 <span className="hint">{en.name}’s save:</span>
@@ -142,7 +153,7 @@ function TargetActions({ e }: { e: RollEntry }) {
                 </button>
               </>
             )}
-            {r.kind === 'attack' && c.enemies.length > 1 && (
+            {(r.kind === 'attack' || r.kind === 'effect') && c.enemies.length > 1 && (
               <label className="move-roll">
                 <span className="hint">{en.state === 'pending' ? 'At' : 'Meant for someone else?'}</span>
                 <select value={en.id} onChange={(ev) => t.moveRoll(e.id, i, en.id, ev.target.value)} aria-label="Move this roll to another enemy">

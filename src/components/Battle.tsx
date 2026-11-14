@@ -9,26 +9,31 @@ import { isMacApp, isNative, saveFileToDevice, shareFile } from '../state/native
 import { useTable } from '../state/table';
 import {
   allyWho,
+  archiveBattle,
+  autoName,
   battleFile,
   battleName,
   battleStats,
   battleText,
   didSomething,
-  endBattle,
+  enemyWho,
   eventText,
   hitRateText,
   inBattle,
   openEvents,
   presentWho,
   rangeText,
+  resumeBattle,
   sameWho,
   whoKey,
   youWho,
   type WhoStats,
 } from '../systems/dnd5e/battle';
 import { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, type Ability } from '../systems/dnd5e/data';
-import type { Battle, BattleEvent, BattleWho, Character } from '../systems/dnd5e/model';
-import { Check, ConfirmButton, Panel } from './ui';
+import type { Battle, BattleEvent, BattleWho, Character, Enemy } from '../systems/dnd5e/model';
+import { acText, knownMaxHp, STATUS_NAMES, statusOf, tally } from '../systems/dnd5e/enemies';
+import { conditionName } from '../systems/dnd5e/rules';
+import { Check, ConfirmButton, Dialog, Panel } from './ui';
 
 const SIDE_NAME: Record<BattleWho['side'], string> = { you: 'you', companion: 'companion', ally: 'party', enemy: 'enemy' };
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -36,10 +41,8 @@ const when = (t: number) => new Date(t).toLocaleString(undefined, { dateStyle: '
 const fileName = (b: Battle) => `battle-${battleName(b).replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'record'}-${new Date(b.started).toISOString().slice(0, 10)}.json`;
 
 export function BattlePanel() {
-  const { char: c, update } = useChar();
-  const t = useTable();
-  const cat = useCatalog();
-  const [clear, setClear] = useState(true);
+  const { char: c } = useChar();
+  const [archiving, setArchiving] = useState(false);
   const b = c.battle;
   const open = openEvents(b);
   return (
@@ -59,30 +62,69 @@ export function BattlePanel() {
           <StatsList b={b} />
           {open.length > 0 && <OpenRolls events={open} />}
           <EventLog b={b} />
-          <div className="row" style={{ marginTop: 10 }}>
-            <ConfirmButton
-              label="End and keep this battle"
-              confirmLabel="End it?"
-              onConfirm={() => {
-                const name = battleName(b);
-                update((d) => {
-                  endBattle(d, cat?.creatures ?? []);
-                  d.fight = null;
-                  if (clear) {
-                    d.enemies = [];
-                    d.targetId = null;
-                  }
-                });
-                t.note('Battle kept', `${name}: under Past battles.`);
-              }}
-            />
-            <Check label="Clear the enemies too" id="battle-clear" checked={clear} onChange={setClear} />
-          </div>
         </>
+      )}
+      {(b || c.enemies.length > 0) && (
+        <div className="row" style={{ marginTop: 10 }}>
+          <button type="button" className="btn small primary" onClick={() => setArchiving(true)}>
+            Save to archive…
+          </button>
+          <span className="hint">Name it, then keep a snapshot or end the battle.</span>
+        </div>
       )}
       {inBattle(c) && <LogTurn />}
       <PastBattles />
+      {archiving && <ArchiveDialog onClose={() => setArchiving(false)} />}
     </Panel>
+  );
+}
+
+/**
+ * Saving the battle to the archive: a name and notes of your own, then either a snapshot (the
+ * fight goes on; save again later) or the end of it, with the enemies cleared off if you like.
+ * Everything on the Enemies panel is kept: every card, its damage, AC, conditions and notes.
+ */
+export function ArchiveDialog({ onClose }: { onClose: () => void }) {
+  const { char: c, update } = useChar();
+  const t = useTable();
+  const cat = useCatalog();
+  const suggested = c.battle ? battleName(c.battle) : autoName({ combatants: c.enemies.map(enemyWho) });
+  const [name, setName] = useState(c.battle?.name.trim() ? c.battle.name : '');
+  const [notes, setNotes] = useState(c.battle?.notes ?? '');
+  const [clear, setClear] = useState(true);
+  const save = (end: boolean) => {
+    const title = name.trim() || suggested;
+    update((d) => void archiveBattle(d, { name: title, notes, end, clear: end && clear }, cat?.creatures ?? []));
+    t.note(end ? 'Battle archived' : 'Snapshot archived', `${title}: under Battle → Archive${end ? '' : '. The fight goes on; save again any time'}.`);
+    onClose();
+  };
+  return (
+    <Dialog title="Save to archive" onClose={onClose}>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Keeps the Enemies panel as it is (every enemy, the damage each took and from whom, what you learned of its AC, its conditions, marks, resistances and notes) with
+        the battle’s log and everyone’s numbers.
+      </p>
+      <label className="field">
+        <span>Name the battle</span>
+        <input className="input" value={name} placeholder={suggested} onChange={(e) => setName(e.target.value.slice(0, 120))} autoFocus />
+      </label>
+      <label className="field">
+        <span>Notes (optional)</span>
+        <textarea className="input" value={notes} placeholder="What happened, loot, who fell…" onChange={(e) => setNotes(e.target.value.slice(0, 4000))} />
+      </label>
+      <div className="row" style={{ marginTop: 10 }}>
+        <button type="button" className="btn small" onClick={() => save(false)}>
+          Save a snapshot
+        </button>
+        <span className="hint">The fight goes on.</span>
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
+        <button type="button" className="btn small primary" onClick={() => save(true)}>
+          End the battle and archive it
+        </button>
+        <Check label="Clear the enemies off the field" id="archive-clear" checked={clear} onChange={setClear} />
+      </div>
+    </Dialog>
   );
 }
 
@@ -366,12 +408,13 @@ export function LogTurn({ by: initialBy, title = 'Log someone’s turn' }: { by?
 /** Battles you've ended: their numbers, what happened, and copying or saving them. */
 function PastBattles() {
   const { char: c, update } = useChar();
+  const cat = useCatalog();
   const [open, setOpen] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
   if (!c.battles.length) return null;
   return (
     <section className="past-battles">
-      <h4>Past battles ({c.battles.length})</h4>
+      <h4>Archive ({c.battles.length})</h4>
       <div className="list">
         {c.battles.map((b) => (
           <div className="item" key={b.id}>
@@ -380,6 +423,7 @@ function PastBattles() {
                 <b>{battleName(b)}</b>
                 <small>
                   {when(b.started)}
+                  {b.checkpoint ? ' · snapshot' : ''}
                   {b.rounds ? ` · ${b.rounds} round${b.rounds === 1 ? '' : 's'}` : ''} · {summaryLine(b, c)}
                 </small>
               </button>
@@ -399,9 +443,47 @@ function PastBattles() {
                     }
                   />
                 </label>
+                <label className="field">
+                  <span>Notes</span>
+                  <textarea
+                    className="input"
+                    value={b.notes}
+                    placeholder="What happened, loot, who fell…"
+                    onChange={(e) =>
+                      update((d) => {
+                        const x = d.battles.find((y) => y.id === b.id);
+                        if (x) x.notes = e.target.value.slice(0, 4000);
+                      })
+                    }
+                  />
+                </label>
+                {b.checkpoint && <p className="hint">A snapshot, saved mid-fight on {when(b.ended ?? b.started)}.</p>}
                 <StatsList b={b} />
-                {b.enemies.length > 0 && <p className="hint">Enemies: {b.enemies.map((e) => `${e.name} (${e.status === 'down' ? 'down' : e.status === 'healthy' ? 'standing' : e.status === 'badly' ? 'badly hurt' : 'bloodied'})`).join(', ')}</p>}
+                {b.field.length > 0 ? (
+                  <section>
+                    <h4>The Enemies panel, as it was</h4>
+                    <div className="archived-field">
+                      {b.field.map((e) => (
+                        <ArchivedEnemy key={e.id} e={e} />
+                      ))}
+                    </div>
+                  </section>
+                ) : (
+                  b.enemies.length > 0 && <p className="hint">Enemies: {b.enemies.map((e) => `${e.name} (${e.status === 'down' ? 'down' : e.status === 'healthy' ? 'standing' : e.status === 'badly' ? 'badly hurt' : 'bloodied'})`).join(', ')}</p>
+                )}
                 <EventLog b={b} />
+                {b.field.length > 0 && (
+                  <div className="row">
+                    <ConfirmButton
+                      label="Bring back to the table"
+                      confirmLabel={c.enemies.length || c.battle ? 'Set aside what’s there and bring it back?' : 'Bring it back?'}
+                      onConfirm={() => {
+                        update((d) => void resumeBattle(d, b.id, cat?.creatures ?? []));
+                        setMsg(`${battleName(b)} is back on the Enemies panel, its log going again${c.enemies.length || c.battle ? '. What was there is in the archive' : ''}.`);
+                      }}
+                    />
+                  </div>
+                )}
                 <div className="row">
                   <button
                     type="button"
@@ -458,4 +540,49 @@ function summaryLine(b: Battle, c: Character): string {
   const me = battleStats(b).find((s) => s.who.side === 'you') ?? battleStats(b).find((s) => sameWho(s.who, youWho(c)));
   if (!me) return `${b.events.length} things kept`;
   return [me.attacks ? `you hit ${hitRateText(me)}` : '', me.dealt.high ? `dealt ${rangeText(me.dealt)}` : ''].filter(Boolean).join(', ') || `${b.events.length} things kept`;
+}
+
+/** An enemy card from the archive, as it was: read only. */
+function ArchivedEnemy({ e }: { e: Enemy }) {
+  const cat = useCatalog();
+  const creatures = cat?.creatures ?? [];
+  const t = tally(e);
+  const max = knownMaxHp(e, creatures);
+  const status = statusOf(e, creatures);
+  const by = [t.you ? `you ${t.you}` : '', ...t.companions.map(([n, v]) => `${n} ${v}`), ...t.party.map(([n, v]) => `${n} ${v}`)].filter(Boolean);
+  const traits = [...e.conditions.map(conditionName), ...e.marks.map((m) => m.name)];
+  const defences = [e.resist.length ? `Resists ${e.resist.join(', ')}` : '', e.immune.length ? `Immune to ${e.immune.join(', ')}` : '', e.vulnerable.length ? `Vulnerable to ${e.vulnerable.join(', ')}` : ''].filter(Boolean);
+  return (
+    <div className={`archived-enemy status-${status}`}>
+      <b>{e.name}</b> <small className="hint">{STATUS_NAMES[status]}</small>
+      <div>
+        {acText(e, creatures)}
+        {max !== null ? ` · ${max} HP` : ''} · took {t.total}
+        {max !== null ? ` (${Math.max(0, max - t.total)} left)` : ''}
+      </div>
+      {traits.length > 0 && <div>{traits.join(' · ')}</div>}
+      {defences.length > 0 && <div>{defences.join(' · ')}</div>}
+      {by.length > 0 && <div className="hint">By {by.join(', ')}</div>}
+      {e.notes.trim() && <p className="hint" style={{ margin: 0 }}>“{e.notes.trim()}”</p>}
+      {e.hits.length > 0 && (
+        <details>
+          <summary className="hint">Each hit ({e.hits.length})</summary>
+          <ul className="hit-log">
+            {e.hits.map((h) => (
+              <li key={h.id}>
+                <span>
+                  {h.who === 'you' ? 'You' : h.name || 'Party'}
+                  {h.what ? `: ${h.what}` : ''}
+                </span>
+                <span>
+                  {h.amount}
+                  {h.type ? ` ${h.type}` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
 }

@@ -12,9 +12,10 @@
 // field or a fight in initiative, and is kept when you end it.
 
 import type { CreatureDef } from './srd';
-import { damageTo, hurt, statusOf } from './enemies';
+import { acText, damageTo, hurt, knownMaxHp, STATUS_NAMES, statusOf, tally } from './enemies';
+import { conditionName } from './rules';
 import { MAX_BATTLES, uid, type Battle, type BattleEvent, type BattleWho, type Character, type Enemy, type RolledDamage } from './model';
-import type { Ability } from './data';
+import { ABILITIES, ABILITY_NAMES, DAMAGE_TYPES, type Ability } from './data';
 
 export const youWho = (c: Pick<Character, 'name'>): BattleWho => ({ side: 'you', name: c.name.trim() || 'You', ref: '' });
 export const enemyWho = (e: Pick<Enemy, 'id' | 'name'>): BattleWho => ({ side: 'enemy', name: e.name, ref: e.id });
@@ -36,7 +37,7 @@ export function presentWho(c: Character): BattleWho[] {
   return out;
 }
 
-const startBattle = (c: Character): Battle => ({ id: uid(), name: '', started: Date.now(), ended: null, rounds: c.fight?.round ?? 0, combatants: presentWho(c), events: [], enemies: [] });
+const startBattle = (c: Character): Battle => ({ id: uid(), name: '', started: Date.now(), ended: null, rounds: c.fight?.round ?? 0, combatants: presentWho(c), events: [], enemies: [], field: [], notes: '', checkpoint: false });
 
 export type NewEvent = Omit<BattleEvent, 'id' | 'time' | 'round'>;
 
@@ -87,6 +88,15 @@ export function withDamage(d: Pick<Character, 'enemies'>, ev: Omit<NewEvent, 'lo
   const e = ev.target?.side === 'enemy' ? d.enemies.find((x) => x.id === ev.target!.ref) : undefined;
   return { ...ev, type: ev.type ?? mainType(ev.pieces), ...rangeOf({ ...ev, low: 0, high: 0 }, e) };
 }
+
+/** The saving throw a description names: "…makes a Dexterity saving throw…" → dex; null for none. */
+export function saveIn(text: string): Ability | null {
+  const m = /\b(strength|dexterity|constitution|intelligence|wisdom|charisma) saving throw/i.exec(text);
+  return m ? (ABILITIES.find((a) => ABILITY_NAMES[a].toLowerCase() === m[1].toLowerCase()) ?? null) : null;
+}
+
+/** A look's element as a damage type, when it is one ("radiant"), else "". */
+export const damageTypeOf = (element: string): string => ((DAMAGE_TYPES as readonly string[]).includes(element) ? element : '');
 
 // ── The DM's answer ──────────────────────────────────────────────────────────
 
@@ -256,27 +266,108 @@ export function autoName(b: Pick<Battle, 'combatants'>): string {
 
 export const battleName = (b: Battle): string => b.name.trim() || autoName(b);
 
+/** Whether the table holds anything worth keeping: something happened, or an enemy took damage. */
+export const worthKeeping = (c: Pick<Character, 'battle' | 'enemies'>): boolean => !!c.battle?.events.length || c.enemies.some((e) => e.hits.length > 0);
+
+export interface ArchiveOptions {
+  name?: string;
+  notes?: string;
+  /** End the battle (and the fight). False: a snapshot of it as it is now, and it goes on. */
+  end: boolean;
+  /** Take the enemies off the field once they're archived (with end). */
+  clear?: boolean;
+}
+
 /**
- * Ends the battle and keeps it (newest first), with how each enemy ended up. A battle where
- * nothing happened isn't kept. Returns the kept battle, or null.
+ * Keeps the battle in the archive (newest first, the last MAX_BATTLES): its log and stats, how
+ * each enemy ended up, and the Enemies panel itself, every card with its damage, AC, conditions,
+ * marks, resistances and notes. A snapshot keeps the battle going and can be saved again later;
+ * ending it clears the battle (and, if asked, the field). Returns the record, or null when
+ * there was nothing on the table at all.
  */
-export function endBattle(d: Character, creatures: CreatureDef[] = []): Battle | null {
-  const b = d.battle;
-  d.battle = null;
-  if (!b || !b.events.length) return null;
-  b.ended = Date.now();
-  b.rounds = Math.max(b.rounds, d.fight?.round ?? 0);
-  b.enemies = b.combatants
+export function archiveBattle(d: Character, opts: ArchiveOptions, creatures: CreatureDef[] = []): Battle | null {
+  if (!d.battle?.events.length && !d.enemies.length) {
+    if (opts.end) d.battle = null;
+    return null;
+  }
+  const live = d.battle ?? startBattle(d);
+  const rec: Battle = structuredClone(live);
+  rec.id = opts.end ? live.id : uid();
+  rec.ended = Date.now();
+  rec.checkpoint = !opts.end;
+  rec.rounds = Math.max(rec.rounds, d.fight?.round ?? 0);
+  for (const e of d.enemies) if (!rec.combatants.some((w) => sameWho(w, enemyWho(e)))) rec.combatants.push(enemyWho(e));
+  rec.enemies = rec.combatants
     .filter((w) => w.side === 'enemy')
     .map((w) => {
       const e = d.enemies.find((x) => x.id === w.ref);
       return { ref: w.ref, name: w.name, status: e ? statusOf(e, creatures) : 'healthy' };
     });
-  if (!b.name.trim()) b.name = autoName(b);
+  rec.field = structuredClone(d.enemies);
+  if (opts.name?.trim()) rec.name = opts.name.trim().slice(0, 120);
+  else if (!rec.name.trim()) rec.name = autoName(rec);
+  if (opts.notes !== undefined) rec.notes = opts.notes.slice(0, 4000);
   // Settled events keep their numbers; only open ones need their rolls (to answer later).
-  for (const e of b.events) if (!isOpen(e)) delete e.pieces;
-  d.battles = [b, ...d.battles.filter((x) => x.id !== b.id)].slice(0, MAX_BATTLES);
-  return b;
+  for (const e of rec.events) if (!isOpen(e)) delete e.pieces;
+  d.battles = [rec, ...d.battles.filter((x) => x.id !== rec.id)].slice(0, MAX_BATTLES);
+  if (opts.end) {
+    d.battle = null;
+    d.fight = null;
+    if (opts.clear) {
+      d.enemies = [];
+      d.targetId = null;
+    }
+  }
+  return rec;
+}
+
+/**
+ * Ends the battle and archives it, named for its enemies (rename it later). Nothing is kept when
+ * nothing happened and no enemy took damage. Returns the record, or null.
+ */
+export function endBattle(d: Character, creatures: CreatureDef[] = []): Battle | null {
+  if (!worthKeeping(d)) {
+    d.battle = null;
+    return null;
+  }
+  return archiveBattle(d, { end: true }, creatures);
+}
+
+/**
+ * Brings an archived battle back to the table: its enemies on the field as they were, and its
+ * log going again (as a new battle; the archived one stays). What's on the table now is archived
+ * first, if it's worth keeping. Returns the record that set aside what was there, if any.
+ */
+export function resumeBattle(d: Character, id: string, creatures: CreatureDef[] = []): Battle | null {
+  const rec = d.battles.find((x) => x.id === id);
+  if (!rec) return null;
+  const before = worthKeeping(d) ? archiveBattle(d, { end: true, name: `${d.battle ? battleName(d.battle) : autoName({ combatants: d.enemies.map(enemyWho) })} (set aside)` }, creatures) : null;
+  d.enemies = structuredClone(rec.field);
+  d.targetId = null;
+  d.fight = null;
+  d.battle = { ...structuredClone(rec), id: uid(), ended: null, checkpoint: false, field: [], enemies: [] };
+  return before;
+}
+
+/** One enemy card in words: "Goblin 1: AC 13 · 20 HP · took 29 (Down) · Prone · resists fire · Mira 24, you 5". */
+export function fieldLine(e: Enemy, creatures: CreatureDef[] = []): string {
+  const t = tally(e);
+  const max = knownMaxHp(e, creatures);
+  const by = [t.you ? `you ${t.you}` : '', ...t.companions.map(([n, v]) => `${n} ${v}`), ...t.party.map(([n, v]) => `${n} ${v}`)].filter(Boolean);
+  return [
+    `${e.name}: ${acText(e, creatures)}`,
+    max !== null ? `${max} HP` : '',
+    `took ${t.total} (${STATUS_NAMES[statusOf(e, creatures)]})`,
+    ...e.conditions.map(conditionName),
+    ...e.marks.map((m) => m.name),
+    e.resist.length ? `resists ${e.resist.join(', ')}` : '',
+    e.immune.length ? `immune to ${e.immune.join(', ')}` : '',
+    e.vulnerable.length ? `vulnerable to ${e.vulnerable.join(', ')}` : '',
+    by.length ? `by ${by.join(', ')}` : '',
+    e.notes.trim() ? `“${e.notes.trim()}”` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 const ABILITY_SHORT: Record<Ability, string> = { str: 'STR', dex: 'DEX', con: 'CON', int: 'INT', wis: 'WIS', cha: 'CHA' };
@@ -299,7 +390,7 @@ export function eventText(e: BattleEvent): string {
 /** The battle as text to paste anywhere: who did what, then what happened, in order. */
 export function battleText(b: Battle): string {
   const when = new Date(b.started).toLocaleString();
-  const lines = [`${battleName(b)} — ${when}${b.rounds ? ` · ${b.rounds} round${b.rounds === 1 ? '' : 's'}` : ''}`, ''];
+  const lines = [`${battleName(b)} — ${when}${b.rounds ? ` · ${b.rounds} round${b.rounds === 1 ? '' : 's'}` : ''}${b.checkpoint ? ' (saved mid-fight)' : ''}`, ''];
   for (const s of battleStats(b).filter(didSomething)) {
     const parts = [
       s.attacks ? `hit ${hitRateText(s)}${s.crits ? `, ${s.crits} crit${s.crits === 1 ? '' : 's'}` : ''}${s.unknown ? `, ${s.unknown} not known` : ''}` : '',
@@ -311,7 +402,9 @@ export function battleText(b: Battle): string {
     ].filter(Boolean);
     lines.push(`${s.who.name}: ${parts.join('; ')}`);
   }
-  if (b.enemies.length) lines.push('', `Enemies: ${b.enemies.map((e) => `${e.name} (${e.status === 'down' ? 'down' : e.status === 'healthy' ? 'standing' : e.status === 'badly' ? 'badly hurt' : 'bloodied'})`).join(', ')}`);
+  if (b.field.length) lines.push('', 'On the field:', ...b.field.map((e) => `  ${fieldLine(e)}`));
+  else if (b.enemies.length) lines.push('', `Enemies: ${b.enemies.map((e) => `${e.name} (${e.status === 'down' ? 'down' : e.status === 'healthy' ? 'standing' : e.status === 'badly' ? 'badly hurt' : 'bloodied'})`).join(', ')}`);
+  if (b.notes.trim()) lines.push('', b.notes.trim());
   lines.push('', ...b.events.map(eventText));
   return lines.join('\n');
 }

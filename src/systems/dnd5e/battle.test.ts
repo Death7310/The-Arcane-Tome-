@@ -1,19 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
   allyWho,
+  archiveBattle,
   autoName,
   battleStats,
   battleText,
   companionWho,
+  damageTypeOf,
   endBattle,
   enemyWho,
   eventText,
+  fieldLine,
   hitRateText,
   inBattle,
   logEvent,
   openEvents,
   rangeText,
+  resumeBattle,
   retarget,
+  saveIn,
   settlePlan,
   settleRoll,
   withDamage,
@@ -184,7 +189,7 @@ describe('ending a battle', () => {
 
   it('keeps nothing from a battle where nothing happened', () => {
     const c = table();
-    c.battle = { id: 'b', name: '', started: 0, ended: null, rounds: 0, combatants: [], events: [], enemies: [] };
+    c.battle = { id: 'b', name: '', started: 0, ended: null, rounds: 0, combatants: [], events: [], enemies: [], field: [], notes: '', checkpoint: false };
     expect(endBattle(c)).toBeNull();
     expect(c.battles).toEqual([]);
   });
@@ -208,5 +213,91 @@ describe('saved battles survive a reload and a bad file', () => {
     });
     expect(readBattle({ name: 'no events' })).toBeNull();
     expect(normalizeCharacter({ ...JSON.parse(JSON.stringify(c)), battles: 'junk', battle: 7 })).toMatchObject({ battles: [], battle: null });
+  });
+});
+
+describe('the archive keeps the Enemies panel', () => {
+  const fought = () => {
+    const c = table();
+    const [g1, g2] = c.enemies;
+    g1.conditions = ['prone'];
+    g1.resist = ['fire'];
+    g1.notes = 'Carried a silver key';
+    g1.acAtLeast = 12;
+    g1.ac = null;
+    g1.marks = [{ id: 'm', name: "Hunter's Mark", dice: '1d6', type: 'force', spell: "Hunter's Mark" }];
+    logEvent(c, withDamage(c, { kind: 'attack', by: youWho(c), target: enemyWho(g1), what: 'Scimitar', result: 'hit', pieces: [{ amount: 9, type: 'slashing', what: 'Scimitar', who: 'you', name: '' }], roll: 'a' }));
+    g1.hits.push({ id: 'h1', roll: 'a', who: 'you', name: '', amount: 9, type: 'slashing', what: 'Scimitar', time: 1 });
+    g2.hits.push({ id: 'h2', roll: 'b', who: 'party', name: 'Mira', amount: 24, type: 'fire', what: 'Fireball', time: 2 });
+    return c;
+  };
+
+  it('ends and archives with your name and notes, every card as it was, and clears the field if asked', () => {
+    const c = fought();
+    const rec = archiveBattle(c, { name: 'Ambush at the mill', notes: 'Mira saved us', end: true, clear: true });
+    expect(rec).toMatchObject({ name: 'Ambush at the mill', notes: 'Mira saved us', checkpoint: false });
+    expect(rec!.field.map((e) => [e.name, e.hits.length, e.conditions, e.resist, e.notes])).toEqual([
+      ['Goblin 1', 1, ['prone'], ['fire'], 'Carried a silver key'],
+      ['Goblin 2', 1, [], [], ''],
+    ]);
+    expect(fieldLine(rec!.field[0])).toBe("Goblin 1: AC 12+ · 20 HP · took 9 (Healthy) · Prone · Hunter's Mark · resists fire · by you 9 · “Carried a silver key”");
+    expect(fieldLine(rec!.field[1])).toBe('Goblin 2: AC 13 · 20 HP · took 24 (Down) · by Mira 24');
+    expect(c).toMatchObject({ battle: null, fight: null, enemies: [], targetId: null });
+    expect(battleText(rec!)).toContain('On the field:\n  Goblin 1: AC 12+');
+    expect(battleText(rec!)).toContain('Mira saved us');
+  });
+
+  it('saves a snapshot mid-fight that leaves everything going, and can be saved again', () => {
+    const c = fought();
+    const first = archiveBattle(c, { name: 'Round 1', end: false })!;
+    expect(first.checkpoint).toBe(true);
+    expect(c.battle).not.toBeNull();
+    expect(c.enemies).toHaveLength(2);
+    logEvent(c, { kind: 'attack', by: youWho(c), target: enemyWho(c.enemies[1]), what: 'Scimitar', result: 'miss', low: 0, high: 0, type: '', roll: 'c' });
+    const second = archiveBattle(c, { name: 'Round 2', end: false })!;
+    expect(second.id).not.toBe(first.id);
+    expect(c.battles.map((b) => [b.name, b.events.length])).toEqual([
+      ['Round 2', 2],
+      ['Round 1', 1],
+    ]);
+  });
+
+  it('archives a field with no battle log (damage entered by hand), but not an empty table', () => {
+    const c = table();
+    c.enemies[0].hits.push({ id: 'h', roll: 'r', who: 'party', name: 'Mira', amount: 5, type: '', what: '', time: 0 });
+    expect(archiveBattle(c, { end: true })).toMatchObject({ name: 'Goblin ×2', field: [{ name: 'Goblin 1' }, { name: 'Goblin 2' }] });
+    const empty = blankCharacter();
+    expect(archiveBattle(empty, { end: true })).toBeNull();
+    expect(empty.battles).toEqual([]);
+  });
+
+  it('brings an archived battle back to the table, setting aside what was there', () => {
+    const c = fought();
+    const rec = archiveBattle(c, { name: 'Mill', end: true, clear: true })!;
+    c.enemies = quickEnemies('Wolf', 1, []);
+    c.enemies[0].hits.push({ id: 'w', roll: 'w', who: 'you', name: '', amount: 3, type: '', what: '', time: 0 });
+    const aside = resumeBattle(c, rec.id);
+    expect(aside!.name).toBe('Wolf (set aside)');
+    expect(c.enemies.map((e) => [e.name, e.hits.length])).toEqual([
+      ['Goblin 1', 1],
+      ['Goblin 2', 1],
+    ]);
+    expect(c.battle).toMatchObject({ ended: null, checkpoint: false, events: [{ what: 'Scimitar' }] });
+    expect(c.battle!.id).not.toBe(rec.id);
+    expect(c.battles.map((b) => b.name)).toEqual(['Wolf (set aside)', 'Mill']);
+  });
+
+  it('reads archives from before the field was kept', () => {
+    const old = readBattle({ name: 'Old', events: [], enemies: [{ ref: 'g', name: 'Goblin', status: 'down' }] });
+    expect(old).toMatchObject({ field: [], notes: '', checkpoint: false, enemies: [{ status: 'down' }] });
+  });
+});
+
+describe('reading a feature’s save and damage type', () => {
+  it('finds the saving throw a description names, and keeps only real damage types', () => {
+    expect(saveIn('Each creature in the cone makes a Dexterity saving throw, taking 8d6 on a failure or half as much on a success.')).toBe('dex');
+    expect(saveIn('Once on each of your turns you can deal extra Radiant damage.')).toBeNull();
+    expect(damageTypeOf('radiant')).toBe('radiant');
+    expect(damageTypeOf('arcane')).toBe('');
   });
 });

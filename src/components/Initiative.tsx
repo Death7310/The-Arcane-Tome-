@@ -8,7 +8,7 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { useTable } from '../state/table';
 import { enemySummary, nextTurn, skipped, startFight } from '../systems/dnd5e/enemies';
-import { allyWho, battleName, endBattle, enemyWho } from '../systems/dnd5e/battle';
+import { allyWho, battleName, endBattle, enemyWho, worthKeeping } from '../systems/dnd5e/battle';
 import { LogTurn } from './Battle';
 import { ConfirmButton, Panel } from './ui';
 
@@ -144,13 +144,13 @@ export function InitiativePanel() {
           confirmLabel="End it?"
           className="btn small ghost"
           onConfirm={() => {
-            // The battle ends with it, and is kept (with its stats) under Battle → Past battles.
-            const kept = c.battle?.events.length ? battleName(c.battle) : '';
+            // The battle ends with it, and is archived (stats, log and the Enemies panel) under Battle → Archive.
+            const kept = worthKeeping(c) ? (c.battle ? battleName(c.battle) : 'The battle') : '';
             update((d) => {
               endBattle(d, creatures);
               d.fight = null;
             });
-            if (kept) t.note('Battle kept', `${kept}: under Battle → Past battles, on the Enemies page.`);
+            if (kept) t.note('Battle kept', `${kept}: in the archive (Battle panel, Enemies page); rename it there.`);
           }}
         />
       </div>

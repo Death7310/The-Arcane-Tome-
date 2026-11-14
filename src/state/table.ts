@@ -12,7 +12,7 @@ import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/t
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type Ability, type StandardActionId } from '../systems/dnd5e/data';
 import { evalFormula } from '../systems/dnd5e/formula';
 import { emptyTurn, uid, type BattleWho, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type RolledDamage, type Spell, type Weapon } from '../systems/dnd5e/model';
-import { allyWho, companionWho, enemyWho, inBattle, logEvent, retarget, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
+import { allyWho, companionWho, damageTypeOf, enemyWho, inBattle, logEvent, retarget, saveIn, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
 import { actionDice, actionExtra, actionType, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
 import type { CreatureDef } from '../systems/dnd5e/srd';
@@ -110,7 +110,8 @@ export interface DamagePiece {
 export interface RollTarget {
   /** This roll's id in the enemies' damage logs (to move it to another enemy). */
   key: string;
-  kind: 'attack' | 'save' | 'auto';
+  /** effect: damage with no attack roll or save (a feature, a companion's effect): did it land? */
+  kind: 'attack' | 'save' | 'auto' | 'effect';
   /** The attack roll's total and natural die, which tell you about an unknown AC. */
   total?: number;
   nat?: number;
@@ -469,6 +470,24 @@ export function useTableState(char: Character, update: Update) {
   };
 
   /**
+   * Damage with no attack roll (a feature, a companion's breath): at your target it waits for
+   * the answer, its save (Failed or Saved) or whether it landed, and in the battle it counts as
+   * a range until then. Pressing a feature doesn't always mean its damage hit something, so
+   * nothing lands on its own. Returns the roll's target for its result card, if any.
+   */
+  const noteEffect = (pieces: RolledDamage[], what: string, by: BattleWho, save: { ability: Ability; dc: number | null; half: boolean } | null): RollTarget | null => {
+    if (!pieces.some((p) => p.amount > 0)) return null;
+    const c = charRef.current;
+    const e = targetOf(c);
+    const roll = uid();
+    const kind = save ? ('save' as const) : ('damage' as const);
+    const how = save ? { ability: save.ability, dc: save.dc, saved: null, half: save.half } : { result: 'unknown' as const };
+    update((d) => void logEvent(d, withDamage(d, { kind, by, target: e ? enemyWho(e) : null, what, ...how, pieces, roll })));
+    if (!e) return null;
+    return { key: roll, kind: save ? 'save' : 'effect', pieces: pieces.map((p) => ({ ...p, who: p.who, name: p.name })), half: save?.half ?? false, enemies: [{ id: e.id, name: e.name, state: 'pending' }] };
+  };
+
+  /**
    * An attack roll, kept in the battle (with its damage: certain, or from nothing to all of it
    * while the DM hasn't said whether it hit). At an enemy it also lands or waits, as atTarget does.
    */
@@ -691,12 +710,15 @@ export function useTableState(char: Character, update: Update) {
       const r = safeRoll(damage[0].dice);
       const dealt = Math.max(0, r.total);
       lines.push({ label: `${capital(type)} damage`, total: dealt, detail: describe(r), kind: 'damage' });
+      const effect = inBattle(c)
+        ? noteEffect([{ amount: dealt, type, what: action.name, who: 'companion', name: comp.name }], action.name, companionWho(comp), action.save ? { ability: action.save, dc: evalFormula(action.dc, c), half: /\bhalf\b/i.test(action.text) } : null)
+        : null;
       stage(
         [phaseOf([counted([{ r, known: [], element, orb: true }], dealt, type, verdict)])],
         from,
         () => {
           perform({ element, shape: /cone|breath/i.test(action.text) ? 'cone' : 'burst', from, to: fx.defaultTarget(from), power: 1, outcome: 'hit', label: `${dealt} ${type}` });
-          push({ title, subtitle: warn || undefined, lines, element });
+          push({ title: effect ? `${title} → ${effect.enemies[0].name}` : title, subtitle: warn || undefined, lines, element, ...(effect ? { targets: [effect] } : {}) });
         },
         {},
         { look: 'orb', element },
@@ -831,10 +853,10 @@ export function useTableState(char: Character, update: Update) {
       if (x && t.total !== undefined) learnAc(x, t.total, hit, t.nat);
       settleRoll(d, t.key, enemyId, answer, fallback);
     });
-    const detail = plan.already ? `Already answered in the battle` : hit ? landText(enemyId, plan.land) : `Missed ${en.name}`;
+    const detail = plan.already ? `Already answered in the battle` : hit ? landText(enemyId, plan.land) : t.kind === 'attack' ? `Missed ${en.name}` : `Didn’t land on ${en.name}`;
     amend(entryId, (e) => ({
       ...e,
-      lines: [...e.lines, { label: hit ? 'Damage dealt' : 'Missed', total: 0, text: hit ? '✓' : '✕', detail: `${detail}. Noted toward its AC.`, kind: 'info', outcome: hit ? 'hit' : 'miss' }],
+      lines: [...e.lines, { label: hit ? 'Damage dealt' : t.kind === 'attack' ? 'Missed' : 'Didn’t land', total: 0, text: hit ? '✓' : '✕', detail: t.kind === 'attack' ? `${detail}. Noted toward its AC.` : `${detail}.`, kind: 'info', outcome: hit ? 'hit' : 'miss' }],
       targets: e.targets?.map((x, i) => (i === index ? { ...t, enemies: t.enemies.map((y) => (y.id === enemyId ? { ...y, state: hit ? 'hit' : 'miss' } : y)) } : x)),
       // A miss leaves nothing for a companion's reaction to add to.
       ...(hit ? {} : { boost: undefined }),
@@ -1153,12 +1175,19 @@ export function useTableState(char: Character, update: Update) {
       const r = safeRoll(resolveTokens(f.roll, c));
       const total = Math.max(0, r.total);
       const kind = f.rollKind === 'healing' ? 'healing' : f.rollKind === 'damage' ? 'damage' : 'dice';
+      // Damage: its save, if the text names one ("…makes a Dexterity saving throw… half as much").
+      const saveAbility = f.rollKind === 'damage' ? saveIn(f.description) : null;
+      const effect =
+        f.rollKind === 'damage' && inBattle(c)
+          ? noteEffect([{ amount: total, type: damageTypeOf(f.element), what: f.name, who: 'you', name: '' }], f.name, youWho(c), saveAbility ? { ability: saveAbility, dc: null, half: /\bhalf\b/i.test(f.description) } : null)
+          : null;
       const entry = {
-        title: f.name,
+        title: effect ? `${f.name} → ${effect.enemies[0].name}` : f.name,
         subtitle: f.source || undefined,
         lines: [{ label: f.rollKind === 'healing' ? 'Healing' : f.rollKind === 'damage' ? 'Damage' : 'Result', total, detail: describe(r), kind } as RollLine],
         element: f.element,
         healing: f.rollKind === 'healing' ? total : undefined,
+        ...(effect ? { targets: [effect] } : {}),
       };
       const unit = f.rollKind === 'healing' ? 'healing' : f.rollKind === 'damage' ? 'damage' : 'total';
       const tally = phaseOf([counted([{ r, known: tokenParts(f.roll, c), element: f.element, orb: true }], total, unit)]);
@@ -1415,9 +1444,24 @@ export function useTableState(char: Character, update: Update) {
         else settleSave(entry.id, index, ref, answer === 'saved');
         return;
       }
+      // Not at an enemy: damage on you or a companion lands on its Hit Points.
+      const c = charRef.current;
+      const plan = settlePlan(c, roll, ref, answer);
+      const ev = c.battle?.events.find((e) => plan.events.includes(e.id));
+      const amount = plan.land.reduce((a, p) => a + Math.max(0, p.amount), 0);
       update((d) => settleRoll(d, roll, ref, answer));
+      if (!ev?.target || amount <= 0) return;
+      if (ev.target.side === 'you') damageSelf(amount, null, { from: ev.by, log: false, what: ev.what });
+      else if (ev.target.side === 'companion')
+        update((d) => {
+          const k = d.companions.find((x) => x.id === ev.target!.ref || x.name === ev.target!.name);
+          if (!k) return;
+          const fromTemp = Math.min(k.tempHp, amount);
+          k.tempHp -= fromTemp;
+          k.hp = Math.max(0, k.hp - (amount - fromTemp));
+        });
     },
-    [settleHit, settleSave, update],
+    [settleHit, settleSave, update, damageSelf],
   );
 
   /**

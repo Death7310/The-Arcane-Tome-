@@ -501,6 +501,12 @@ export interface Battle {
   events: BattleEvent[];
   /** How each enemy ended up, when the battle ended. */
   enemies: { ref: string; name: string; status: EnemyStatus }[];
+  /** The Enemies panel as it was when archived: every enemy card, with its damage and what you'd learned. */
+  field: Enemy[];
+  /** Your own words about it. */
+  notes: string;
+  /** Saved mid-fight (a snapshot), rather than when it ended. */
+  checkpoint: boolean;
 }
 
 /** One place in the initiative order. */
@@ -869,6 +875,9 @@ export function readBattle(raw: unknown): Battle | null {
           .filter((x) => x && typeof x === 'object')
           .map((x) => ({ ref: bstr(x.ref), name: bstr(x.name), status: STATUSES.includes(x.status) ? x.status : 'healthy' }))
       : [],
+    field: Array.isArray(b.field) ? b.field.filter((x) => x && typeof x === 'object').map((x) => blankEnemy(x)) : [],
+    notes: bstr(b.notes).slice(0, 4000),
+    checkpoint: !!b.checkpoint,
   };
 }
 

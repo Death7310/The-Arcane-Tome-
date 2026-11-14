@@ -24,7 +24,8 @@ import {
   tally,
 } from '../systems/dnd5e/enemies';
 import { uid, type Character, type Enemy, type EnemyStatus, type Spell } from '../systems/dnd5e/model';
-import { allyWho, enemyWho, logEvent, openEvents, rangeText, withDamage } from '../systems/dnd5e/battle';
+import { allyWho, archiveBattle, enemyWho, logEvent, openEvents, rangeText, withDamage, worthKeeping } from '../systems/dnd5e/battle';
+import { ArchiveDialog } from './Battle';
 import { pactSlots, signed, spellSlots, weaponAttack } from '../systems/dnd5e/rules';
 import { freeCastSources } from '../systems/dnd5e/spellsource';
 import type { CreatureDef } from '../systems/dnd5e/srd';
@@ -38,6 +39,8 @@ export function EnemiesPanel() {
   const cat = useCatalog();
   const creatures = cat?.creatures ?? [];
   const [adding, setAdding] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const t = useTable();
   const [open, setOpen] = useState<string | null>(c.targetId);
   const target = c.enemies.find((e) => e.id === c.targetId) ?? null;
   // Tapping an enemy makes it your target and opens it; tapping your target again folds it.
@@ -52,9 +55,16 @@ export function EnemiesPanel() {
       title="Enemies"
       tab="enemies"
       actions={
-        <button type="button" className="btn small" onClick={() => setAdding(true)}>
-          Add
-        </button>
+        <>
+          {(c.enemies.length > 0 || !!c.battle) && (
+            <button type="button" className="btn small" onClick={() => setArchiving(true)} title="Keep this panel, every enemy and its damage, in the archive, with a name">
+              Save to archive
+            </button>
+          )}
+          <button type="button" className="btn small" onClick={() => setAdding(true)}>
+            Add
+          </button>
+        </>
       }
     >
       {c.enemies.length === 0 && (
@@ -91,19 +101,24 @@ export function EnemiesPanel() {
           )}
           <ConfirmButton
             label="Clear the battlefield"
-            confirmLabel="Remove every enemy?"
+            confirmLabel={worthKeeping(c) ? 'Archive it and clear?' : 'Remove every enemy?'}
             className="btn small ghost"
-            onConfirm={() =>
+            onConfirm={() => {
+              // A battle worth keeping goes to the archive first (named for its enemies; rename it there).
+              const keep = worthKeeping(c);
               update((d) => {
+                if (keep) archiveBattle(d, { end: true, clear: true }, creatures);
                 d.enemies = [];
                 d.targetId = null;
                 if (d.fight) d.fight.order = d.fight.order.filter((x) => x.kind !== 'enemy');
-              })
-            }
+              });
+              if (keep) t.note('Battle archived', 'The enemies and their damage are under Battle → Archive.');
+            }}
           />
         </div>
       )}
       {adding && <AddEnemyDialog onClose={() => setAdding(false)} />}
+      {archiving && <ArchiveDialog onClose={() => setArchiving(false)} />}
     </Panel>
   );
 }
