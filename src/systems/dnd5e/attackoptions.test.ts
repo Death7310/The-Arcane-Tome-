@@ -17,8 +17,13 @@ import type { Catalog } from './srd';
 const cat = { classes, subclasses, feats, spells, creatures, items } as unknown as Catalog;
 
 describe('Anaurys’s turn, by the rules', () => {
-  it('at Ranger 4: one attack plus the Nick swing, 2 in all', () => {
-    expect(turnPlan(buildAnaurys(cat))).toMatchObject({ attacks: 2, light: 'nick', twf: false });
+  it('at Ranger 4: one attack plus the Nick swing, 2 in all, the swing with his Dexterity (Two-Weapon Fighting)', () => {
+    const c = buildAnaurys(cat);
+    expect(turnPlan(c)).toMatchObject({ attacks: 2, light: 'nick', twf: true });
+    expect(lightExtraDamageBonus(c, c.weapons[2]).bonus).toBe(3);
+    // Druidic Warrior stays, with its cantrips.
+    expect(c.features.some((f) => f.name === 'Fighting Style: Druidic Warrior')).toBe(true);
+    expect(c.spells.some((s) => s.name === 'Primal Savagery')).toBe(true);
   });
 
   it('at Ranger 5: two attacks plus the Nick swing, 3 in all, with the Bonus Action free', () => {
@@ -27,12 +32,12 @@ describe('Anaurys’s turn, by the rules', () => {
     const plan = turnPlan(c);
     expect(plan.attacks).toBe(3);
     expect(plan.text).toBe(
-      'Your Attack action is 2 attacks (Extra Attack), plus the Nick swing with your other Light weapon in the same action: 3 attacks, and your Bonus Action stays free. The off-hand swing deals its dice without your modifier (Two-Weapon Fighting would add it).',
+      'Your Attack action is 2 attacks (Extra Attack), plus the Nick swing with your other Light weapon in the same action: 3 attacks, and your Bonus Action stays free. The off-hand swing adds your modifier to its damage (Two-Weapon Fighting).',
     );
-    // Two-Weapon Fighting adds damage, not attacks.
-    setTwoWeaponFighting(c, true);
-    expect(turnPlan(c)).toMatchObject({ attacks: 3, twf: true });
-    expect(lightExtraDamageBonus(c, c.weapons[2]).bonus).toBe(3);
+    // Two-Weapon Fighting adds damage, not attacks: without it, still 3, and no Dexterity on the swing.
+    setTwoWeaponFighting(c, false);
+    expect(turnPlan(c)).toMatchObject({ attacks: 3, twf: false });
+    expect(lightExtraDamageBonus(c, c.weapons[2]).bonus).toBe(0);
   });
 
   it('without Nick, the off-hand swing takes the Bonus Action instead', () => {
@@ -59,15 +64,15 @@ describe('the switches', () => {
     expect(attacksPerAction(c).count).toBe(2);
   });
 
-  it('Two-Weapon Fighting: on and off, once', () => {
+  it('Two-Weapon Fighting: off and on, once', () => {
     const c = buildAnaurys(cat);
+    expect(hasTwoWeaponFighting(c)).toBe(true);
+    setTwoWeaponFighting(c, false);
     expect(hasTwoWeaponFighting(c)).toBe(false);
     setTwoWeaponFighting(c, true);
     setTwoWeaponFighting(c, true);
     expect(c.features.filter((f) => /Two-Weapon Fighting/.test(f.name))).toHaveLength(1);
     expect(hasTwoWeaponFighting(c)).toBe(true);
-    setTwoWeaponFighting(c, false);
-    expect(hasTwoWeaponFighting(c)).toBe(false);
   });
 
   it('Nick: the scimitars’ mastery, on and off; a Light weapon without Nick isn’t touched', () => {

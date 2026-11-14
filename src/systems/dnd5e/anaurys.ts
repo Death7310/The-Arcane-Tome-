@@ -23,11 +23,11 @@ const item = (name: string, qty: number, weight: number, notes = ''): Item => ({
 
 // He fights with two scimitars. Attacking with one in the Attack action opens the Light property's
 // extra attack with the other; their mastery, Nick, makes that attack part of the Attack action, so
-// his Bonus Action stays free to command Artex. No Dexterity on its damage without the Two-Weapon
-// Fighting style. His D&D Beyond sheet chose the Longsword (Sap); he swapped it for the Scimitar,
-// which a Ranger can do after a Long Rest.
+// his Bonus Action stays free to command Artex, and his Two-Weapon Fighting style (taken as a feat)
+// adds his Dexterity to its damage. His D&D Beyond sheet chose the Longsword (Sap); he swapped it for
+// the Scimitar, which a Ranger can do after a Long Rest.
 const SCIMITAR_NOTE =
-  'Light and Nick: after you attack with one scimitar in the Attack action, you can attack with the other as part of the same Attack action (Nick), once per turn, leaving your Bonus Action free for Artex. No Dexterity on that attack’s damage (Light). Use the Nick button on the other scimitar.';
+  'Light and Nick: after you attack with one scimitar in the Attack action, you can attack with the other as part of the same Attack action (Nick), once per turn, leaving your Bonus Action free for Artex. Two-Weapon Fighting adds your Dexterity to that attack’s damage. Use the Nick button on the other scimitar.';
 
 /** Anaurys, ready to play. Loads the SRD rules first (for his spells and class features). */
 export async function anaurysCharacter(): Promise<Character> {
@@ -201,6 +201,16 @@ export function buildAnaurys(cat: Catalog): Character {
         name: 'Fighting Style: Druidic Warrior',
         source: 'Ranger 2',
         description: 'You know two Druid cantrips, Primal Savagery and Guidance. They count as Ranger spells for you and use Wisdom. Whenever you gain a Ranger level, you can swap one for another Druid cantrip.',
+        usesMax: null,
+        recharge: 'none',
+      }),
+      // Not on his D&D Beyond sheet: his player has it, taken as a feat (a Fighting Style feat
+      // can be, with the Fighting Style feature), so Druidic Warrior and its cantrips stay.
+      blankFeature({
+        name: 'Fighting Style: Two-Weapon Fighting',
+        source: 'Feat',
+        description:
+          'Fighting Style feat. When you make an extra attack as a result of using a weapon that has the Light property, you can add your ability modifier to the damage of that attack if you aren’t already adding it to the damage. (Your Nick swing with the second scimitar adds your Dexterity.)',
         usesMax: null,
         recharge: 'none',
       }),
