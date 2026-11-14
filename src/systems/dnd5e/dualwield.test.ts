@@ -41,9 +41,7 @@ describe('Extra Attack', () => {
 });
 
 describe('Two Light weapons', () => {
-  // The Light rules on their own: Anaurys without his Two-Weapon Fighting style.
-  const withTwf = buildAnaurys(cat);
-  const c = { ...withTwf, features: withTwf.features.filter((f) => !/Two-Weapon Fighting/.test(f.name)) };
+  const c = buildAnaurys(cat);
   const [bow, scimitar, offHand] = c.weapons;
 
   it('knows which weapons are Light and which have Nick set', () => {
