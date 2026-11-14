@@ -15,7 +15,8 @@ import { TargetStrip } from './Enemies';
 import { endConcentration, markFromSpell } from '../systems/dnd5e/enemies';
 import { freeCastSources, inferSources, sourceName, sourceOptions } from '../systems/dnd5e/spellsource';
 import { fillSpell, spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
-import { describeSpellDef, readPastedSpells, spellToText, type SpellPart } from '../systems/dnd5e/spellimport';
+import { describeSpellDef, readPastedSpells, SCHOOLS, spellToText, summonedCreature, type SpellPart } from '../systems/dnd5e/spellimport';
+import { summonCompanion, summonForms } from '../systems/dnd5e/summon';
 import type { SpellDef } from '../systems/dnd5e/srd';
 import { addSpellsToLibrary } from '../state/library';
 import { ABILITY_NAMES as ABILITY_LONG } from '../systems/dnd5e/data';
@@ -412,6 +413,7 @@ function SpellEditor({ spell: s }: { spell: Spell }) {
           <CopySpellText spell={s} />
           <ConfirmButton label="Remove" onConfirm={() => update((d) => void (d.spells = d.spells.filter((x) => x.id !== s.id)))} />
         </div>
+        <SummonBox spell={s.name} level={s.level} description={s.description} />
       </div>
     );
   }
@@ -693,6 +695,7 @@ const missing = (parts: Set<SpellPart>) =>
   (
     [
       ['level', 'level'],
+      ['school', 'school'],
       ['time', 'casting time'],
       ['range', 'range'],
       ['components', 'components'],
@@ -753,15 +756,56 @@ function PasteSpells({ onDone }: { onDone: (message: string) => void }) {
                 <input className="input" value={def.name} aria-label={`Name of spell ${i + 1}`} onChange={(e) => setFound((f) => f && f.map((x, j) => (j === i ? { ...x, def: { ...x.def, name: e.target.value } } : x)))} />
               </label>
               <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {describeSpellDef(def).map((l) => (
+                {describeSpellDef(def, parts).map((l) => (
                   <li key={l}>{l}</li>
                 ))}
               </ul>
               {missing(parts).length > 0 && (
                 <p className="hint" style={{ margin: 0, color: 'var(--warn)' }}>
-                  Not in the text: {missing(parts).join(', ')}. It’s added with defaults; set them with Edit spell.
+                  Not in the text: {missing(parts).join(', ')}. {!parts.has('level') || !parts.has('school') ? 'Set it here, or it’s' : 'It’s'} added with defaults; set them with Edit spell.
                 </p>
               )}
+              {(!parts.has('level') || !parts.has('school')) && (
+                <div className="row">
+                  {!parts.has('level') && (
+                    <select
+                      className="input"
+                      style={{ width: 'auto' }}
+                      value=""
+                      aria-label={`Level of ${def.name}`}
+                      onChange={(e) => setFound((f) => f && f.map((x, j) => (j === i ? { ...x, def: { ...x.def, level: Number(e.target.value) }, parts: new Set([...x.parts, 'level' as const]) } : x)))}
+                    >
+                      <option value="" disabled>
+                        Its level…
+                      </option>
+                      {Array.from({ length: 10 }, (_, n) => (
+                        <option key={n} value={n}>
+                          {n === 0 ? 'Cantrip' : `${ordinal(n)} level`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {!parts.has('school') && (
+                    <select
+                      className="input"
+                      style={{ width: 'auto' }}
+                      value=""
+                      aria-label={`School of ${def.name}`}
+                      onChange={(e) => setFound((f) => f && f.map((x, j) => (j === i ? { ...x, def: { ...x.def, school: e.target.value }, parts: new Set([...x.parts, 'school' as const]) } : x)))}
+                    >
+                      <option value="" disabled>
+                        Its school…
+                      </option>
+                      {SCHOOLS.map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+              <SummonBox spell={def.name} level={def.level} description={def.description} />
             </div>
           ))}
           <div className="grid-2">
@@ -888,5 +932,69 @@ function ConcentrationDamage() {
         Save
       </button>
     </span>
+  );
+}
+
+/**
+ * A summoning spell's creature (its stat block in the description) as a companion: pick the
+ * form and the level you cast it at, and its AC, HP, speed, traits and attacks follow.
+ */
+function SummonBox({ spell, level, description }: { spell: string; level: number; description: string }) {
+  const { char: c, update } = useChar();
+  const block = summonedCreature(description);
+  const forms = block ? summonForms(block) : [];
+  const [form, setForm] = useState('');
+  const [castAt, setCastAt] = useState(Math.max(1, level));
+  const [msg, setMsg] = useState('');
+  if (!block) return null;
+  const pick = forms.includes(form) ? form : (forms[0] ?? null);
+  const preview = summonCompanion(block, { spell: spell || 'a spell', level: castAt, form: pick });
+  if (!preview) return null;
+  const have = c.companions.find((k) => k.name.toLowerCase() === preview.name.toLowerCase());
+  return (
+    <div className="summon-box">
+      <span className="hint">
+        Summons <b>{preview.name}</b>: AC {preview.ac} · {preview.maxHp} HP · {preview.speed}
+      </span>
+      <div className="row">
+        {forms.length > 1 && (
+          <select className="input" value={pick ?? ''} onChange={(e) => setForm(e.target.value)} aria-label="Its form">
+            {forms.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        )}
+        <select className="input" value={castAt} onChange={(e) => setCastAt(Number(e.target.value))} aria-label="Cast at level">
+          {Array.from({ length: 10 - Math.max(1, level) }, (_, i) => Math.max(1, level) + i).map((n) => (
+            <option key={n} value={n}>
+              {ordinal(n)} level
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn small"
+          onClick={() => {
+            update((d) => {
+              const k = summonCompanion(block, { spell: spell || 'a spell', level: castAt, form: pick });
+              if (!k) return;
+              const at = d.companions.findIndex((x) => x.name.toLowerCase() === k.name.toLowerCase());
+              if (at >= 0) d.companions[at] = { ...k, id: d.companions[at].id };
+              else d.companions.push(k);
+            });
+            setMsg(`${preview.name} is ${have ? 'updated' : 'added'} under Companions${pick ? `, ${pick} form` : ''}, at ${ordinal(castAt)} level.`);
+          }}
+        >
+          {have ? `Update ${preview.name} in Companions` : `Add ${preview.name} to Companions`}
+        </button>
+      </div>
+      {msg && (
+        <span className="hint" role="status">
+          {msg}
+        </span>
+      )}
+    </div>
   );
 }

@@ -14,7 +14,7 @@ import type { CastingTime } from './model';
 import { readRulesJson, looksLikeRulesJson, slug, spellMechanics } from './rulesdoc';
 import type { SpellDef } from './srd';
 
-const SCHOOLS = ['Abjuration', 'Conjuration', 'Divination', 'Enchantment', 'Evocation', 'Illusion', 'Necromancy', 'Transmutation'];
+export const SCHOOLS = ['Abjuration', 'Conjuration', 'Divination', 'Enchantment', 'Evocation', 'Illusion', 'Necromancy', 'Transmutation'];
 const SCHOOL_RE = SCHOOLS.join('|');
 const ABBR: Record<string, Ability> = { str: 'str', dex: 'dex', con: 'con', int: 'int', wis: 'wis', cha: 'cha', strength: 'str', dexterity: 'dex', constitution: 'con', intelligence: 'int', wisdom: 'wis', charisma: 'cha' };
 
@@ -84,6 +84,18 @@ function bareField(l: string): string | null {
   return null;
 }
 
+/**
+ * A header field in a bulleted list ("• Casting Time: 1 action", "- Range: 90 feet") loses its
+ * bullet. Round bullets go from any line; a dash or star only before a field or the level line, so D&D Beyond's
+ * "* - (a tiny ball…)" material note and a description's own lists stay as they are.
+ */
+function unbullet(l: string): string {
+  const round = l.replace(/^[•●◦▪‣∙■□➢►]\s*/, '');
+  if (round !== l) return round;
+  const m = /^[-*+]\s+(.+)$/.exec(l);
+  return m && (fieldOf(m[1]) || bareField(m[1]) || LEVEL_LINE.test(levelOrder(m[1]))) ? m[1] : l;
+}
+
 /** "Conjuration · 2nd Level" or "2nd Level · Conjuration" → "2nd-level Conjuration" (the usual order). */
 function levelOrder(l: string): string {
   const sep = '\\s*(?:[·•|,–-]\\s*)?';
@@ -103,6 +115,7 @@ function normalise(text: string): string[] {
     .replace(/\r/g, '')
     .split('\n')
     .map(tidy)
+    .map(unbullet)
     .map((l) => bareField(l) ?? l)
     .map(levelOrder)
     // wikidot's footer: "Spell Lists. Ranger, Wizard".
@@ -229,6 +242,37 @@ export function readSpellText(text: string, source: string): SpellDef[] {
   return out.filter((s, i) => out.findIndex((x) => slug(x.name) === slug(s.name)) === i);
 }
 
+/**
+ * Where a creature's stat block starts in a spell's description (a summoning spell's "Bestial
+ * Spirit / Small beast / Armor Class …"), or -1. Its name is the line above its size and type.
+ */
+export function statBlockStart(lines: string[]): number {
+  const ac = lines.findIndex((l) => /^(armor class|ac)\s+\d/i.test(l));
+  if (ac < 0 || !lines.slice(ac, ac + 6).some((l) => /^(hit points|hp)\s+\d/i.test(l))) return -1;
+  for (let i = ac - 1; i >= Math.max(0, ac - 3); i--) {
+    if (/^(tiny|small|medium|large|huge|gargantuan)\b/i.test(lines[i])) return i > 0 && lines[i - 1].length <= 60 ? i - 1 : i;
+  }
+  return ac;
+}
+
+/** The stat block of the creature a spell summons, as text (null when it has none). */
+export function summonedCreature(description: string): string | null {
+  const lines = description.split('\n');
+  const at = statBlockStart(lines);
+  return at < 0 ? null : lines.slice(at).join('\n');
+}
+
+/**
+ * A spell's level from its own higher-level text, when it doesn't say it outright: "a spell slot
+ * of 3rd level or higher" is a 2nd-level spell; "for each slot level above 2nd" too.
+ */
+export function levelFromUpcast(text: string): number | null {
+  const above = /for each (?:spell )?slot level above (?:the )?(\d)/i.exec(text) ?? /\beach spell level above (\d)/i.exec(text);
+  if (above) return Number(above[1]);
+  const higher = /cast this spell using a spell slot of (\d)(?:st|nd|rd|th)[-\s]level or higher/i.exec(text) ?? /using a spell slot of level (\d) or higher/i.exec(text);
+  return higher && Number(higher[1]) >= 2 ? Number(higher[1]) - 1 : null;
+}
+
 /** Which parts of a spell a paste actually gave (the rest are defaults). */
 export type SpellPart = 'level' | 'school' | 'time' | 'range' | 'components' | 'duration' | 'classes' | 'roll' | 'damage' | 'healing' | 'upcast' | 'count' | 'scaling' | 'look';
 
@@ -328,8 +372,10 @@ function spellFromBlock(block: string[], source: string): { def: SpellDef; parts
   // Level and school: the level line, an inline "(2nd-level evocation)", or the fields.
   const lvText = fields.get('level') ?? '';
   const levelFound = levelLine?.[1] ?? levelLine?.[3] ?? (levelLine?.[5] || levelLine?.[6] ? 0 : undefined) ?? inline?.[1] ?? inline?.[2] ?? (inline?.[3] ? 0 : undefined) ?? (/cantrip/i.test(lvText) ? 0 : /(\d)/.exec(lvText)?.[1]);
-  if (levelFound !== undefined) parts.add('level');
-  const level = Number(levelFound ?? 1);
+  // Not stated: its higher-level text may tell (a slot "of 3rd level or higher" means 2nd).
+  const upcastLevel = levelFound === undefined ? levelFromUpcast(block.join('\n')) : null;
+  if (levelFound !== undefined || upcastLevel !== null) parts.add('level');
+  const level = Number(levelFound ?? upcastLevel ?? 1);
   // A homebrew school ("Chronomancy") is kept as written.
   const schoolWord = levelLine?.[2] ?? levelLine?.[4] ?? levelLine?.[5] ?? levelLine?.[6] ?? inline?.[4] ?? new RegExp(SCHOOL_RE, 'i').exec(fields.get('school') ?? '')?.[0] ?? fields.get('school')?.trim() ?? '';
   if (schoolWord) parts.add('school');
@@ -366,7 +412,10 @@ function spellFromBlock(block: string[], source: string): { def: SpellDef; parts
     desc.push(l);
   }
   const description = [...others, ...desc].join('\n').trim();
-  const auto = spellMechanics(description, level, range);
+  // A summoned creature's stat block is part of the text, but its attacks aren't the spell's.
+  const block0 = statBlockStart(desc);
+  const spellText = [...others, ...(block0 < 0 ? desc : desc.slice(0, block0))].join('\n').trim();
+  const auto = spellMechanics(spellText, level, range);
   if (auto.damage.length) parts.add('damage');
   if (auto.healing) parts.add('healing');
   if (auto.upcastDice) parts.add('upcast');
@@ -469,10 +518,14 @@ export function spellToText(s: Omit<SpellDef, 'srd' | 'source'>, classes: string
 }
 
 /** What a read spell holds, in plain words, for a preview. */
-export function describeSpellDef(d: SpellDef): string[] {
+export function describeSpellDef(d: SpellDef, given?: Set<SpellPart>): string[] {
   const roll = d.resolution === 'save' ? `${ABILITY_WORDS[d.saveAbility]} save${d.halfOnSave ? ', half damage on a success' : ''}` : d.resolution === 'attack' ? 'Spell attack' : ROLLS[d.resolution];
+  // What a paste didn't give is said so, rather than shown as its default.
+  const knowsSchool = !given || given.has('school');
+  const lv = given && !given.has('level') ? 'Level not given' : d.level === 0 ? 'Cantrip' : `Level ${d.level}`;
+  const head = !knowsSchool ? `${lv}, school not given` : lv === 'Cantrip' ? `${d.school} cantrip` : lv === 'Level not given' ? `${lv}, ${d.school}` : `${lv} ${d.school}`;
   return [
-    `${d.level === 0 ? `${d.school} cantrip` : `Level ${d.level} ${d.school}`}${d.ritual ? ', ritual' : ''}${d.concentration ? ', concentration' : ''}`,
+    `${head}${d.ritual ? ', ritual' : ''}${d.concentration ? ', concentration' : ''}`,
     `${d.castingTimeText} · ${d.range || 'no range given'} · ${d.components || 'no components given'} · ${d.duration || 'no duration given'}`,
     `Roll: ${roll.charAt(0).toUpperCase()}${roll.slice(1)}`,
     ...(d.damage.length ? [`Damage: ${d.damage.map((x) => `${x.dice} ${x.type}`).join(' + ')}${d.instances > 1 ? ` × ${d.instances}` : ''}`] : []),

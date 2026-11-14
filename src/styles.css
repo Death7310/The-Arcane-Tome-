@@ -903,3 +903,5 @@ button.stat:hover { border-color: var(--gilt); }
 .archived-enemy { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 2px; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
 .archived-enemy.status-down { opacity: 0.85; }
 .archived-enemy b { font-size: 15px; }
+.summon-box { border: 1px dashed var(--line); border-radius: 10px; padding: 8px 10px; display: grid; gap: 6px; }
+.summon-box .input { width: auto; min-width: 0; }
