@@ -196,6 +196,33 @@ export interface CompanionAction {
    * Magic Fang: 1d6 from Ranger 7, 2d6 from 15): the last step at or below your level applies.
    */
   extra?: { level: number; dice: string }[];
+  /** More damage on the same hit, of its own type: a Giant Insect's Poison Jab "plus 1d4 Poison damage". */
+  more?: { dice: string; type: string }[];
+}
+
+/**
+ * How a companion comes to you, which decides what its numbers follow:
+ * - a spell (Summon Beast, Find Steed): the level you cast it at ("11 + the spell's level"), and
+ *   the form you chose (Air, Land or Water; Celestial, Fey or Fiend);
+ * - a class feature (a Drakewarden's drake, an Artificer's homunculus or steel defender, a Beast
+ *   Master's beast): your level in that class ("5 + five times your Ranger level");
+ * - a creature as it is (a riding horse, a familiar's owl): its own numbers.
+ * Any of them can also use your Proficiency Bonus, spell attack, spell save DC or a modifier.
+ */
+export interface CompanionOrigin {
+  kind: 'spell' | 'feature' | 'creature';
+  /** The spell or feature that brings it: "Summon Beast", "Drake Companion". */
+  name: string;
+  /** A spell's own level (Summon Beast: 2), and the level it was cast at, which {SLOT} stands for. */
+  base: number;
+  cast: number;
+  /** The forms its stat block offers, and the one it has now ("" for none). */
+  forms: string[];
+  form: string;
+  /** Its stat block as written, read again when its form changes. */
+  block: string;
+  /** A class feature's class ("ranger"), whose level its numbers follow; "" for your character level. */
+  classId: string;
 }
 
 /**
@@ -243,6 +270,8 @@ export interface Companion {
    * that add to a hit (Infused Strikes) when they don't name one themselves. "" for none.
    */
   essence: string;
+  /** How it comes to you (a spell, a class feature, a creature); unset on older sheets. */
+  origin?: CompanionOrigin | null;
 }
 
 export interface Item {
@@ -741,6 +770,7 @@ export function blankCompanion(partial: Partial<Companion> = {}): Companion {
     turn: { ...emptyTurn(), ...partial.turn },
     inventory: Array.isArray(partial.inventory) ? partial.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
     weapons: Array.isArray(partial.weapons) ? partial.weapons.map((w) => blankWeapon(w)) : [],
+    origin: readOrigin(partial.origin),
     armor: partial.armor && typeof partial.armor.armorId === 'string' ? { ...{ shield: false, magicBonus: 0 }, ...(partial.armor as Partial<NonNullable<Companion['armor']>>), armorId: partial.armor.armorId } : null,
   };
 }
@@ -835,6 +865,26 @@ function normalizeFight(raw: unknown): Fight | null {
 }
 
 /** Reads a saved species pick, or null if it isn't one. */
+/** A companion's origin from a save, or null when there's none or it can't be read. */
+export function readOrigin(raw: unknown): CompanionOrigin | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Partial<CompanionOrigin>;
+  if (o.kind !== 'spell' && o.kind !== 'feature' && o.kind !== 'creature') return null;
+  const level = (n: unknown, fallback: number) => (typeof n === 'number' && Number.isFinite(n) ? Math.max(1, Math.min(9, Math.round(n))) : fallback);
+  const base = level(o.base, 1);
+  const forms = Array.isArray(o.forms) ? o.forms.filter((f): f is string => typeof f === 'string' && !!f.trim()) : [];
+  return {
+    kind: o.kind,
+    name: typeof o.name === 'string' ? o.name : '',
+    base,
+    cast: Math.max(base, level(o.cast, base)),
+    forms,
+    form: typeof o.form === 'string' && forms.includes(o.form) ? o.form : (forms[0] ?? ''),
+    block: typeof o.block === 'string' ? o.block : '',
+    classId: typeof o.classId === 'string' ? o.classId : '',
+  };
+}
+
 export function readSpeciesPick(raw: unknown): SpeciesPick | null {
   if (!raw || typeof raw !== 'object') return null;
   const p = raw as Partial<SpeciesPick>;

@@ -10,6 +10,7 @@
 // your Constitution modifier, at least 1.
 
 import { ABILITIES, ABILITY_NAMES, classById, FULL_CASTER_SLOTS, PACT_SLOTS, type Ability, type SkillId } from './data';
+import { companionMaxes, followMaxHp } from './companion';
 import { syncDrake } from './extras';
 import { syncHeritage } from './species';
 import { blankFeature, uid, type Character, type ClassEntry, type Feature, type FeatureOrigin, type LevelStep, type UsesFormula } from './model';
@@ -287,6 +288,7 @@ export function hpGain(plan: LevelUpPlan, roll: number | null): number {
 /** Applies a planned level to a draft character (inside an update). */
 export function applyLevelUp(d: Character, cat: Catalog, plan: LevelUpPlan, choices: LevelUpChoices) {
   const maxBefore = maxHp(d).total;
+  const companionsBefore = companionMaxes(d);
   const step: LevelStep = { entryId: '', classId: plan.classId, classLevel: plan.classLevel, newClass: plan.newClass, hpRoll: choices.hpRoll, hpBefore: d.hp.current, at: Date.now() };
   let entry: ClassEntry;
   if (plan.newClass) {
@@ -362,6 +364,8 @@ export function applyLevelUp(d: Character, cat: Catalog, plan: LevelUpPlan, choi
   syncFeatures(d, cat);
   const maxAfter = maxHp(d).total;
   d.hp.current = Math.min(maxAfter, d.hp.current + Math.max(0, maxAfter - maxBefore));
+  // A drake's "5 + five times your Ranger level" grows too, and it gains the difference.
+  followMaxHp(d, companionsBefore);
   d.progression.push(step);
 }
 
@@ -371,6 +375,13 @@ export function applyLevelUp(d: Character, cat: Catalog, plan: LevelUpPlan, choi
  * taken off the last class. Returns a short account, or null if there's nothing to undo.
  */
 export function levelDown(d: Character, cat: Catalog): string | null {
+  const companionsBefore = companionMaxes(d);
+  const out = takeLevelOff(d, cat);
+  if (out) followMaxHp(d, companionsBefore);
+  return out;
+}
+
+function takeLevelOff(d: Character, cat: Catalog): string | null {
   const step = d.progression.pop();
   if (step) {
     const idx = d.classes.findIndex((k) => k.id === step.entryId);

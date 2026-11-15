@@ -19,19 +19,37 @@ export function pbForCr(cr: number): number {
 
 const crText = (cr: number) => (cr === 0.125 ? '1/8' : cr === 0.25 ? '1/4' : cr === 0.5 ? '1/2' : String(cr));
 
-/** "plus your Proficiency Bonus", "your Wisdom modifier", "your Ranger level"… as tokens. */
+/**
+ * "plus your Proficiency Bonus", "your Wisdom modifier", "your Ranger level", "the spell's
+ * level"… as tokens: {PB}, {WIS}, {LEVEL:ranger}, {SLOT} (the level the spell was cast at).
+ * "+ 5 for each spell level above 2nd" becomes "+ 5 * max(0, {SLOT} - 2)", "10 per spell level"
+ * "10 * {SLOT}", and "half this spell's level (round down)" "floor({SLOT} / 2)".
+ */
 export function tokenize(phrase: string): string {
   return phrase
+    .replace(/[’‘]/g, "'")
     .replace(/\s*\+\s*(?:your\s+)?(?:Proficiency Bonus|PB)\b/gi, ' + {PB}')
     .replace(/\bplus\s+(?:your\s+)?(?:Proficiency Bonus|PB)\b/gi, '+ {PB}')
     .replace(/\b(?:equals?|equal to)?\s*your spell attack modifier\b/gi, '{SPELLATK}')
     .replace(/\b(?:equals?|equal to)?\s*your spell save DC\b/gi, '{SPELLDC}')
+    .replace(/\byour spellcasting (?:ability )?modifier\b/gi, '{MOD}')
     .replace(/\byour (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) modifier\b/gi, (_, a: string) => `{${ABILITY_WORD[a.toLowerCase()].toUpperCase()}}`)
-    .replace(/\b(\w+) times your (\w+) level\b/gi, (_, n: string, cls: string) => `${NUMBER_WORD[n.toLowerCase()] ?? n} * {LEVEL:${cls.toLowerCase()}}`)
+    .replace(/\bhalf (?:of )?your (\w+) level(?:\s*\((?:rounded|round) (?:down|up)\))?/gi, (m: string, cls: string) => `${/up\)$/i.test(m) ? 'ceil' : 'floor'}(${cls.toLowerCase() === 'character' ? '{LEVEL}' : `{LEVEL:${cls.toLowerCase()}}`} / 2)`)
+    .replace(/\b(\w+) times your (\w+) level\b/gi, (_, n: string, cls: string) => `${NUMBER_WORD[n.toLowerCase()] ?? n} * ${cls.toLowerCase() === 'character' ? '{LEVEL}' : `{LEVEL:${cls.toLowerCase()}}`}`)
+    .replace(/\byour character level\b/gi, '{LEVEL}')
     .replace(/\byour (\w+) level\b/gi, (_, cls: string) => `{LEVEL:${cls.toLowerCase()}}`)
+    // The level a spell was cast at.
+    .replace(/\s*\+\s*(\d+)\s+for each (?:spell |slot )*level above (?:the )?(\d)(?:st|nd|rd|th)?/gi, (_, n: string, b: string) => ` + ${n} * max(0, {SLOT} - ${b})`)
+    .replace(/\b(\d+)\s+(?:per|for each) (?:spell |slot )+level\b/gi, (_, n: string) => (n === '1' ? '{SLOT}' : `${n} * {SLOT}`))
+    .replace(/\bhalf (?:of )?(?:this|the) spell'?s level(?:\s*\((?:rounded|round) down\))?/gi, 'floor({SLOT} / 2)')
+    .replace(/\b(?:the level of (?:the|this) spell|(?:the|this) spell'?s level|the spell level)\b/gi, '{SLOT}')
+    // "13 plus {WIS}", "1d8 plus {SLOT}".
+    .replace(/\s+plus\s+(?=[{\d(]|floor|ceil|max)/gi, ' + ')
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+const TYPE_WORDS = 'Acid|Bludgeoning|Cold|Fire|Force|Lightning|Necrotic|Piercing|Poison|Psychic|Radiant|Slashing|Thunder';
 
 /** The mechanics of one action from its text: attack bonus, reach, damage, save. */
 export function readAction(name: string, text: string, kind: CompanionAction['kind']): CompanionAction {
@@ -44,15 +62,33 @@ export function readAction(name: string, text: string, kind: CompanionAction['ki
     a.toHit = tokenize(atk[2]).replace(/^[^{\d-]*(?=[{\d-])/, '').replace(/\s*\+\s*/g, ' + ');
     a.reach = `${atk[3].toLowerCase() === 'reach' ? 'reach' : 'range'} ${atk[4].trim()}`;
   }
-  // "Hit: 7 (1d8 + 3) Piercing damage", "Hit: 1d8 + 3 + PB Piercing damage", "Hit: 1 Piercing damage".
-  const hit = /Hit:\s*(?:(\d+)\s*\(([^)]+)\)|([^.]*?))\s+(Acid|Bludgeoning|Cold|Fire|Force|Lightning|Necrotic|Piercing|Poison|Psychic|Radiant|Slashing|Thunder) damage/i.exec(t);
-  if (hit) {
+  // "Hit: 7 (1d8 + 3) Piercing damage", "Hit: 1d8 + 3 + PB Piercing damage", "Hit: 1 Piercing
+  // damage", "Hit: 1d8 plus the spell's level of Psychic damage", "Hit: Force damage equal to
+  // 2d6 + 3", and a choice of types ("Bludgeoning, Piercing, or Slashing damage": the first).
+  const types = `(?:${TYPE_WORDS})(?:,?\\s+(?:or\\s+)?(?:${TYPE_WORDS}))*`;
+  const hit = new RegExp(`Hit:\\s*(?:(\\d+)\\s*\\(([^)]+)\\)|([^.]*?))(?:\\s+of)?\\s+(${types}) damage`, 'i').exec(t);
+  const typeFirst = new RegExp(`Hit:\\s*(${types}) damage equal to ([^.;(]+)`, 'i').exec(t);
+  const firstType = (list: string) => list.split(/,?\s+(?:or\s+)?/)[0].toLowerCase();
+  if (typeFirst) {
+    a.damage = tokenize(typeFirst[2].trim()).replace(/\s*\+\s*/g, ' + ');
+    a.damageType = firstType(typeFirst[1]);
+  } else if (hit) {
     const dice = (hit[2] ?? hit[3] ?? hit[1] ?? '').trim();
     a.damage = tokenize(dice).replace(/\s*\+\s*/g, ' + ');
-    a.damageType = hit[4].toLowerCase();
+    a.damageType = firstType(hit[4]);
   } else {
-    const dmg = /\b(\d+d\d+(?:\s*[+-]\s*\d+)?)\s*\)?\s*(Acid|Bludgeoning|Cold|Fire|Force|Lightning|Necrotic|Piercing|Poison|Psychic|Radiant|Slashing|Thunder) damage/i.exec(t);
+    const dmg = new RegExp(`\\b(\\d+d\\d+(?:\\s*[+-]\\s*\\d+)?)\\s*\\)?\\s*(${TYPE_WORDS}) damage`, 'i').exec(t);
+    // "Failure: 2d6 damage of a type this spirit has Resistance to": the dice, its type to choose.
+    const untyped = /\b(?:Failure|Hit):\s*(?:\d+\s*\()?(\d+d\d+(?:\s*[+-]\s*\d+)?)\)?\s+damage\b/i.exec(t);
     if (dmg) (a.damage = dmg[1]), (a.damageType = dmg[2].toLowerCase());
+    else if (untyped) a.damage = untyped[1].replace(/\s*\+\s*/g, ' + ');
+  }
+  // More damage on the same hit: "… Piercing damage plus 1d4 Poison damage", "… plus 7 (2d6) Fire damage".
+  if (a.damage && (hit || typeFirst)) {
+    const after = t.slice(((hit ?? typeFirst)!.index ?? 0) + (hit ?? typeFirst)![0].length);
+    const more: { dice: string; type: string }[] = [];
+    for (const m of after.matchAll(new RegExp(`^,?\\s*(?:plus|and)\\s+(?:\\d+\\s*\\()?(\\d+d\\d+(?:\\s*[+-]\\s*\\d+)?)\\)?\\s+(${TYPE_WORDS}) damage`, 'gi'))) more.push({ dice: m[1].replace(/\s+/g, ''), type: m[2].toLowerCase() });
+    if (more.length) a.more = more;
   }
   // A reaction that adds damage to someone else's hit: "When another creature … hits …, the
   // attack deals an extra 1d6 damage of the type …" (a Drakewarden drake's Infused Strikes).
@@ -62,7 +98,7 @@ export function readAction(name: string, text: string, kind: CompanionAction['ki
     a.damage = extra[1].replace(/\s+/g, '');
     a.damageType = extra[2]?.toLowerCase() ?? '';
   }
-  const save24 = /(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) Saving Throw:\s*DC\s*([^,.]+)/i.exec(t);
+  const save24 = /(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) Saving Throw:\s*(?:DC\s*)?([^,.]+)/i.exec(t);
   const save14 = /DC\s*(\d+|equals? your spell save DC)\s+(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/i.exec(t);
   if (save24) (a.save = ABILITY_WORD[save24[1].toLowerCase()]), (a.dc = tokenize(save24[2]));
   else if (save14) (a.save = ABILITY_WORD[save14[2].toLowerCase()]), (a.dc = tokenize(save14[1]));
@@ -71,40 +107,89 @@ export function readAction(name: string, text: string, kind: CompanionAction['ki
 
 const SECTION: Record<string, CompanionAction['kind']> = { traits: 'trait', actions: 'action', 'bonus actions': 'bonus', reactions: 'reaction', 'legendary actions': 'legendary' };
 
+/**
+ * A stat block's lines, tidied: markdown's bold and italics, table bars and bullets gone ("| Str |
+ * 18 | +4 | +4 |" reads "Str 18 +4 +4"), and "AC 15; HP 10; Speed 30 ft." split into its fields.
+ */
+export function blockLines(text: string): string[] {
+  return text
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((l) =>
+      l
+        .replace(/\*+/g, '')
+        .replace(/\|/g, ' ')
+        .replace(/^\s*(?:[#>•]+|-\s)+/, '')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter((l) => l && !/^[-:\s]+$/.test(l))
+    .flatMap((l) => (/^(?:AC|Armor Class)\b/i.test(l) && /;\s*(?:HP|Hit Points|Speed)\b/i.test(l) ? l.split(/;\s*(?=(?:HP|Hit Points|Speed|Initiative)\b)/i) : [l]))
+    // "Animated Object. Huge or Smaller Construct, Unaligned": its name, then its type line.
+    .flatMap((l) => {
+      const m = /^([A-Z][^.]{1,40})\.\s+((?:Tiny|Small|Medium|Large|Huge|Gargantuan)\b.*\b(?:Aberration|Beast|Celestial|Construct|Dragon|Elemental|Fey|Fiend|Giant|Humanoid|Monstrosity|Ooze|Plant|Undead)s?\b.*)$/i.exec(l);
+      return m ? [m[1], m[2]] : [l];
+    });
+}
+
+const FIELD = /^(Armor Class|Hit Points|Speed|Skills|Senses|Languages|Challenge|Saving Throws|Resistances|Immunities|Vulnerabilities|Initiative|Gear|AC|HP|CR)\b/i;
+
 /** Reads a pasted stat block. Returns null when it doesn't look like one. */
 export function parseStatBlock(text: string): Companion | null {
-  const lines = text.replace(/\r/g, '').split('\n').map((l) => l.replace(/^[#>*\s]+|[*\s]+$/g, '').trim()).filter(Boolean);
+  const lines = blockLines(text);
   if (lines.length < 3) return null;
   const all = lines.join('\n');
+  // A field at the start of its own line, so "regains Hit Points" in a trait isn't its HP.
+  const field = (re: RegExp, inline?: RegExp) => {
+    for (const l of lines) {
+      const m = re.exec(l);
+      if (m) return m;
+    }
+    // A PDF can run fields together ("Armor Class 15 (natural armor) Hit Points 22 (4d8 + 4)"):
+    // then a number must follow, so "regains Hit Points from a spell" isn't one.
+    for (const l of inline ? lines : []) {
+      const m = inline!.exec(l);
+      if (m) return m;
+    }
+    return null;
+  };
   const c = blankCompanion({ source: 'Pasted stat block' });
-  const typeLine = lines.findIndex((l) => /^(Tiny|Small|Medium|Large|Huge|Gargantuan)\b.*\b(Aberration|Beast|Celestial|Construct|Dragon|Elemental|Fey|Fiend|Giant|Humanoid|Monstrosity|Ooze|Plant|Undead)\b/i.test(l));
+  const typeLine = lines.findIndex((l) => /^(Tiny|Small|Medium|Large|Huge|Gargantuan)\b.*\b(Aberration|Beast|Celestial|Construct|Dragon|Elemental|Fey|Fiend|Giant|Humanoid|Monstrosity|Ooze|Plant|Undead)s?\b/i.test(l));
   c.name = lines[typeLine > 0 ? typeLine - 1 : 0].replace(/[.:]$/, '');
   if (typeLine >= 0) {
     const m = /^(Tiny|Small|Medium|Large|Huge|Gargantuan)(?:\s+or\s+\w+)?\s+(\w+)/i.exec(lines[typeLine])!;
-    c.size = m[1];
-    c.type = m[2];
+    c.size = m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase();
+    c.type = m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase();
   }
-  const ac = /\b(?:AC|Armor Class)\s+([^\n(]+?)(?:\s*\(|\s+Initiative|\n|$)/i.exec(all);
+  const ac = field(/^(?:AC|Armor Class)\s+(.+?)(?:\s*\(|\s+Initiative\b|$)/i, /\b(?:AC|Armor Class)\s+(\d+(?:\s*\+\s*[^\s(]+)?)/i);
   if (ac) c.ac = tokenize(ac[1]).replace(/\s*\+\s*/g, ' + ');
-  const hp = /\b(?:HP|Hit Points)\s+([^\n(]+?)(?:\s*\(|\n|$)/i.exec(all);
+  const hp = field(/^(?:HP|Hit Points)\s+(.+?)(?:\s*\(|$)/i, /\b(?:HP|Hit Points)\s+(\d+(?:\s*\+\s*[^\s(]+)?)(?=\s*\(|\s+Speed\b|\s*$)/i);
   if (hp) {
     c.maxHp = tokenize(hp[1]).replace(/\s*\+\s*/g, ' + ');
     const n = Number(c.maxHp);
     if (Number.isFinite(n)) c.hp = n;
   }
-  const speed = /\bSpeed\s+([^\n]+)/i.exec(all);
+  const speed = field(/^Speed\s+(.+)$/i, /\bSpeed\s+(\d+\s*ft\.?.*)$/i);
   if (speed) c.speed = speed[1].trim();
   const abilities = readText(all).abilities;
   for (const a of ABILITIES) if (abilities[a]) c.abilities[a] = abilities[a]!;
-  const saves = /Saving Throws?\s+([^\n]+)/i.exec(all);
+  const saves = field(/^Saving Throws?\s+(.+)$/i);
   if (saves) c.saves = ABILITIES.filter((a) => new RegExp(`\\b${a}\\b`, 'i').test(saves[1]));
-  const skills = /\bSkills\s+([^\n]+)/i.exec(all);
+  else {
+    // The 2024 table: "Str 18 +4 +6", a save above its modifier is a proficient one.
+    for (const l of lines) {
+      const m = /^(Str|Dex|Con|Int|Wis|Cha)\s+\d{1,2}\s+([+−-]\s*\d+)\s+([+−-]\s*\d+)$/i.exec(l);
+      const n = (x: string) => Number(x.replace(/−/g, '-').replace(/\s+/g, ''));
+      if (m && n(m[3]) > n(m[2])) c.saves.push(m[1].toLowerCase() as Ability);
+    }
+  }
+  const skills = field(/^Skills\s+(.+)$/i);
   if (skills) c.skills = skills[1].trim();
-  const senses = /\bSenses\s+([^\n]+)/i.exec(all);
+  const senses = field(/^Senses\s+(.+)$/i);
   if (senses) c.senses = senses[1].trim();
-  const langs = /\bLanguages\s+([^\n]+)/i.exec(all);
+  const langs = field(/^Languages\s+(.+)$/i);
   if (langs) c.languages = langs[1].trim();
-  const cr = /\b(?:CR|Challenge)\s+([\d/]+)/i.exec(all);
+  const cr = field(/^(?:CR|Challenge)\s+([\d/]+)/i);
   if (cr) {
     c.cr = cr[1];
     const [n, d] = cr[1].split('/').map(Number);
@@ -112,7 +197,7 @@ export function parseStatBlock(text: string): Companion | null {
   }
   if (/proficiency bonus|\bPB\b/i.test(all) && !cr) c.pb = '{PB}';
 
-  // Entries: "Name. Text" (or "Name: Text") under Traits / Actions / Bonus Actions / Reactions.
+  // Entries: "Name. Text" (or "Name (Recharge 5–6). Text") under Traits / Actions / Bonus Actions / Reactions.
   let kind: CompanionAction['kind'] = 'trait';
   for (const l of lines) {
     const head = SECTION[l.toLowerCase().replace(/[:.]$/, '')];
@@ -120,8 +205,8 @@ export function parseStatBlock(text: string): Companion | null {
       kind = head;
       continue;
     }
-    const m = /^([A-Z][\w'’ ()/-]{1,60}?)\.\s+(.+)$/.exec(l);
-    if (!m || /^(Armor Class|Hit Points|Speed|Skills|Senses|Languages|Challenge|Saving Throws|AC|HP|CR)\b/i.test(m[1])) continue;
+    const m = /^([A-Z][\w'’ /-]{0,60}?(?:\s*\([^()]{1,80}\))?)\.\s+(.+)$/.exec(l);
+    if (!m || FIELD.test(m[1])) continue;
     const action = readAction(m[1].trim(), m[2].trim(), kind === 'trait' && /Attack(?: Roll)?:/i.test(m[2]) ? 'action' : kind);
     c.actions.push(action);
   }
@@ -171,7 +256,7 @@ export function companionFromCreature(def: CreatureDef): Companion {
 }
 
 /** For an AI chat: rewrites any creature write-up in the layout parseStatBlock reads. */
-export const COMPANION_AI_PROMPT = `Rewrite the creature below as a D&D 5e stat block in exactly this plain-text layout, so an app can read it. Keep every number and rule. Where a number depends on the creature's owner, write it in words the way the 2024 rules do: "plus your Proficiency Bonus", "equals your spell attack modifier", "equals your spell save DC", "five times your Ranger level".
+export const COMPANION_AI_PROMPT = `Rewrite the creature below as a D&D 5e stat block in exactly this plain-text layout, so an app can read it. Keep every number and rule. Where a number depends on the creature's owner, write it in words the way the 2024 rules do: "plus your Proficiency Bonus", "equals your spell attack modifier", "equals your spell save DC", "five times your Ranger level". Where it depends on the level a spell was cast at, write it the same way: "11 + the spell's level", "+ 5 for each spell level above 2", "half the spell's level (round down)". Where a part is for one form only, mark it "(Air only)", "(Land and Water only)".
 
 <Name>
 <Size> <Type>, <Alignment>

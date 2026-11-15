@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { centerOf, performCondition } from '../fx';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
-import { useTable } from '../state/table';
-import { ABILITIES, ABILITY_NAMES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
-import { actionDice, actionExtra, actionType, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compMod, compPb, compWeaponAbility, hasEssence, ownerLevel, walkSpeed } from '../systems/dnd5e/companion';
-import { describeFormula, evalFormula, isFormula } from '../systems/dnd5e/formula';
-import { blankCompanion, blankCompanionAction, uid, type Character, type Companion, type CompanionAction } from '../systems/dnd5e/model';
-import { abilityMod, signed } from '../systems/dnd5e/rules';
-import { COMPANION_AI_PROMPT, companionFromCreature, parseStatBlock } from '../systems/dnd5e/statblock';
+import { ordinal, useTable } from '../state/table';
+import { ABILITIES, ABILITY_NAMES, CLASSES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
+import { actionDice, actionExtra, actionMore, actionType, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
+import { describeFormula, isFormula } from '../systems/dnd5e/formula';
+import { blankCompanion, blankCompanionAction, readOrigin, uid, type Character, type Companion, type CompanionAction, type CompanionOrigin } from '../systems/dnd5e/model';
+import { abilityMod, signed, totalLevel } from '../systems/dnd5e/rules';
+import { COMPANION_AI_PROMPT, companionFromCreature } from '../systems/dnd5e/statblock';
+import { companionFromBlock, followClass, readCompanionPaste, reshape, slotText, summonAgain, type PasteReading } from '../systems/dnd5e/summon';
 import { AddItemDialog } from './Items';
 import { TargetStrip } from './Enemies';
 import { RulesText } from './RulesText';
@@ -22,19 +23,197 @@ const KINDS: { id: CompanionAction['kind']; name: string }[] = [
   { id: 'legendary', name: 'Legendary Action' },
 ];
 
-const num = (text: string, c: Character, fallback = 0) => evalFormula(text, c) ?? fallback;
-
 /** "+5 · 1d8 + 3 piercing" or "DC 12 CON · 2d6 fire", for an action button. */
-function actionSummary(a: CompanionAction, c: Character, comp?: Companion): string {
+function actionSummary(a: CompanionAction, c: Character, comp: Companion): string {
   const parts: string[] = [];
-  if (a.attack) parts.push(signed(num(a.toHit, c)));
-  if (a.save) parts.push(`DC ${evalFormula(a.dc, c) ?? '?'} ${a.save.toUpperCase()}`);
+  if (a.attack) parts.push(signed(compEval(comp, a.toHit, c) ?? 0));
+  if (a.save) parts.push(`DC ${compEval(comp, a.dc, c) ?? '?'} ${a.save.toUpperCase()}`);
   const b = boostOf(a);
-  const dice = actionDice(a, c);
-  const extra = actionExtra(a, c);
-  if (dice) parts.push(`${b ? '+' : ''}${dice} ${(comp ? actionType(comp, a) : a.damageType || b?.type) || (b ? 'damage' : '')}${extra ? ` + ${extra} ${comp?.essence || 'essence'}` : ''}`.trim());
+  const dice = actionDice(a, c, comp);
+  const extra = actionExtra(a, c, comp);
+  const more = actionMore(a, c, comp).map((m) => ` + ${m.dice} ${m.type}`.trimEnd()).join('');
+  if (dice) parts.push(`${b ? '+' : ''}${dice} ${actionType(comp, a) || (b ? 'damage' : '')}${extra ? ` + ${extra} ${comp.essence || 'essence'}` : ''}${more}`.trim());
   if (b) parts.push('adds to a hit');
   return parts.join(' · ');
+}
+
+/** Its text as it reads now: a spell's creature at the level it was cast ("makes 2 attacks"). */
+const sayFor = (comp: Companion) => (text: string) => (originOf(comp).kind === 'spell' ? slotText(text, slotOf(comp)) : text);
+
+const className = (id: string) => CLASSES.find((k) => k.id === id)?.name ?? (id ? id.charAt(0).toUpperCase() + id.slice(1) : '');
+
+/** "Summon Beast · 3rd level · Land", "Drake Companion · Ranger 4": how it came to you. */
+export function originLine(k: Companion, owner: Character): string {
+  const o = originOf(k);
+  if (o.kind === 'spell') return [o.name || 'A spell', `${ordinal(slotOf(k))} level`, o.form].filter(Boolean).join(' · ');
+  // Its name, unless "What it is" already says it ("Drake companion (Drakewarden)").
+  const name = o.name && !k.kind.toLowerCase().includes(o.name.toLowerCase()) ? o.name : '';
+  if (o.kind === 'feature') return [name, o.classId ? `${className(o.classId)} ${ownerLevel(owner, o.classId)}` : `level ${ownerLevel(owner)}`].filter(Boolean).join(' · ');
+  return '';
+}
+
+/**
+ * How its numbers are worked out, for the ones that follow something: "AC 14 = 11 + the spell's
+ * level (3rd)", "HP 25 = 5 + 5 × your Ranger level (4)".
+ */
+function Workings({ comp, owner }: { comp: Companion; owner: Character }) {
+  const slot = slotOf(comp);
+  const say = (formula: string) =>
+    describeFormula(formula)
+      .replace(/the spell’s level/g, `the spell’s level (${ordinal(slot)})`)
+      .replace(/spell level above (\d)/g, (_, b: string) => {
+        const n = Math.max(0, slot - Number(b));
+        return `spell level above ${b} (${n === 0 ? 'none yet' : `${n} above`})`;
+      })
+      .replace(/your (\w+) level/g, (whole: string, k: string) => (k === 'character' ? whole : `${whole} (${ownerLevel(owner, k.toLowerCase())})`))
+      .replace(/your level/g, `your level (${totalLevel(owner)})`)
+      .replace(/your Proficiency Bonus/g, `your Proficiency Bonus (${compPb({ ...comp, pb: '{PB}' }, owner)})`);
+  const follows = (t: string) => /\{/.test(t) || isFormula(t);
+  const rows: [string, string, string][] = [];
+  if (follows(comp.ac) && !comp.armor) rows.push(['AC', String(companionAc(comp, owner).total), say(comp.ac)]);
+  if (follows(comp.maxHp)) rows.push(['Hit Points', String(compMaxHp(comp, owner)), say(comp.maxHp)]);
+  if (follows(comp.pb)) rows.push(['Proficiency', signed(compPb(comp, owner)), say(comp.pb)]);
+  for (const a of comp.actions) {
+    if (a.attack && follows(a.toHit)) rows.push([`${a.name}: to hit`, signed(compEval(comp, a.toHit, owner) ?? 0), say(a.toHit)]);
+    if (a.damage && /\{/.test(a.damage)) rows.push([`${a.name}: damage`, actionDice(a, owner, comp), say(a.damage)]);
+    if (a.save && follows(a.dc)) rows.push([`${a.name}: DC`, String(compEval(comp, a.dc, owner) ?? '?'), say(a.dc)]);
+  }
+  if (!rows.length) return null;
+  return (
+    <dl className="comp-facts comp-workings">
+      {rows.map(([label, value, how]) => (
+        <Fragment key={label}>
+          <dt>{label}</dt>
+          <dd>
+            <b>{value}</b> <span className="hint">= {how}</span>
+          </dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
+const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
+
+/** "a, b and c". */
+const listOf = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
+
+/**
+ * How a companion comes to you, as choices: a spell (its name, its own level, the level you
+ * cast it at, its form), a class feature (whose level its numbers follow), or a creature as it is.
+ */
+function HowItComes({ value, owner, onChange, idBase, detectedClass = '' }: { value: CompanionOrigin; owner: Character; onChange: (o: CompanionOrigin) => void; idBase: string; detectedClass?: string }) {
+  const set = (p: Partial<CompanionOrigin>) => onChange(readOrigin({ ...value, ...p })!);
+  const mine = owner.classes.filter((k, i, all) => all.findIndex((x) => x.classId === k.classId) === i);
+  const follow = [
+    ...mine.map((k) => ({ id: k.classId, name: `Your ${className(k.classId)} level (${ownerLevel(owner, k.classId)})` })),
+    ...[detectedClass, value.classId].filter((id, i, all) => id && all.indexOf(id) === i && !mine.some((k) => k.classId === id)).map((id) => ({ id, name: `Your ${className(id)} level (0: you have none)` })),
+    { id: '', name: `Your character level (${totalLevel(owner)})` },
+  ];
+  return (
+    <div className="how-it-comes">
+      <div className="seg" role="radiogroup" aria-label="How it comes to you">
+        {(
+          [
+            ['spell', 'A spell summons it'],
+            ['feature', 'A class feature'],
+            ['creature', 'A creature as it is'],
+          ] as const
+        ).map(([id, name]) => (
+          <button key={id} type="button" role="radio" aria-checked={value.kind === id} onClick={() => set({ kind: id })}>
+            {name}
+          </button>
+        ))}
+      </div>
+      {value.kind === 'spell' && (
+        <div className="grid-2">
+          <TextField label="Spell" id={`${idBase}-spell`} value={value.name} placeholder="Summon Beast" onChange={(v) => set({ name: v })} />
+          <SelectField label="The spell’s own level" id={`${idBase}-base`} value={String(value.base)} options={LEVELS.map((n) => ({ id: String(n), name: `${ordinal(n)} level` }))} onChange={(v) => set({ base: Number(v), cast: Math.max(Number(v), value.cast) })} />
+          <SelectField label="Cast at" id={`${idBase}-cast`} value={String(value.cast)} options={LEVELS.filter((n) => n >= value.base).map((n) => ({ id: String(n), name: `${ordinal(n)} level` }))} onChange={(v) => set({ cast: Number(v) })} />
+          {value.forms.length > 0 && <SelectField label="Form" id={`${idBase}-form`} value={value.form} options={value.forms.map((f) => ({ id: f, name: f }))} onChange={(v) => set({ form: v })} />}
+        </div>
+      )}
+      {value.kind === 'feature' && (
+        <div className="grid-2">
+          <TextField label="Feature" id={`${idBase}-feat`} value={value.name} placeholder="Drake Companion, Homunculus Servant…" onChange={(v) => set({ name: v })} />
+          <SelectField label="Its numbers follow" id={`${idBase}-class`} value={value.classId} options={follow} onChange={(v) => set({ classId: v })} />
+        </div>
+      )}
+      <p className="hint" style={{ margin: 0 }}>
+        {value.kind === 'spell'
+          ? 'Wherever its stat block says “the spell’s level”, the level you cast it at is used, and a higher casting raises its numbers. A form picks the parts of its stat block for that form.'
+          : value.kind === 'feature'
+            ? 'Wherever its stat block counts your level in a class (“five times your Ranger level”), that class is used, so it grows when you level up, and gains the Hit Points as you do.'
+            : 'Its own numbers, with a Proficiency Bonus from its CR. Anything that uses yours (your Proficiency Bonus, spell attack or save DC) still follows you.'}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * How it came to you, on its sheet: its spell and the level it was cast at (cast it again at
+ * another level or form), or its feature and the class it follows (summon it again), with how
+ * each of its numbers is worked out.
+ */
+function OriginBox({ comp, idx }: { comp: Companion; idx: number }) {
+  const { char: c, update } = useChar();
+  const o = originOf(comp);
+  const [cast, setCast] = useState(o.cast);
+  const [form, setForm] = useState(o.form);
+  const [said, setSaid] = useState('');
+  if (o.kind === 'creature') return null;
+  const again = (next: { cast?: number; form?: string }, what: string) => {
+    update((d) => void (d.companions[idx] = summonAgain(d.companions[idx], next, d)));
+    setSaid(what);
+  };
+  return (
+    <div className="note how-it-comes">
+      <span>
+        <b>{o.kind === 'spell' ? `Summoned by ${o.name || 'a spell'}` : o.name || 'A class feature'}</b>
+        <span className="hint">
+          {' '}
+          {o.kind === 'spell' ? `cast at ${ordinal(slotOf(comp))} level${o.form ? `, ${o.form} form` : ''}` : `follows your ${o.classId ? `${className(o.classId)} level (${ownerLevel(c, o.classId)})` : `level (${totalLevel(c)})`}`}
+        </span>
+      </span>
+      {o.kind === 'spell' ? (
+        <div className="row">
+          <select className="input" style={{ width: 'auto' }} value={cast} onChange={(e) => setCast(Number(e.target.value))} aria-label="Cast it at level">
+            {LEVELS.filter((n) => n >= o.base).map((n) => (
+              <option key={n} value={n}>
+                {ordinal(n)} level
+              </option>
+            ))}
+          </select>
+          {o.forms.length > 1 && (
+            <select className="input" style={{ width: 'auto' }} value={form} onChange={(e) => setForm(e.target.value)} aria-label="Its form">
+              {o.forms.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+          )}
+          <button type="button" className="btn small" onClick={() => again({ cast, form }, `Cast again at ${ordinal(cast)} level${form ? `, ${form} form` : ''}: full Hit Points.`)}>
+            Cast it again
+          </button>
+        </div>
+      ) : (
+        <div className="row">
+          <button type="button" className="btn small" onClick={() => again({}, 'Summoned again: full Hit Points, no conditions.')}>
+            Summon it again
+          </button>
+        </div>
+      )}
+      {said && (
+        <span className="hint" role="status">
+          {said}
+        </span>
+      )}
+      <Workings comp={comp} owner={c} />
+    </div>
+  );
 }
 
 /**
@@ -71,8 +250,7 @@ export function CompanionsPanel() {
         <AddCompanion
           onClose={() => setAdding(false)}
           onAdd={(comp) => {
-            const hp = evalFormula(comp.maxHp, c);
-            update((d) => void d.companions.push({ ...comp, hp: hp ?? comp.hp }));
+            update((d) => void d.companions.push({ ...comp, hp: compMaxHp(comp, d) }));
             setOpen(comp.id);
             setAdding(false);
           }}
@@ -88,7 +266,7 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
   const [amount, setAmount] = useState(5);
   const [editing, setEditing] = useState(false);
   const [view, setView] = useState<'sheet' | 'gear' | 'conditions'>('sheet');
-  const max = Math.max(1, num(comp.maxHp, c, comp.hp));
+  const max = compMaxHp(comp, c);
   const ac = companionAc(comp, c);
   const pb = compPb(comp, c);
   const set = (fn: (k: Companion) => void) => update((d) => fn(d.companions[idx]));
@@ -119,7 +297,7 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
       <div className="comp-head">
         <button type="button" className="comp-title" onClick={onToggle} aria-expanded={expanded}>
           <b>{comp.name}</b>
-          <small>{[comp.kind || `${comp.size} ${comp.type}`, comp.cr ? `CR ${comp.cr}` : ''].filter(Boolean).join(' · ')}</small>
+          <small>{[comp.kind || `${comp.size} ${comp.type}`, originLine(comp, c) || (comp.cr ? `CR ${comp.cr}` : '')].filter(Boolean).join(' · ')}</small>
         </button>
         <div className="comp-stats">
           <span title={ac.worn ? `Wearing ${ac.worn}` : isFormula(comp.ac) ? comp.ac : undefined}>
@@ -198,7 +376,7 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
             );
           })}
           {usable.map((a) => (
-            <button key={a.id} type="button" className="cast" onClick={(e) => t.companionAct(comp, a, e.currentTarget)} title={a.text}>
+            <button key={a.id} type="button" className="cast" onClick={(e) => t.companionAct(comp, a, e.currentTarget)} title={sayFor(comp)(a.text)}>
               <span>{a.name}</span>
               <small>{[a.kind !== 'action' ? KINDS.find((k) => k.id === a.kind)?.name : '', actionSummary(a, c, comp)].filter(Boolean).join(' · ')}</small>
             </button>
@@ -248,8 +426,11 @@ const mathLine = (b: { total: number; parts: { label: string; value: number }[] 
 function CompanionSheet({ comp, idx, pb, traits, usable, onEdit }: { comp: Companion; idx: number; pb: number; traits: CompanionAction[]; usable: CompanionAction[]; onEdit: () => void }) {
   const { char: c, update } = useChar();
   const t = useTable();
+  const say = sayFor(comp);
+  const kind = originOf(comp).kind;
   return (
     <>
+      <OriginBox key={`${comp.origin?.cast}:${comp.origin?.form}`} comp={comp} idx={idx} />
       <div className="comp-abilities">
         {ABILITIES.map((a) => {
           const m = abilityMod(comp.abilities[a]);
@@ -275,7 +456,7 @@ function CompanionSheet({ comp, idx, pb, traits, usable, onEdit }: { comp: Compa
           {isFormula(comp.pb) || /\{/.test(comp.pb) ? ' (yours)' : ''}
         </dd>
         <dt>Speed</dt>
-        <dd>{comp.speed}</dd>
+        <dd>{say(comp.speed)}</dd>
         {comp.skills && (
           <>
             <dt>Skills</dt>
@@ -294,7 +475,7 @@ function CompanionSheet({ comp, idx, pb, traits, usable, onEdit }: { comp: Compa
             <dd>{comp.languages}</dd>
           </>
         )}
-        {(isFormula(comp.ac) || isFormula(comp.maxHp)) && (
+        {kind === 'creature' && (isFormula(comp.ac) || isFormula(comp.maxHp)) && (
           <>
             <dt>Scales with you</dt>
             <dd>
@@ -306,7 +487,7 @@ function CompanionSheet({ comp, idx, pb, traits, usable, onEdit }: { comp: Compa
       {[...traits, ...usable].map((a) => (
         <div key={a.id} className="comp-entry">
           <b>{a.name}.</b> <small className="hint">{KINDS.find((k) => k.id === a.kind)?.name}</small>
-          <RulesText text={a.text || actionSummary(a, c, comp) || '—'} />
+          <RulesText text={say(a.text) || actionSummary(a, c, comp) || '—'} />
         </div>
       ))}
       {comp.notes && <RulesText text={comp.notes} className="hint" />}
@@ -433,11 +614,30 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
   const set = (fn: (k: Companion) => void) => update((d) => fn(d.companions[idx]));
   const setAction = (j: number, fn: (a: CompanionAction) => void) => set((k) => fn(k.actions[j]));
   const shown = (formula: string) => {
-    const v = evalFormula(formula, c);
+    const v = compEval(comp, formula, c);
     return v === null ? 'can’t read this' : isFormula(formula) ? `= ${v} for you now` : '';
   };
+  const origin = originOf(comp);
   return (
     <div className="comp-sheet">
+      <h4 style={{ margin: 0 }}>How it comes to you</h4>
+      <HowItComes
+        value={origin}
+        owner={c}
+        idBase={`ce-o-${comp.id}`}
+        onChange={(o) =>
+          set((k) => {
+            const was = originOf(k);
+            // Another class for a feature's numbers: every class level in them follows it.
+            if (o.kind === 'feature' && o.classId !== was.classId) followClass(k, o.classId);
+            // Another form reads its stat block again; another level needs nothing read.
+            if (o.form !== was.form && was.block) Object.assign(k, reshape(k, { form: o.form }));
+            k.origin = readOrigin({ ...o, block: was.block, forms: was.forms })!;
+            // A smaller maximum (Air's 20 for Land's 30) takes the HP above it.
+            k.hp = Math.min(k.hp, compMaxHp(k, c));
+          })
+        }
+      />
       <div className="grid-2">
         <TextField label="Name" id={`ce-name-${comp.id}`} value={comp.name} onChange={(v) => set((k) => void (k.name = v))} />
         <TextField label="What it is" id={`ce-kind-${comp.id}`} value={comp.kind} placeholder="Drake companion, owl familiar…" onChange={(v) => set((k) => void (k.kind = v))} />
@@ -539,7 +739,9 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
       <TextField label="Notes" id={`ce-notes-${comp.id}`} multiline value={comp.notes} onChange={(v) => set((k) => void (k.notes = v))} />
       <p className="hint" style={{ margin: 0 }}>
         Numbers can follow you: {'{PB}'} your Proficiency Bonus, {'{LEVEL}'} your level, {'{LEVEL:ranger}'} one class’s level, {'{SPELLATK}'} your spell attack, {'{SPELLDC}'} your
-        spell save DC, {'{WIS}'} and the other ability modifiers, with + − × ÷.
+        spell save DC, {'{WIS}'} and the other ability modifiers, {'{SLOT}'} the level its spell was cast at, with + − × ÷ and max(…), floor(…).
+        A pasted stat block’s words become these for you: “the spell’s level” is {'{SLOT}'}, “+ 5 for each spell level above 2nd” is 5 * max(0, {'{SLOT}'} - 2).
+
       </p>
       <div className="row">
         <button type="button" className="btn small primary" onClick={onDone}>
@@ -573,8 +775,25 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
   const [q, setQ] = useState('');
   const [type, setType] = useState('all');
   const [maxCr, setMaxCr] = useState(2);
+  const { char: c } = useChar();
   const [text, setText] = useState('');
-  const [parsed, setParsed] = useState<Companion | null | 'bad'>(null);
+  const [reading, setReading] = useState<PasteReading | null | 'bad'>(null);
+  const [choice, setChoice] = useState<CompanionOrigin | null>(null);
+  // Your spells and the rules', to find the spell a creature comes from ("…uses the Bestial Spirit stat block").
+  const spellRefs = useMemo(
+    () => [...c.spells.map((x) => ({ name: x.name, level: x.level, description: x.description })), ...(cat?.spells ?? []).map((x) => ({ name: x.name, level: x.level, description: x.description }))],
+    [c.spells, cat],
+  );
+  const read = () => {
+    const r = readCompanionPaste(text, spellRefs);
+    setReading(r ?? 'bad');
+    setChoice(
+      r
+        ? readOrigin({ kind: r.kind, name: r.kind === 'spell' ? (r.spell?.name ?? '') : r.kind === 'feature' ? r.plain.name : '', base: r.base, cast: r.base, forms: r.forms, form: r.forms[0] ?? '', classId: r.classId })
+        : null,
+    );
+  };
+  const preview = reading && reading !== 'bad' && choice ? companionFromBlock(reading.block, choice, c) : null;
   const [showPrompt, setShowPrompt] = useState(false);
   const types = useMemo(() => [...new Set((cat?.creatures ?? []).map((k) => k.type))].sort(), [cat]);
   const list = useMemo(() => {
@@ -646,11 +865,18 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
       {mode === 'paste' && (
         <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
           <label className="field" htmlFor="comp-paste">
-            <span>Paste the stat block, from your book, D&amp;D Beyond or anywhere else</span>
-            <textarea id="comp-paste" className="input" style={{ minHeight: 180 }} value={text} onChange={(e) => (setText(e.target.value), setParsed(null))} placeholder={'Drake\nSmall Dragon, Neutral\nAC 14 plus your Proficiency Bonus\nHP 5 + five times your Ranger level\n…'} />
+            <span>Paste its stat block, or the whole spell that summons it, from your book, D&amp;D Beyond or anywhere else</span>
+            <textarea
+              id="comp-paste"
+              className="input"
+              style={{ minHeight: 180 }}
+              value={text}
+              onChange={(e) => (setText(e.target.value), setReading(null))}
+              placeholder={'Drake\nSmall Dragon, Neutral\nAC 14 plus your Proficiency Bonus\nHP 5 + five times your Ranger level\n…\n\nor a whole spell: Summon Beast, Find Steed…'}
+            />
           </label>
           <div className="row">
-            <button type="button" className="btn small primary" disabled={!text.trim()} onClick={() => setParsed(parseStatBlock(text) ?? 'bad')}>
+            <button type="button" className="btn small primary" disabled={!text.trim()} onClick={read}>
               Read it
             </button>
             <button type="button" className="btn small ghost" aria-expanded={showPrompt} onClick={() => setShowPrompt((s) => !s)}>
@@ -668,15 +894,40 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
               </button>
             </>
           )}
-          {parsed === 'bad' && <p className="hint" style={{ color: 'var(--bad)' }}>That doesn’t look like a stat block: there’s no AC, HP or actions to read.</p>}
-          {parsed && parsed !== 'bad' && (
-            <div className="note good">
-              <b>{parsed.name}</b>: AC {parsed.ac}, HP {parsed.maxHp}, {parsed.actions.length} traits and actions ({parsed.actions.filter((a) => a.attack).length} attacks).
-              <div className="row" style={{ marginTop: 6 }}>
-                <button type="button" className="btn small primary" onClick={() => onAdd(parsed)}>
-                  Add {parsed.name}
-                </button>
-              </div>
+          {reading === 'bad' && <p className="hint" style={{ color: 'var(--bad)' }}>That doesn’t look like a stat block: there’s no AC, HP or actions to read.</p>}
+          {reading && reading !== 'bad' && choice && (
+            <div className="note good" style={{ display: 'grid', gap: 8 }}>
+              <span>
+                <b>{reading.plain.name}</b>
+                <span className="hint">
+                  {' '}
+                  · {reading.plain.size} {reading.plain.type} · {reading.plain.actions.length} traits and actions ({plural(reading.plain.actions.filter((a) => a.attack).length, 'attack')})
+                  {reading.spell ? ` · from ${reading.spell.name} (a level ${reading.spell.level} spell)` : ''}
+                </span>
+              </span>
+              <span className="hint">{reading.follows.length ? `Its numbers follow ${listOf(reading.follows)}.` : 'Its numbers are its own: nothing in its stat block counts your level or the spell’s.'}</span>
+              <HowItComes value={choice} owner={c} idBase="cp-o" detectedClass={reading.classId} onChange={setChoice} />
+              {choice.kind === 'feature' && choice.classId && ownerLevel(c, choice.classId) === 0 && (
+                <p className="hint" style={{ margin: 0, color: 'var(--warn)' }}>
+                  You have no {className(choice.classId)} levels, so it counts 0 for them. Choose the class it follows above, or add the class.
+                </p>
+              )}
+              {choice.kind === 'spell' && reading.follows.length > 0 && !reading.follows.includes('the level the spell is cast at') && (
+                <p className="hint" style={{ margin: 0 }}>Nothing in its stat block counts the spell’s level, so the level you cast it at changes none of its numbers.</p>
+              )}
+              {preview && (
+                <>
+                  <span>
+                    AC <b>{companionAc(preview, c).total}</b> · <b>{compMaxHp(preview, c)}</b> HP · {sayFor(preview)(preview.speed)}
+                  </span>
+                  <Workings comp={preview} owner={c} />
+                  <div className="row">
+                    <button type="button" className="btn small primary" onClick={() => onAdd(preview)}>
+                      Add {preview.name}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

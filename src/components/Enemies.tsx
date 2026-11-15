@@ -346,7 +346,7 @@ function AttackButtons({ c }: { c: Character }) {
   const aimed = c.spells.filter((s) => s.level === 0 || s.prepared).filter((s) => s.resolution === 'attack' || s.resolution === 'save' || s.resolution === 'auto' || markFromSpell(s));
   const companionAttacks: { key: string; label: string; sub?: string; run: (el: HTMLElement) => void }[] = c.companions.flatMap((k) => [
     ...k.weapons.map((w) => ({ key: `${k.id}-${w.id}`, label: `${k.name}: ${w.name}`, run: (el: HTMLElement) => t.companionWeapon(k, w, el) })),
-    ...k.actions.filter((a) => a.attack).map((a) => ({ key: `${k.id}-${a.id}`, label: `${k.name}: ${a.name}`, sub: `${actionDice(a, c)} ${actionType(k, a)}`.trim(), run: (el: HTMLElement) => t.companionAct(k, a, el) })),
+    ...k.actions.filter((a) => a.attack).map((a) => ({ key: `${k.id}-${a.id}`, label: `${k.name}: ${a.name}`, sub: `${actionDice(a, c, k)} ${actionType(k, a)}`.trim(), run: (el: HTMLElement) => t.companionAct(k, a, el) })),
   ]);
   return (
     <section>

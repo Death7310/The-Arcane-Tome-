@@ -9,6 +9,7 @@ import { ABILITIES, ARMOR, SKILLS, classById } from './data';
 import { applyBackground, findBackground, isBackgroundFeature } from './backgrounds';
 import { syncFeatures, subclassDef } from './leveling';
 import { blankFeature, blankWeapon, uid, type Character, type Feature } from './model';
+import { companionMaxes, followMaxHp } from './companion';
 import { maxHp } from './rules';
 import type { Catalog } from './srd';
 
@@ -212,6 +213,7 @@ export function applyUpdate(d: Character, plan: UpdatePlan, on: Set<SectionId>, 
   const done: string[] = [];
   const has = (id: SectionId) => on.has(id) && plan.sections.some((x) => x.id === id);
   const maxBefore = maxHp(d).total;
+  const companionsBefore = companionMaxes(d);
 
   if (has('identity')) {
     for (const k of ['name', 'species', 'alignment', 'player', 'size'] as const) if (s[k].trim()) d[k] = s[k].trim();
@@ -242,6 +244,8 @@ export function applyUpdate(d: Character, plan: UpdatePlan, on: Set<SectionId>, 
   // Hit points gained with the new maximum come with it; you keep any damage you've taken.
   const maxAfter = maxHp(d).total;
   d.hp.current = Math.min(maxAfter, d.hp.current + Math.max(0, maxAfter - maxBefore));
+  // Companions whose HP counts your level move with it.
+  followMaxHp(d, companionsBefore);
   if (has('proficiencies')) {
     for (const a of ABILITIES) d.saveProfs[a] = !!s.saveProfs[a];
     for (const sk of SKILLS) d.skills[sk.id] = s.skills[sk.id] ?? 0;

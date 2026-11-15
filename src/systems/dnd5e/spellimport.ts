@@ -247,12 +247,23 @@ export function readSpellText(text: string, source: string): SpellDef[] {
  * Spirit / Small beast / Armor Class …"), or -1. Its name is the line above its size and type.
  */
 export function statBlockStart(lines: string[]): number {
-  const ac = lines.findIndex((l) => /^(armor class|ac)\s+\d/i.test(l));
-  if (ac < 0 || !lines.slice(ac, ac + 6).some((l) => /^(hit points|hp)\s+\d/i.test(l))) return -1;
-  for (let i = ac - 1; i >= Math.max(0, ac - 3); i--) {
-    if (/^(tiny|small|medium|large|huge|gargantuan)\b/i.test(lines[i])) return i > 0 && lines[i - 1].length <= 60 ? i - 1 : i;
+  // Markdown's bold and italics, and bullets, don't count: "**AC** 14 + the spell’s level".
+  const bare = lines.map((l) => l.replace(/\*+|_+/g, '').replace(/^\s*(?:[#>•]+|-\s)+/, '').trim());
+  const ac = bare.findIndex((l) => /^(armor class|ac)\s+\d/i.test(l));
+  if (ac < 0 || !bare.slice(ac, ac + 6).some((l) => /^(hit points|hp)\s+\d/i.test(l) || /;\s*(hit points|hp)\s+\d/i.test(l))) return -1;
+  for (let i = ac - 1; i >= Math.max(0, ac - 4); i--) {
+    if (!bare[i]) continue;
+    if (/^(tiny|small|medium|large|huge|gargantuan)\b/i.test(bare[i])) {
+      // Its name is the line before (blank lines between don't count).
+      let n = i - 1;
+      while (n >= 0 && !bare[n]) n--;
+      return n >= 0 && bare[n].length <= 60 ? n : i;
+    }
   }
-  return ac;
+  // "Animated Object. Huge or Smaller Construct, Unaligned" then "AC 15; HP 10 …".
+  let prev = ac - 1;
+  while (prev >= 0 && !bare[prev]) prev--;
+  return prev >= 0 && /^[A-Z][^.]{1,40}\.\s+(tiny|small|medium|large|huge|gargantuan)\b/i.test(bare[prev]) ? prev : ac;
 }
 
 /** The stat block of the creature a spell summons, as text (null when it has none). */

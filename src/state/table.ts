@@ -10,10 +10,9 @@ import { describe, isValid, naturalD20, rollDie, safeRoll, withModifier, type Ro
 import { centerOf, fx, perform, performAction, sound, throwPhases, weaponLook, type DicePhase, type StrikeLook, type Verdict } from '../fx';
 import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/types';
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type Ability, type StandardActionId } from '../systems/dnd5e/data';
-import { evalFormula } from '../systems/dnd5e/formula';
 import { emptyTurn, uid, type BattleWho, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type RolledDamage, type Spell, type Weapon } from '../systems/dnd5e/model';
 import { allyWho, companionWho, damageTypeOf, enemyWho, inBattle, logEvent, retarget, saveIn, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
-import { actionDice, actionExtra, actionType, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionMore, actionType, compEval, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
 import type { CreatureDef } from '../systems/dnd5e/srd';
 import { useCatalog } from './catalog';
@@ -663,13 +662,15 @@ export function useTableState(char: Character, update: Update) {
       const from = centerOf(originEl);
       const type = actionType(liveCompanion(comp), action) || 'bludgeoning';
       const element = type as FxElement;
-      const dice = actionDice(action, c);
+      const dice = actionDice(action, c, comp);
       const damage = dice && isValid(dice) ? [{ dice, type, known: [] as Part[] }] : [];
       // Extra damage of its essence type from your level (a drake's Magic Fang).
-      const extra = actionExtra(action, c);
+      const extra = actionExtra(action, c, comp);
       if (damage.length && extra && isValid(extra)) damage.push({ dice: extra, type: liveCompanion(comp).essence || type, known: [] as Part[] });
+      // More damage on the same hit, of its own type (a Poison Jab's 1d4 Poison).
+      if (damage.length && action.attack) for (const m of actionMore(action, c, comp)) if (isValid(m.dice)) damage.push({ dice: m.dice, type: m.type || type, known: [] as Part[] });
       if (action.attack) {
-        const toHit = evalFormula(action.toHit, c) ?? 0;
+        const toHit = compEval(comp, action.toHit, c) ?? 0;
         const vs = vsTarget(c, action.attack === 'ranged', false);
         const mode = companionMode(liveCompanion(comp), { type: 'attack' }, vs);
         const res = attackOnce({ total: toHit, parts: [{ label: 'Attack bonus', value: toHit }] }, mode, damage, 0, { orb: false }, vs);
@@ -699,7 +700,7 @@ export function useTableState(char: Character, update: Update) {
       const lines: RollLine[] = [];
       let verdict: Verdict | undefined;
       if (action.save) {
-        const dc = evalFormula(action.dc, c);
+        const dc = compEval(comp, action.dc, c);
         lines.push({ label: `${ABILITY_NAMES[action.save]} save`, total: dc ?? 0, detail: dc === null ? 'Set this action’s DC to see it here.' : `DC ${dc}`, kind: 'info' });
         if (dc !== null) verdict = { text: `DC ${dc}`, tone: 'info', note: `${ABBR(action.save)} save` };
       }
@@ -711,7 +712,7 @@ export function useTableState(char: Character, update: Update) {
       const dealt = Math.max(0, r.total);
       lines.push({ label: `${capital(type)} damage`, total: dealt, detail: describe(r), kind: 'damage' });
       const effect = inBattle(c)
-        ? noteEffect([{ amount: dealt, type, what: action.name, who: 'companion', name: comp.name }], action.name, companionWho(comp), action.save ? { ability: action.save, dc: evalFormula(action.dc, c), half: /\bhalf\b/i.test(action.text) } : null)
+        ? noteEffect([{ amount: dealt, type, what: action.name, who: 'companion', name: comp.name }], action.name, companionWho(comp), action.save ? { ability: action.save, dc: compEval(comp, action.dc, c), half: /\bhalf\b/i.test(action.text) } : null)
         : null;
       stage(
         [phaseOf([counted([{ r, known: [], element, orb: true }], dealt, type, verdict)])],
@@ -800,7 +801,7 @@ export function useTableState(char: Character, update: Update) {
       const entry = logRef.current.find((e) => e.id === entryId);
       const key = `${comp.id}:${action.id}`;
       if (!entry?.boost || entry.boost.used.includes(key)) return;
-      const dice = actionDice(action, c);
+      const dice = actionDice(action, c, comp);
       const type = actionType(liveCompanion(comp), action);
       const warn = spendCompanion(comp, 'reaction');
       const r = safeRoll(dice, { critical: entry.boost.crit });

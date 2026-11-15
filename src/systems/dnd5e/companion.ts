@@ -5,7 +5,7 @@
 
 import { ARMOR, type Ability } from './data';
 import { evalFormula } from './formula';
-import type { Character, Companion, CompanionAction, Weapon } from './model';
+import type { Character, Companion, CompanionAction, CompanionOrigin, Weapon } from './model';
 import { abilityMod, incapacitatedBy, resolveTokens, totalLevel, type Breakdown } from './rules';
 
 type Part = Breakdown['parts'][number];
@@ -15,8 +15,66 @@ const sum = (parts: Part[]): Breakdown => ({ total: parts.reduce((a, p) => a + p
 
 export const compMod = (k: Companion, a: Ability) => abilityMod(k.abilities[a]);
 
+// ── How it comes, and what its numbers follow ───────────────────────────────
+
+/**
+ * How it comes to you: as set, or worked out from its numbers for older sheets (one that counts
+ * a class level is a class feature's, like a drake's "5 + 5 × your Ranger level").
+ */
+export function originOf(k: Pick<Companion, 'origin' | 'ac' | 'maxHp' | 'pb' | 'actions' | 'kind' | 'source'>): CompanionOrigin {
+  if (k.origin) return k.origin;
+  const all = [k.ac, k.maxHp, k.pb, ...k.actions.flatMap((a) => [a.toHit, a.damage, a.dc])].join(' ');
+  const cls = /\{LEVEL:([\w-]+)\}/i.exec(all)?.[1]?.toLowerCase() ?? '';
+  const kind: CompanionOrigin['kind'] = /\{SLOT\}/i.test(all) ? 'spell' : cls || /\{LEVEL\}/i.test(all) ? 'feature' : 'creature';
+  return { kind, name: kind === 'creature' ? '' : k.kind, base: 1, cast: 1, forms: [], form: '', block: '', classId: cls };
+}
+
+/** The level its spell was cast at, which "{SLOT}" stands for (1 if it has no spell). */
+export const slotOf = (k: Pick<Companion, 'origin'>): number => Math.max(1, k.origin?.cast || k.origin?.base || 1);
+
+/** A formula with its spell's level filled in. */
+export const withSlot = (text: string, k?: Pick<Companion, 'origin'> | null): string => String(text ?? '').replace(/\{SLOT\}/gi, String(k ? slotOf(k) : 1));
+
+/** One of its numbers worked out: your tokens and its spell's level filled in. */
+export const compEval = (k: Pick<Companion, 'origin'>, text: string, owner: Character): number | null => evalFormula(withSlot(text, k), owner);
+
+/** Its Hit Point maximum now (at least 1), from its formula. */
+export const compMaxHp = (k: Companion, owner: Character): number => Math.max(1, compEval(k, k.maxHp, owner) ?? k.hp);
+
+/** Each companion's Hit Point maximum, to compare after a level changes. */
+export const companionMaxes = (d: Character): Map<string, number> => new Map(d.companions.map((k) => [k.id, compMaxHp(k, d)]));
+
+/**
+ * After your level changes: a companion whose maximum grew gains the difference (as you do when
+ * you level up), and one whose maximum shrank keeps no more than it.
+ */
+export function followMaxHp(d: Character, before: Map<string, number>): { name: string; from: number; to: number }[] {
+  const changed: { name: string; from: number; to: number }[] = [];
+  for (const k of d.companions) {
+    const was = before.get(k.id);
+    if (was === undefined) continue;
+    const now = compMaxHp(k, d);
+    if (now === was) continue;
+    k.hp = now > was ? Math.min(now, k.hp + (now - was)) : Math.min(k.hp, now);
+    changed.push({ name: k.name, from: was, to: now });
+  }
+  return changed;
+}
+
+/** "1d8+4+3" → "1d8+7": whole numbers summed after the dice. Anything else stays as it is. */
+export function tidyDice(dice: string): string {
+  const d = dice.replace(/\s+/g, '');
+  if (!/^[+-]?(?:\d+d\d+|\d+)(?:[+-](?:\d+d\d+|\d+))*$/i.test(d)) return d;
+  const terms = d.match(/[+-]?(?:\d+d\d+|\d+)/gi) ?? [];
+  const dicePart = terms.filter((x) => /d/i.test(x));
+  const n = terms.filter((x) => !/d/i.test(x)).reduce((a, x) => a + Number(x), 0);
+  if (!dicePart.length) return String(n);
+  const head = dicePart.map((x, i) => (i === 0 ? x.replace(/^\+/, '') : /^[+-]/.test(x) ? x : `+${x}`)).join('');
+  return n ? `${head}${n > 0 ? '+' : ''}${n}` : head;
+}
+
 /** Its Proficiency Bonus: a number from its stat block, or a formula over yours ("{PB}"). */
-export const compPb = (k: Companion, owner: Character) => evalFormula(k.pb, owner) ?? 2;
+export const compPb = (k: Companion, owner: Character) => compEval(k, k.pb, owner) ?? 2;
 
 /** Its Armor Class: worn armor or barding (with its Dexterity, capped as armor caps it), else its stat block's. */
 export function companionAc(k: Companion, owner: Character): Breakdown & { worn: string | null } {
@@ -30,14 +88,14 @@ export function companionAc(k: Companion, owner: Character): Breakdown & { worn:
       if (armor.category === 'medium') parts.push({ label: 'Dexterity (max 2)', value: Math.min(2, dex) });
     } else {
       // A shield alone goes on top of its natural armor.
-      parts.push({ label: 'Natural armor', value: evalFormula(k.ac, owner) ?? 10 });
+      parts.push({ label: 'Natural armor', value: compEval(k, k.ac, owner) ?? 10 });
     }
     parts.push({ label: 'Armor enchantment', value: k.armor.magicBonus });
     if (k.armor.shield) parts.push({ label: 'Shield', value: 2 });
     const worn = [armor && armor.category !== 'none' ? armor.name : '', k.armor.shield ? 'Shield' : ''].filter(Boolean).join(' and ');
     return { ...sum(parts), worn };
   }
-  const total = evalFormula(k.ac, owner) ?? 10;
+  const total = compEval(k, k.ac, owner) ?? 10;
   return { total, parts: [{ label: 'Stat block', value: total }], worn: null };
 }
 
@@ -102,21 +160,29 @@ export const ownerLevel = (owner: Character, levelOf = '') =>
   levelOf ? owner.classes.filter((k) => k.classId === levelOf).reduce((n, k) => n + k.level, 0) : totalLevel(owner);
 
 /**
- * An action's damage dice as they stand at your level, with your numbers filled in: its level
- * step if one applies, else its damage dice (or, for a boost, the dice its text names).
+ * An action's damage dice as they stand at your level, with your numbers (and its spell's level)
+ * filled in: its level step if one applies, else its damage dice (or, for a boost, the dice its
+ * text names).
  */
-export function actionDice(a: CompanionAction, owner: Character): string {
+export function actionDice(a: CompanionAction, owner: Character, comp?: Pick<Companion, 'origin'> | null): string {
   const level = ownerLevel(owner, a.levelOf);
   const step = [...(a.levelDice ?? [])].filter((x) => x.dice.trim() && x.level <= level).sort((x, y) => x.level - y.level).at(-1);
   const base = step?.dice ?? (a.damage.trim() || boostOf(a)?.dice || '');
-  return base ? resolveTokens(base, owner).replace(/\s+/g, '') : '';
+  return base ? tidyDice(resolveTokens(withSlot(base, comp), owner)) : '';
 }
 
 /** An action's extra damage at your level (a drake's Magic Fang), or '' if none applies yet. */
-export function actionExtra(a: CompanionAction, owner: Character): string {
+export function actionExtra(a: CompanionAction, owner: Character, comp?: Pick<Companion, 'origin'> | null): string {
   const level = ownerLevel(owner, a.levelOf);
   const step = [...(a.extra ?? [])].filter((x) => x.dice.trim() && x.level <= level).sort((x, y) => x.level - y.level).at(-1);
-  return step ? resolveTokens(step.dice, owner).replace(/\s+/g, '') : '';
+  return step ? tidyDice(resolveTokens(withSlot(step.dice, comp), owner)) : '';
+}
+
+/** More damage on the same hit, each of its own type (a Poison Jab's "plus 1d4 Poison damage"). */
+export function actionMore(a: CompanionAction, owner: Character, comp?: Pick<Companion, 'origin'> | null): { dice: string; type: string }[] {
+  return (Array.isArray(a.more) ? a.more : [])
+    .filter((x) => x && typeof x.dice === 'string' && x.dice.trim())
+    .map((x) => ({ dice: tidyDice(resolveTokens(withSlot(x.dice, comp), owner)), type: typeof x.type === 'string' ? x.type : '' }));
 }
 
 export interface Boost {
@@ -138,7 +204,7 @@ export function availableBoosts(owner: Character, attackerId = ''): Boost[] {
       if (!b) continue;
       const by = incapacitatedBy(comp);
       const blocked = comp.hp <= 0 ? 'at 0 HP' : by ? by : comp.turn.reaction ? 'reaction used' : '';
-      out.push({ comp, action, dice: actionDice(action, owner), type: b.type || comp.essence, blocked });
+      out.push({ comp, action, dice: actionDice(action, owner, comp), type: b.type || comp.essence, blocked });
     }
   }
   return out;

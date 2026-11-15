@@ -2,7 +2,9 @@
 // Bestial Spirit's stat block. Expected numbers are Tasha's Cauldron of Everything's.
 import { describe, expect, it } from 'vitest';
 import { levelFromUpcast, readPastedSpells, summonedCreature } from './spellimport';
-import { summonCompanion, summonForms } from './summon';
+import { actionDice, companionAc, compMaxHp } from './companion';
+import { blankCharacter } from './model';
+import { reshape, slotText, summonAgain, summonCompanion, summonForms } from './summon';
 import { SUMMON_BEAST } from './summon-sample';
 
 describe('pasting Summon Beast', () => {
@@ -35,8 +37,9 @@ describe('pasting Summon Beast', () => {
 
 describe('the Bestial Spirit as a companion', () => {
   const block = summonedCreature(readPastedSpells(SUMMON_BEAST)[0].def.description)!;
-  const beast = (form: string, level: number) => summonCompanion(block, { spell: 'Summon Beast', level, form })!;
-  const names = (form: string, level: number) => beast(form, level).actions.map((a) => a.name);
+  const me = blankCharacter();
+  const beast = (form: string, cast: number) => summonCompanion(block, { spell: 'Summon Beast', base: 2, cast, form }, me)!;
+  const names = (form: string, cast: number) => beast(form, cast).actions.map((a) => a.name);
 
   it('finds its stat block and its three forms', () => {
     expect(block.split('\n')[0]).toBe('Bestial Spirit');
@@ -44,9 +47,9 @@ describe('the Bestial Spirit as a companion', () => {
   });
 
   it('takes each form’s HP, speed and traits', () => {
-    expect(beast('Air', 2)).toMatchObject({ name: 'Bestial Spirit', size: 'Small', ac: '13', maxHp: '20', hp: 20, speed: '30 ft.; fly 60 ft.' });
-    expect(beast('Land', 2)).toMatchObject({ maxHp: '30', speed: '30 ft.; climb 30 ft.' });
-    expect(beast('Water', 2)).toMatchObject({ maxHp: '30', speed: '30 ft.; swim 30 ft.' });
+    expect(beast('Air', 2)).toMatchObject({ name: 'Bestial Spirit', size: 'Small', ac: '11 + {SLOT}', maxHp: '20 + 5 * max(0, {SLOT} - 2)', hp: 20, speed: '30 ft.; fly 60 ft.' });
+    expect(beast('Land', 2)).toMatchObject({ maxHp: '30 + 5 * max(0, {SLOT} - 2)', hp: 30, speed: '30 ft.; climb 30 ft.' });
+    expect(beast('Water', 2)).toMatchObject({ hp: 30, speed: '30 ft.; swim 30 ft.' });
     expect(names('Air', 2)).toEqual(['Flyby', 'Multiattack', 'Maul']);
     expect(names('Land', 2)).toEqual(['Pack Tactics', 'Multiattack', 'Maul']);
     expect(names('Water', 2)).toEqual(['Pack Tactics', 'Water Breathing', 'Multiattack', 'Maul']);
@@ -54,11 +57,32 @@ describe('the Bestial Spirit as a companion', () => {
 
   it('grows with the level you cast it at: AC, HP, Multiattack and the Maul', () => {
     const b = beast('Land', 4);
-    expect(b).toMatchObject({ ac: '15', maxHp: '40', hp: 40, pb: '{PB}' });
-    expect(b.actions.find((a) => a.name === 'Multiattack')!.text).toBe('The beast makes 2 attacks.');
-    expect(b.actions.find((a) => a.name === 'Maul')).toMatchObject({ attack: 'melee', toHit: '{SPELLATK}', damage: '1d8 + 8', damageType: 'piercing' });
-    expect(beast('Land', 2).actions.find((a) => a.name === 'Maul')!.damage).toBe('1d8 + 6');
-    expect(b.notes).toContain('Summon Beast at 4th level, Land form');
+    expect(b.origin).toMatchObject({ kind: 'spell', name: 'Summon Beast', base: 2, cast: 4, form: 'Land', forms: ['Air', 'Land', 'Water'] });
+    expect(companionAc(b, me).total).toBe(15);
+    expect(compMaxHp(b, me)).toBe(40);
+    expect(b).toMatchObject({ hp: 40, pb: '{PB}', source: 'Summoned by Summon Beast' });
+    expect(slotText(b.actions.find((a) => a.name === 'Multiattack')!.text, 4)).toBe('The beast makes 2 attacks.');
+    const maul = b.actions.find((a) => a.name === 'Maul')!;
+    expect(maul).toMatchObject({ attack: 'melee', toHit: '{SPELLATK}', damage: '1d8 + 4 + {SLOT}', damageType: 'piercing' });
+    expect(actionDice(maul, me, b)).toBe('1d8+8');
+    expect(actionDice(maul, me, beast('Land', 2))).toBe('1d8+6');
+  });
+
+  it('cast again at another level, nothing is read again: the numbers count the level', () => {
+    const b = { ...beast('Land', 2), hp: 12 };
+    const again = summonAgain(b, { cast: 3 }, me);
+    expect(again).toMatchObject({ id: b.id, hp: 35, ac: '11 + {SLOT}' });
+    expect(companionAc(again, me).total).toBe(14);
+    expect(reshape(b, { cast: 3 }).hp).toBe(12);
+  });
+
+  it('another form reads its stat block again, keeping its name and gear', () => {
+    const land = { ...beast('Land', 3), name: 'Bristle', inventory: [{ id: 'x', name: 'Collar', qty: 1, weight: 0, notes: '' }] };
+    const air = summonAgain(land, { form: 'Air' }, me);
+    expect(air).toMatchObject({ id: land.id, name: 'Bristle', speed: '30 ft.; fly 60 ft.', hp: 25 });
+    expect(air.inventory.map((i) => i.name)).toEqual(['Collar']);
+    expect(air.actions.map((a) => a.name)).toEqual(['Flyby', 'Multiattack', 'Maul']);
+    expect(air.origin).toMatchObject({ form: 'Air', cast: 3 });
   });
 });
 

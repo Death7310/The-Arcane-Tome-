@@ -16,7 +16,8 @@ import { endConcentration, markFromSpell } from '../systems/dnd5e/enemies';
 import { freeCastSources, inferSources, sourceName, sourceOptions } from '../systems/dnd5e/spellsource';
 import { fillSpell, spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
 import { describeSpellDef, readPastedSpells, SCHOOLS, spellToText, summonedCreature, type SpellPart } from '../systems/dnd5e/spellimport';
-import { summonCompanion, summonForms } from '../systems/dnd5e/summon';
+import { companionAc, compMaxHp } from '../systems/dnd5e/companion';
+import { slotText, summonCompanion, summonForms } from '../systems/dnd5e/summon';
 import type { SpellDef } from '../systems/dnd5e/srd';
 import { addSpellsToLibrary } from '../state/library';
 import { ABILITY_NAMES as ABILITY_LONG } from '../systems/dnd5e/data';
@@ -948,13 +949,14 @@ function SummonBox({ spell, level, description }: { spell: string; level: number
   const [msg, setMsg] = useState('');
   if (!block) return null;
   const pick = forms.includes(form) ? form : (forms[0] ?? null);
-  const preview = summonCompanion(block, { spell: spell || 'a spell', level: castAt, form: pick });
+  const base = Math.max(1, level);
+  const preview = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick }, c);
   if (!preview) return null;
   const have = c.companions.find((k) => k.name.toLowerCase() === preview.name.toLowerCase());
   return (
     <div className="summon-box">
       <span className="hint">
-        Summons <b>{preview.name}</b>: AC {preview.ac} · {preview.maxHp} HP · {preview.speed}
+        Summons <b>{preview.name}</b>: AC {companionAc(preview, c).total} · {compMaxHp(preview, c)} HP · {slotText(preview.speed, castAt)}
       </span>
       <div className="row">
         {forms.length > 1 && (
@@ -978,11 +980,14 @@ function SummonBox({ spell, level, description }: { spell: string; level: number
           className="btn small"
           onClick={() => {
             update((d) => {
-              const k = summonCompanion(block, { spell: spell || 'a spell', level: castAt, form: pick });
+              const k = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick }, d);
               if (!k) return;
               const at = d.companions.findIndex((x) => x.name.toLowerCase() === k.name.toLowerCase());
-              if (at >= 0) d.companions[at] = { ...k, id: d.companions[at].id };
-              else d.companions.push(k);
+              // Cast again: the same companion, its gear and element kept, at full HP for this casting.
+              if (at >= 0) {
+                const was = d.companions[at];
+                d.companions[at] = { ...k, id: was.id, essence: was.essence, inventory: was.inventory, weapons: was.weapons, armor: was.armor };
+              } else d.companions.push(k);
             });
             setMsg(`${preview.name} is ${have ? 'updated' : 'added'} under Companions${pick ? `, ${pick} form` : ''}, at ${ordinal(castAt)} level.`);
           }}

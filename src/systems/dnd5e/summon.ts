@@ -1,92 +1,277 @@
-// The creature a summoning spell brings (Summon Beast's Bestial Spirit, Summon Fey's Fey Spirit…),
-// as a companion: its stat block resolved for the form you choose (Air, Land or Water; Fuming,
-// Mirthful or Tricksy…) and the level you cast the spell at, so every number is one the app can
-// roll. "11 + the level of the spell" at 3rd level is 14; "20 (Air only) or 30 (Land and Water
-// only)" as a Land beast is 30; a trait marked "(Air Only)" goes with the other forms.
+// How a companion comes to you, read from its stat block. A spell's creature (Summon Beast's
+// Bestial Spirit, Find Steed's Otherworldly Steed, Giant Insect…) keeps "the spell's level" as
+// {SLOT}, the level you cast it at, so "11 + the spell's level" is 14 at 3rd level and 15 at
+// 4th without reading it again; its form (Air, Land or Water; Celestial, Fey or Fiend; Centipede,
+// Spider or Wasp) picks the parts of the stat block for that form. A class feature's (a drake, a
+// homunculus servant, a steel defender, a primal companion) keeps "your Ranger level" as
+// {LEVEL:ranger}, so it grows as you level. A creature as it is keeps its own numbers.
 
-import { parseStatBlock } from './statblock';
-import type { Companion } from './model';
+import { compMaxHp, originOf } from './companion';
+import { emptyTurn, readOrigin, type Character, type Companion, type CompanionOrigin } from './model';
+import { readPastedSpells, summonedCreature } from './spellimport';
+import { blockLines, parseStatBlock } from './statblock';
 
-/** The forms a stat block offers, from its "(X only)" notes, in the order they first appear. */
+const LIST_SPLIT = /\s*(?:,\s*or\b|,|\band\b|\bor\b)\s*/i;
+const CREATURE_TYPES = ['Aberration', 'Beast', 'Celestial', 'Construct', 'Dragon', 'Elemental', 'Fey', 'Fiend', 'Giant', 'Humanoid', 'Monstrosity', 'Ooze', 'Plant', 'Undead'];
+
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * The forms a stat block offers, in the order they first appear: from a type line's choice
+ * ("Large Celestial, Fey, or Fiend (Your Choice)"), from "(Air only)" and "(Fiend Only;
+ * Recharges after a Long Rest)" notes, and from alternatives on its AC or HP line ("HP 10
+ * (Medium or smaller), 20 (Large), 40 (Huge)").
+ */
 export function summonForms(block: string): string[] {
   const out: string[] = [];
-  for (const m of block.matchAll(/\(([^()]*?)\s+only\)/gi))
-    for (const f of m[1].split(/\s*(?:,|\band\b|\bor\b)\s*/i)) {
-      const name = f.trim().replace(/^\w/, (ch) => ch.toUpperCase());
-      if (name && /^[A-Za-z' -]{2,20}$/.test(name) && !out.some((x) => x.toLowerCase() === name.toLowerCase())) out.push(name);
-    }
+  const add = (f: string) => {
+    const name = f.trim().replace(/^\w/, (ch) => ch.toUpperCase());
+    if (name && /^[A-Za-z' -]{2,24}$/.test(name) && !/^(?:your choice|only)$/i.test(name) && !out.some((x) => same(x, name))) out.push(name);
+  };
+  const lines = blockLines(block);
+  for (const l of lines) {
+    const m = /^(?:Tiny|Small|Medium|Large|Huge|Gargantuan)(?:\s+or\s+\w+)?\s+(.+?)\s*\(your choice\)/i.exec(l);
+    if (m) m[1].split(LIST_SPLIT).forEach(add);
+  }
+  for (const m of lines.join('\n').matchAll(/\(([^()]*?)\s+only(?:;[^()]*)?\)/gi)) m[1].split(LIST_SPLIT).forEach(add);
+  for (const l of lines) {
+    if (!/^(?:AC|Armor Class|HP|Hit Points)\b/i.test(l)) continue;
+    const alts = [...l.matchAll(/\b\d+\s*\(([^()]+)\)/g)].map((m) => m[1]).filter((x) => !/\bonly\b|armor|hit dice|natural|spell/i.test(x));
+    if (alts.length >= 2) alts.forEach(add);
+  }
   return out;
 }
 
-const forForm = (qualifier: string, form: string) => qualifier.split(/\s*(?:,|\band\b|\bor\b)\s*/i).some((f) => f.trim().toLowerCase() === form.toLowerCase());
+/** Whether a form note covers a form: "Land and Water" covers Land; "Medium or smaller" is one form. */
+const forForm = (q: string, form: string) => same(q, form) || q.split(LIST_SPLIT).some((f) => same(f, form));
 
-/**
- * A line with only its form's parts: an item noted "(Water only)" for another form goes, back to
- * the separator before it ("; swim 30 ft. (Water only)", "or 30 (Land and Water only)",
- * "+ 2 (Defender only)"); one for this form stays, without its note.
- */
-function lineForForm(line: string, form: string): string {
-  let out = line;
-  for (let guard = 0; guard < 20; guard++) {
-    const m = /\s*\(([^()]*?)\s+only\)/i.exec(out);
-    if (!m) break;
-    const before = out.slice(0, m.index);
-    const after = out.slice(m.index + m[0].length);
-    if (forForm(m[1], form)) {
-      out = before + after;
-      continue;
-    }
-    const at = Math.max(...['; ', ', ', ' or ', ' + '].map((sep) => before.lastIndexOf(sep)));
-    if (at >= 0) out = before.slice(0, at) + after;
-    else {
-      // The value's first item: keep the label ("Hit Points "), drop the item and the "or" after it.
-      const label = /^([A-Z][A-Za-z]*(?: [A-Z][a-z]+)?\s+)/.exec(before)?.[1] ?? '';
-      out = label + after.replace(/^\s*(?:or|;|,)\s*/, '');
-    }
-  }
-  return out.replace(/\s{2,}/g, ' ').trim();
+/** A bracket that names forms: "(Air only)", "(Fiend Only; Recharges after a Long Rest)", or a bare form, "(Fey)". */
+function formNote(inner: string, forms: string[]): { forms: string; rest: string; bare: boolean } | null {
+  const only = /^(.*?)\s+only(?:;\s*(.*))?$/i.exec(inner.trim());
+  if (only) return { forms: only[1], rest: only[2]?.trim() ?? '', bare: false };
+  if (forms.some((f) => same(f, inner))) return { forms: inner, rest: '', bare: true };
+  return null;
 }
 
-/** "1d8 + 4 + the spell's level" at 3rd level → "1d8 + 4 + 3"; "+ 5 for each spell level above 2nd" → "+ 5". */
-function atLevel(text: string, level: number): string {
+/** Where a field's value starts: after "Hit Points " or "HP ". */
+const labelEnd = (before: string) => /^([A-Z][A-Za-z]*(?: [A-Z][a-z]+)?\s+)/.exec(before)?.[1].length ?? 0;
+
+/**
+ * A line with only its form's parts. An item noted for another form goes, back to the separator
+ * before it ("; swim 30 ft. (Water only)", "or 30 (Land and Water only)", "Radiant (Celestial),
+ * Psychic (Fey), or Necrotic (Fiend)"); one for this form stays, without its note.
+ */
+export function lineForForm(line: string, form: string, forms: string[] = [form]): string {
+  let out = line;
+  let from = 0;
+  for (let guard = 0; guard < 40; guard++) {
+    const re = /\s*\(([^()]*)\)/g;
+    re.lastIndex = from;
+    const m = re.exec(out);
+    if (!m) break;
+    const note = formNote(m[1], forms);
+    if (!note) {
+      from = m.index + m[0].length;
+      continue;
+    }
+    const before = out.slice(0, m.index);
+    const after = out.slice(m.index + m[0].length);
+    let head: string;
+    let tail = after;
+    if (forForm(note.forms, form)) {
+      head = before + (note.rest ? ` (${note.rest})` : '');
+    } else {
+      // The list starts after its sentence or lead-in ("Hit: 1d8 plus the spell's level of
+      // Radiant (Celestial), Psychic (Fey)…", "equal to 1d4 + 3 (Medium or smaller), …"), so a
+      // comma before that ("…modifier, reach 5 ft.") isn't one of its separators.
+      const leads = note.bare ? ['. ', ': ', ' of ', 'equal to ', 'equals ', ' is '] : ['. ', ': '];
+      const floor = Math.max(0, ...leads.map((b) => (before.lastIndexOf(b) < 0 ? 0 : before.lastIndexOf(b) + b.length)));
+      const seps = note.bare ? [', ', ' or ', '; '] : ['; ', ', ', ' or ', ' + '];
+      const at = Math.max(...seps.map((sep) => before.lastIndexOf(sep)));
+      if (at >= floor) head = before.slice(0, at).replace(/[,;]\s*$/, '');
+      else {
+        // The list's first item: back to where its value starts ("of Radiant", "HP 10").
+        head = before.slice(0, floor || labelEnd(before));
+        tail = after.replace(/^\s*(?:,\s*or|,|or|;)\s*/, '');
+      }
+    }
+    out = head + tail;
+    from = head.length;
+  }
+  return out
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.;])/g, '$1')
+    .trim();
+}
+
+/**
+ * Its text as it reads at the level the spell was cast at: "half this spell's level (round
+ * down)" at 4th is 2, "the spell's level" is 4, and "Fly 60 ft. (requires level 4+ spell)" is
+ * there only from 4th.
+ */
+export function slotText(text: string, level: number): string {
   return text
-    .replace(/\s*\+\s*(\d+)\s+for each (?:spell )?(?:slot )?level above (?:the )?(\d)(?:st|nd|rd|th)?/gi, (_, n: string, b: string) => {
+    .replace(/[’‘]/g, "'")
+    .replace(/,?\s*([^,;]*?)\s*\(requires (?:a )?(?:level )?(\d)(?:st|nd|rd|th)?\+?(?:[- ]level)?\+? (?:spell|slot)(?: slot)?\)/gi, (whole: string, item: string, n: string) =>
+      level >= Number(n) ? `${/^,/.test(whole) ? ', ' : ''}${item}` : '',
+    )
+    .replace(/\bhalf (?:of )?(?:this|the) spell'?s level(?:\s*\((?:rounded|round) down\))?/gi, String(Math.floor(level / 2)))
+    .replace(/\b(?:the level of (?:the|this) spell|(?:the|this) spell'?s level|the spell level)\b/gi, String(level))
+    .replace(/\s*\+\s*(\d+)\s+for each (?:spell |slot )*level above (?:the )?(\d)(?:st|nd|rd|th)?/gi, (_, n: string, b: string) => {
       const extra = Number(n) * Math.max(0, level - Number(b));
       return extra ? ` + ${extra}` : '';
     })
-    .replace(/half (?:of )?(?:this|the) spell'?s level \(rounded down\)/gi, String(Math.floor(level / 2)))
-    .replace(/\b(?:the level of (?:the|this) spell|(?:the|this) spell'?s level|the spell level)\b/gi, String(level))
-    .replace(/makes a number of attacks equal to (\d+)/gi, (_, n: string) => `makes ${n} attack${n === '1' ? '' : 's'}`);
+    .replace(/makes a number of (\w+ )?attacks equal to (\d+)/gi, (_, what: string | undefined, n: string) => `makes ${n} ${what ?? ''}attack${n === '1' ? '' : 's'}`);
 }
 
-/** "11 + 3" → "14"; anything that isn't plain sums of whole numbers stays as it is. */
-const sum = (t: string) => (/^\d+(?:\s*[+-]\s*\d+)*$/.test(t.trim()) ? String(t.match(/[+-]?\s*\d+/g)!.reduce((a, x) => a + Number(x.replace(/\s/g, '')), 0)) : t);
+/** Every class token in a companion's numbers, so a class feature's can follow another class (or your character level). */
+export function followClass(c: Companion, classId: string) {
+  const to = classId ? `{LEVEL:${classId}}` : '{LEVEL}';
+  const swap = (t: string) => t.replace(/\{LEVEL(?::[\w-]+)?\}/gi, to);
+  c.ac = swap(c.ac);
+  c.maxHp = swap(c.maxHp);
+  for (const a of c.actions) {
+    a.toHit = swap(a.toHit);
+    a.damage = swap(a.damage);
+    a.dc = swap(a.dc);
+    if (a.levelDice?.length) a.levelOf = classId;
+    if (a.extra?.length) a.levelOf = classId;
+  }
+}
+
+/** The class a stat block's numbers name ("your Ranger level" → "ranger"), or "". */
+export function classInBlock(c: Pick<Companion, 'ac' | 'maxHp' | 'actions'>): string {
+  const all = [c.ac, c.maxHp, ...c.actions.flatMap((a) => [a.toHit, a.damage, a.dc])].join(' ');
+  return /\{LEVEL:([\w-]+)\}/i.exec(all)?.[1]?.toLowerCase() ?? '';
+}
+
+export type OriginChoice = Partial<CompanionOrigin> & { kind: CompanionOrigin['kind'] };
 
 /**
- * The creature as a companion, for a form (null for a creature with only one) and the level you
- * cast the spell at. Null if the text isn't a stat block.
+ * A companion from a stat block, for how it comes to you: a spell at the level you cast it (and
+ * its form), a class feature following one of your classes, or a creature as it is. With your
+ * character, it starts at its full Hit Points. Null if the text isn't a stat block.
  */
-export function summonCompanion(block: string, opts: { spell: string; level: number; form: string | null }): Companion | null {
-  const lines = block.split('\n').flatMap((raw) => {
-    const l = raw.trim();
-    if (!l || !opts.form) return [l];
-    // A trait or action of one form only: "Flyby (Air Only). …".
-    const entry = /^([^.]{1,60}?)\s*\(([^()]*?)\s+only\)\.\s*(.*)$/i.exec(l);
-    if (entry) return forForm(entry[2], opts.form) ? [`${entry[1]}. ${entry[3]}`] : [];
-    return [lineForForm(l, opts.form)];
+export function companionFromBlock(block: string, choice: OriginChoice, owner?: Character): Companion | null {
+  const forms = summonForms(block);
+  const origin = readOrigin({ ...choice, forms, form: choice.form && forms.some((f) => same(f, choice.form!)) ? forms.find((f) => same(f, choice.form!)) : (forms[0] ?? ''), block })!;
+  const form = origin.form;
+  const lines = blockLines(block).flatMap((l) => {
+    if (!form) return [l];
+    // A trait or action of some forms only: "Flyby (Air Only). …", "Fell Glare (Fiend Only; Recharges after a Long Rest). …".
+    const entry = /^([^.()]{1,60}?)\s*\(([^()]*?)\s+only(?:;\s*([^()]*))?\)\.\s*(.*)$/i.exec(l);
+    if (entry) return forForm(entry[2], form) ? [lineForForm(`${entry[1]}${entry[3] ? ` (${entry[3].trim()})` : ''}. ${entry[4]}`, form, forms)] : [];
+    return [lineForForm(l, form, forms)];
   });
-  const text = atLevel(lines.join('\n'), opts.level);
-  const c = parseStatBlock(text);
+  const c = parseStatBlock(lines.join('\n'));
   if (!c) return null;
-  c.ac = sum(c.ac);
-  c.maxHp = sum(c.maxHp);
-  const hp = Number(c.maxHp);
-  if (Number.isFinite(hp)) c.hp = hp;
-  // "1d8 + 4 + 3" → "1d8 + 7".
-  for (const a of c.actions)
-    for (let k = 0; k < 5 && /\b\d+\s*\+\s*\d+\b(?![d\d])/.test(a.damage); k++) a.damage = a.damage.replace(/\b(\d+)\s*\+\s*(\d+)\b(?![d\d])/, (_, x: string, y: string) => String(Number(x) + Number(y)));
-  const ord = (n: number) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
-  c.source = opts.spell;
-  c.notes = `Summoned by ${opts.spell} at ${ord(opts.level)} level${opts.form ? `, ${opts.form} form` : ''}. Its numbers are for that casting: add it again from the spell when you cast it at another level or form.`;
+  // A Fey steed is a Fey; a Large animated object is Large.
+  const type = CREATURE_TYPES.find((t) => same(t, form));
+  if (type) c.type = type;
+  const size = /^(Tiny|Small|Medium|Large|Huge|Gargantuan)\b/i.exec(form)?.[1];
+  if (size) c.size = size.charAt(0).toUpperCase() + size.slice(1).toLowerCase();
+  if (origin.kind === 'feature') followClass(c, origin.classId);
+  c.origin = origin;
+  c.source = origin.name ? (origin.kind === 'spell' ? `Summoned by ${origin.name}` : origin.name) : c.source;
+  if (owner) c.hp = compMaxHp(c, owner);
   return c;
+}
+
+/**
+ * The creature a summoning spell brings, as a companion: its stat block (from the spell's text)
+ * for a form and the level you cast it at. Null if the text isn't a stat block.
+ */
+export function summonCompanion(block: string, opts: { spell: string; base: number; cast: number; form: string | null }, owner?: Character): Companion | null {
+  return companionFromBlock(block, { kind: 'spell', name: opts.spell, base: opts.base, cast: Math.max(opts.base, opts.cast), form: opts.form ?? '' }, owner);
+}
+
+/**
+ * Its spell's level or form changed (you cast it again at another level, or chose another
+ * form). A new form reads its stat block again, keeping its name, element, gear and notes; a
+ * new level needs nothing read, since its numbers count the spell's level themselves.
+ */
+export function reshape(k: Companion, next: { cast?: number; form?: string }): Companion {
+  const o = originOf(k);
+  const origin = readOrigin({ ...o, cast: next.cast ?? o.cast, form: next.form ?? o.form })!;
+  if (o.block && !same(origin.form, o.form)) {
+    const built = companionFromBlock(o.block, origin);
+    if (built) return { ...built, id: k.id, name: k.name, hp: k.hp, tempHp: k.tempHp, conditions: k.conditions, turn: k.turn, essence: k.essence, inventory: k.inventory, weapons: k.weapons, armor: k.armor, notes: k.notes };
+  }
+  return { ...k, origin };
+}
+
+/**
+ * Brought again (a new casting, or the feature used again): its form and level as chosen, at
+ * full Hit Points, with no temporary Hit Points, conditions or spent turn.
+ */
+export function summonAgain(k: Companion, next: { cast?: number; form?: string }, owner: Character): Companion {
+  const fresh = reshape(k, next);
+  return { ...fresh, hp: compMaxHp(fresh, owner), tempHp: 0, conditions: [], turn: emptyTurn() };
+}
+
+export interface SpellRef {
+  name: string;
+  level: number;
+  description: string;
+}
+
+/** What a pasted stat block (or a whole spell with one) says about how its creature comes to you. */
+export interface PasteReading {
+  /** The stat block itself (from a whole spell, the part after its text). */
+  block: string;
+  /** The companion read plainly, before any choices. */
+  plain: Companion;
+  forms: string[];
+  /** The spell it came with or names it, when there is one. */
+  spell: SpellRef | null;
+  /** The likeliest way it comes, from what its numbers count. */
+  kind: CompanionOrigin['kind'];
+  /** Its spell's level: the spell's own, else from "for each spell level above 2nd", else 1. */
+  base: number;
+  /** The class its numbers follow ("ranger"), or "". */
+  classId: string;
+  /** What its numbers follow, in words. */
+  follows: string[];
+}
+
+/**
+ * Reads a paste for the companion's stat block and how it comes: a whole spell (Summon Beast
+ * and its Bestial Spirit), a spell's creature on its own (found in your spells or the rules by
+ * its name), a class feature's (counting your Ranger level), or a creature with its own CR.
+ */
+export function readCompanionPaste(text: string, spells: SpellRef[] = []): PasteReading | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  let block = trimmed;
+  let spell: SpellRef | null = null;
+  const inSpell = summonedCreature(trimmed);
+  const head = inSpell ? trimmed.slice(0, trimmed.length - inSpell.length) : '';
+  if (inSpell && /\b(?:Casting Time|Components|Duration)\s*:/i.test(head)) {
+    block = inSpell;
+    const def = readPastedSpells(trimmed)[0]?.def;
+    if (def) spell = { name: def.name, level: def.level, description: def.description };
+  }
+  const plain = parseStatBlock(block);
+  if (!plain) return null;
+  const numbers = [plain.ac, plain.maxHp, plain.pb, ...plain.actions.flatMap((a) => [a.toHit, a.damage, a.dc, ...(a.more ?? []).map((x) => x.dice)])].join(' ');
+  const slot = /\{SLOT\}/i.test(numbers) || /\bspell'?s level|level of (?:the|this) spell\b/i.test(block.replace(/[’‘]/g, "'"));
+  if (!spell && slot) {
+    // "This corporeal form uses the Bestial Spirit stat block": find the spell by its creature.
+    const name = plain.name.toLowerCase();
+    spell = spells.find((s) => s.level > 0 && s.description.toLowerCase().includes(`${name} stat block`)) ?? spells.find((s) => s.level > 0 && (same(s.name, plain.name) || s.description.toLowerCase().includes(name))) ?? null;
+  }
+  const above = /for each (?:spell |slot )*level above (?:the )?(\d)/i.exec(block);
+  const base = spell?.level || (above ? Number(above[1]) : 1);
+  const classId = classInBlock(plain);
+  const kind: CompanionOrigin['kind'] = slot ? 'spell' : classId || /\{LEVEL\}/.test(numbers) ? 'feature' : plain.cr && /^[\d/]+$/.test(plain.cr) ? 'creature' : /\{(?:PB|SPELLATK|SPELLDC|MOD|STR|DEX|CON|INT|WIS|CHA)\}/.test(numbers) ? 'feature' : 'creature';
+  const follows: string[] = [];
+  if (slot) follows.push('the level the spell is cast at');
+  if (classId) follows.push(`your ${classId.charAt(0).toUpperCase()}${classId.slice(1)} level`);
+  else if (/\{LEVEL\}/.test(numbers)) follows.push('your character level');
+  if (/\{PB\}/.test(numbers)) follows.push('your Proficiency Bonus');
+  if (/\{SPELLATK\}/.test(numbers)) follows.push('your spell attack modifier');
+  if (/\{SPELLDC\}/.test(numbers)) follows.push('your spell save DC');
+  const mods = [...new Set([...numbers.matchAll(/\{(MOD|STR|DEX|CON|INT|WIS|CHA)\}/g)].map((m) => m[1]))];
+  for (const m of mods) follows.push(m === 'MOD' ? 'your spellcasting modifier' : `your ${{ STR: 'Strength', DEX: 'Dexterity', CON: 'Constitution', INT: 'Intelligence', WIS: 'Wisdom', CHA: 'Charisma' }[m]} modifier`);
+  return { block, plain, forms: summonForms(block), spell, kind, base: Math.max(1, Math.min(9, base)), classId, follows };
 }

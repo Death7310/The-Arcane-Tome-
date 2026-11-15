@@ -119,7 +119,7 @@ export function evalFormula(text: string, c: Character): number | null {
   return v === null ? null : Math.floor(v);
 }
 
-/** True when a formula has tokens or arithmetic (worth showing how it's worked out). */
+/** True when a formula has tokens or arithmetic (worth showing how it's worked out). {SLOT} is a companion's spell level. */
 export const isFormula = (text: string) => /[{}*/×]|[+-]\s*\d|\d\s*[+-]/.test(text);
 
 const ABILITY_TOKEN: Record<string, string> = { STR: 'Strength', DEX: 'Dexterity', CON: 'Constitution', INT: 'Intelligence', WIS: 'Wisdom', CHA: 'Charisma' };
@@ -127,6 +127,11 @@ const ABILITY_TOKEN: Record<string, string> = { STR: 'Strength', DEX: 'Dexterity
 /** A formula in words: "13 + {PB}" → "13 + your Proficiency Bonus". */
 export function describeFormula(text: string): string {
   return text
+    .replace(/(\d+)\s*\*\s*max\(\s*0\s*,\s*\{SLOT\}\s*-\s*(\d+)\s*\)/gi, '$1 for each spell level above $2')
+    .replace(/floor\(\s*\{SLOT\}\s*\/\s*2\s*\)/gi, 'half the spell’s level (round down)')
+    .replace(/(\d+)\s*\*\s*\{SLOT\}/gi, '$1 per spell level')
+    .replace(/\{SLOT\}/gi, 'the spell’s level')
+    .replace(/floor\(\s*\{LEVEL(?::(\w+))?\}\s*\/\s*2\s*\)/gi, (_, k?: string) => `half your ${k ? `${k.charAt(0).toUpperCase()}${k.slice(1)} ` : ''}level (round down)`)
     .replace(/\{PB\}/gi, 'your Proficiency Bonus')
     .replace(/\{LEVEL:(\w+)\}/gi, (_, k: string) => `your ${k.charAt(0).toUpperCase()}${k.slice(1)} level`)
     .replace(/\{LEVEL\}/gi, 'your level')

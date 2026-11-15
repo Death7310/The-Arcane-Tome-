@@ -287,6 +287,7 @@ export function buildAnaurys(cat: Catalog): Character {
         cr: '—',
         essence: 'poison',
         source: "Fizban's Treasury of Dragons (Drakewarden)",
+        origin: { kind: 'feature', name: 'Drake Companion', base: 1, cast: 1, forms: [], form: '', block: '', classId: 'ranger' },
         actions: [
           {
             id: uid(),
