@@ -2,12 +2,12 @@ import { Fragment, useMemo, useState } from 'react';
 import { centerOf, performCondition } from '../fx';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
-import { ordinal, useTable } from '../state/table';
+import { choiceLabel, ordinal, useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, CLASSES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
 import { actionDice, actionExtra, actionHeal, actionMore, actionType, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, isFormula } from '../systems/dnd5e/formula';
 import { blankCompanion, blankCompanionAction, readOrigin, uid, type Character, type Companion, type CompanionAction, type CompanionOrigin } from '../systems/dnd5e/model';
-import { abilityMod, signed, totalLevel } from '../systems/dnd5e/rules';
+import { abilityMod, casterType, pactSlots, signed, spellAbility, spellAttack, spellSaveDc, spellSlots, totalLevel, usesSpellPoints } from '../systems/dnd5e/rules';
 import { COMPANION_AI_PROMPT, companionFromCreature } from '../systems/dnd5e/statblock';
 import { companionFromBlock, followClass, readCompanionPaste, reshape, slotText, summonAgain, type PasteReading } from '../systems/dnd5e/summon';
 import { applyRuleSet, ruleSetFor, ruleSetLine } from '../systems/dnd5e/scaling';
@@ -100,7 +100,44 @@ function Workings({ comp, owner }: { comp: Companion; owner: Character }) {
 
 const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
+/**
+ * Whose spellcasting a summon's spell is cast with: each of your casting classes (its ability,
+ * spell attack and save DC), or your usual one. A Ranger's Summon Beast uses Wisdom.
+ */
+function castWithOptions(owner: Character, current?: string) {
+  const casters = owner.classes.filter((k, i, all) => casterType(k) !== 'none' && all.findIndex((x) => x.classId === k.classId) === i);
+  const line = (classId: string) => {
+    const sp = { grantedBy: classId, abilityOverride: null };
+    const ab = spellAbility(owner, sp);
+    return `${ab ? ABILITY_NAMES[ab] : 'its ability'}: ${signed(spellAttack(owner, sp).total)} to hit, DC ${spellSaveDc(owner, sp).total}`;
+  };
+  const opts = casters.map((k) => ({ id: k.classId, name: `Your ${className(k.classId)} spellcasting (${line(k.classId)})` }));
+  if (current && !opts.some((x) => x.id === current)) opts.push({ id: current, name: `Your ${className(current)} spellcasting (you have no ${className(current)} levels)` });
+  return [{ id: '', name: `Your usual spellcasting (${line('')})` }, ...opts];
+}
+
+/** Spell levels you have a slot of (not counting what's spent): your slots, and your pact slots' level. */
+function slotLevelsOf(owner: Character): Set<number> {
+  if (usesSpellPoints(owner)) return new Set(LEVELS);
+  const out = new Set<number>();
+  spellSlots(owner).forEach((n, i) => n > 0 && out.add(i + 1));
+  const pact = pactSlots(owner);
+  if (pact.count > 0) out.add(pact.level);
+  return out;
+}
+
 const plural = (n: number, what: string) => `${n} ${what}${n === 1 ? '' : 's'}`;
+
+/** "Cast with your Ranger spellcasting (Wisdom): +6 to hit, DC 14", for a summon or a class companion that uses them. */
+function castingLine(k: Companion, owner: Character): string {
+  const all = [k.ac, k.maxHp, ...k.actions.flatMap((a) => [a.toHit, a.dc, a.damage, a.heal ?? ''])].join(' ');
+  if (!/\{(?:SPELLATK|SPELLDC|MOD)\}/i.test(all)) return '';
+  const o = originOf(k);
+  const sp = { grantedBy: o.castBy ?? '', abilityOverride: o.castAbility ?? null };
+  const ab = spellAbility(owner, sp);
+  const who = o.castBy ? `your ${className(o.castBy)} spellcasting` : 'your usual spellcasting';
+  return `Its spell attack and save DC are ${who}'s${ab ? ` (${ABILITY_NAMES[ab]})` : ''}: ${signed(spellAttack(owner, sp).total)} to hit, DC ${spellSaveDc(owner, sp).total}.`;
+}
 
 /** "a, b and c". */
 const listOf = (xs: string[]) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
@@ -138,6 +175,7 @@ function HowItComes({ value, owner, onChange, idBase, detectedClass = '' }: { va
           <SelectField label="The spell’s own level" id={`${idBase}-base`} value={String(value.base)} options={LEVELS.map((n) => ({ id: String(n), name: `${ordinal(n)} level` }))} onChange={(v) => set({ base: Number(v), cast: Math.max(Number(v), value.cast) })} />
           <SelectField label="Cast at" id={`${idBase}-cast`} value={String(value.cast)} options={LEVELS.filter((n) => n >= value.base).map((n) => ({ id: String(n), name: `${ordinal(n)} level` }))} onChange={(v) => set({ cast: Number(v) })} />
           {value.forms.length > 0 && <SelectField label="Form" id={`${idBase}-form`} value={value.form} options={value.forms.map((f) => ({ id: f, name: f }))} onChange={(v) => set({ form: v })} />}
+          <SelectField label="Cast with" id={`${idBase}-castby`} value={value.castBy ?? ''} options={castWithOptions(owner, value.castBy)} onChange={(v) => set({ castBy: v || undefined })} />
         </div>
       )}
       {value.kind === 'feature' && (
@@ -164,15 +202,29 @@ function HowItComes({ value, owner, onChange, idBase, detectedClass = '' }: { va
  */
 function OriginBox({ comp, idx }: { comp: Companion; idx: number }) {
   const { char: c, update } = useChar();
+  const t = useTable();
   const o = originOf(comp);
   const [cast, setCast] = useState(o.cast);
-  const [form, setForm] = useState(o.form);
   const [said, setSaid] = useState('');
   if (o.kind === 'creature') return null;
+  // Its form, chosen when it's cast: set now, so the next casting (and its result) has it.
+  const setForm = (form: string) =>
+    update((d) => {
+      const k = reshape(d.companions[idx], { form });
+      k.hp = Math.min(k.hp, compMaxHp(k, d));
+      d.companions[idx] = k;
+    });
   const again = (next: { cast?: number; form?: string }, what: string) => {
     update((d) => void (d.companions[idx] = summonAgain(d.companions[idx], next, d)));
     setSaid(what);
   };
+  // Its spell, when it's one of yours: cast it again with your own slots (a Ranger's slot spends like any other).
+  const spell = o.kind === 'spell' ? c.spells.find((x) => x.level > 0 && x.name.trim().toLowerCase() === o.name.trim().toLowerCase()) : undefined;
+  const slots = spellSlots(c);
+  const pact = pactSlots(c);
+  const choices = spell ? t.slotChoices(spell, slots, pact).filter((ch) => ch.level >= o.base) : [];
+  const have = slotLevelsOf(c);
+  const casting = castingLine(comp, c);
   return (
     <div className="note how-it-comes">
       <span>
@@ -182,26 +234,51 @@ function OriginBox({ comp, idx }: { comp: Companion; idx: number }) {
           {o.kind === 'spell' ? `cast at ${ordinal(slotOf(comp))} level${o.form ? `, ${o.form} form` : ''}` : `follows your ${o.classId ? `${className(o.classId)} level (${ownerLevel(c, o.classId)})` : `level (${totalLevel(c)})`}`}
         </span>
       </span>
-      {o.kind === 'spell' ? (
+      {casting && <span className="hint">{casting}</span>}
+      {o.kind === 'spell' && o.forms.length > 1 && (
         <div className="row">
-          <select className="input" style={{ width: 'auto' }} value={cast} onChange={(e) => setCast(Number(e.target.value))} aria-label="Cast it at level">
-            {LEVELS.filter((n) => n >= o.base).map((n) => (
-              <option key={n} value={n}>
-                {ordinal(n)} level
+          <span className="hint">Form:</span>
+          <select className="input" style={{ width: 'auto' }} value={o.form} onChange={(e) => setForm(e.target.value)} aria-label="Its form">
+            {o.forms.map((f) => (
+              <option key={f} value={f}>
+                {f}
               </option>
             ))}
           </select>
-          {o.forms.length > 1 && (
-            <select className="input" style={{ width: 'auto' }} value={form} onChange={(e) => setForm(e.target.value)} aria-label="Its form">
-              {o.forms.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-          )}
-          <button type="button" className="btn small" onClick={() => again({ cast, form }, `Cast again at ${ordinal(cast)} level${form ? `, ${form} form` : ''}: full Hit Points.`)}>
-            Cast it again
+        </div>
+      )}
+      {spell && (
+        <div className="row">
+          <span className="hint">Cast {spell.name} with:</span>
+          {choices.map((ch) => (
+            <button
+              key={`${ch.kind}-${ch.level}`}
+              type="button"
+              className="btn small"
+              onClick={(e) => {
+                t.cast(spell, ch, e.currentTarget, null);
+                setSaid(`Cast with a ${choiceLabel(ch).toLowerCase()}: summoned again at ${ordinal(ch.level)} level, full Hit Points.`);
+              }}
+            >
+              {choiceLabel(ch)}
+            </button>
+          ))}
+          {!choices.length && <span className="hint">no slot of {ordinal(o.base)} level or higher left.</span>}
+        </div>
+      )}
+      {o.kind === 'spell' ? (
+        <div className="row">
+          {spell && <span className="hint">Without a slot:</span>}
+          <select className="input" style={{ width: 'auto' }} value={cast} onChange={(e) => setCast(Number(e.target.value))} aria-label="Cast it at level">
+            {LEVELS.filter((n) => n >= o.base).map((n) => (
+              <option key={n} value={n}>
+                {ordinal(n)} level{have.has(n) ? '' : ' (you have no slot of it)'}
+              </option>
+            ))}
+          </select>
+
+          <button type="button" className="btn small ghost" onClick={() => again({ cast }, `Set to a casting at ${ordinal(cast)} level${o.form ? `, ${o.form} form` : ''}: full Hit Points, no slot spent.`)}>
+            {spell ? 'Set it' : 'Cast it again'}
           </button>
         </div>
       ) : (
@@ -435,7 +512,7 @@ function CompanionSheet({ comp, idx, pb, traits, usable, onEdit }: { comp: Compa
   const kind = originOf(comp).kind;
   return (
     <>
-      <OriginBox key={`${comp.origin?.cast}:${comp.origin?.form}`} comp={comp} idx={idx} />
+      <OriginBox key={`${comp.origin?.cast}`} comp={comp} idx={idx} />
       <div className="comp-abilities">
         {ABILITIES.map((a) => {
           const m = abilityMod(comp.abilities[a]);
@@ -799,7 +876,18 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
     setReading(r ?? 'bad');
     setChoice(
       r
-        ? readOrigin({ kind: r.kind, name: r.kind === 'spell' ? (r.spell?.name ?? '') : r.kind === 'feature' ? r.plain.name : '', base: r.base, cast: r.base, forms: r.forms, form: r.forms[0] ?? '', classId: r.classId, upcast: r.upcast })
+        ? readOrigin({
+            kind: r.kind,
+            name: r.kind === 'spell' ? (r.spell?.name ?? '') : r.kind === 'feature' ? r.plain.name : '',
+            base: r.base,
+            cast: r.base,
+            forms: r.forms,
+            form: r.forms[0] ?? '',
+            classId: r.classId,
+            upcast: r.upcast,
+            // Cast with the class you have the spell from (your Ranger's Summon Beast).
+            castBy: c.spells.find((x) => r.spell && x.name.trim().toLowerCase() === r.spell.name.trim().toLowerCase())?.grantedBy || undefined,
+          })
         : null,
     );
     setUseRules(false);

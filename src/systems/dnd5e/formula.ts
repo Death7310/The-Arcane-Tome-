@@ -3,7 +3,7 @@
 // the arithmetic is worked out by a tiny parser (numbers, + − × ÷, brackets, and floor,
 // ceil, min, max), never by eval, so text from imported documents can't run as code.
 
-import type { Character } from './model';
+import type { Character, Spell } from './model';
 import { resolveTokens } from './rules';
 
 type Tok = { t: 'num'; v: number } | { t: 'op'; v: string } | { t: 'fn'; v: string } | { t: '(' } | { t: ')' } | { t: ',' };
@@ -110,8 +110,8 @@ function parse(tokens: Tok[]): number | null {
 }
 
 /** Works out a formula's number for this character, rounded down; null if it can't be read. */
-export function evalFormula(text: string, c: Character): number | null {
-  const filled = resolveTokens(String(text ?? '').trim(), c);
+export function evalFormula(text: string, c: Character, spell?: Pick<Spell, 'abilityOverride' | 'grantedBy'>): number | null {
+  const filled = resolveTokens(String(text ?? '').trim(), c, spell);
   if (!filled) return null;
   const tokens = lex(filled);
   if (!tokens || !tokens.length) return null;

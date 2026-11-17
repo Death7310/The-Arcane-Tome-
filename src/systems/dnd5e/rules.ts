@@ -329,7 +329,7 @@ export const cantripTier = (level: number): number => 1 + (level >= 5 ? 1 : 0) +
  * Replaces {PB}, {LEVEL}, {LEVEL:ranger} (one class's level), {MOD}, {STR}…{CHA},
  * {SPELLATK} and {SPELLDC} in a dice expression or formula with the character's numbers.
  */
-export function resolveTokens(expr: string, c: Character, spell?: Spell): string {
+export function resolveTokens(expr: string, c: Character, spell?: Pick<Spell, 'abilityOverride' | 'grantedBy'>): string {
   const spellMod = mod(c, spellAbility(c, spell) ?? 'int');
   return expr.replace(/\{(\w+)(?::([\w-]+))?\}/g, (whole, raw: string, arg?: string) => {
     const key = raw.toLowerCase();

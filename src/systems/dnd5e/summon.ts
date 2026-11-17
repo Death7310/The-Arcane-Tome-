@@ -7,7 +7,8 @@
 // {LEVEL:ranger}, so it grows as you level. A creature as it is keeps its own numbers.
 
 import { compMaxHp, originOf } from './companion';
-import { emptyTurn, readOrigin, type Character, type Companion, type CompanionOrigin } from './model';
+import { emptyTurn, readOrigin, type Character, type Companion, type CompanionOrigin, type Spell } from './model';
+import { spellClass } from './rules';
 import { readPastedSpells, summonedCreature } from './spellimport';
 import { blockLines, parseStatBlock } from './statblock';
 
@@ -213,8 +214,9 @@ export function companionFromBlock(block: string, choice: OriginChoice, owner?: 
  * The creature a summoning spell brings, as a companion: its stat block (from the spell's text)
  * for a form and the level you cast it at. Null if the text isn't a stat block.
  */
-export function summonCompanion(block: string, opts: { spell: string; base: number; cast: number; form: string | null; upcast?: string }, owner?: Character): Companion | null {
-  return companionFromBlock(block, { kind: 'spell', name: opts.spell, base: opts.base, cast: Math.max(opts.base, opts.cast), form: opts.form ?? '', upcast: opts.upcast ?? '' }, owner);
+export function summonCompanion(block: string, opts: { spell: string; base: number; cast: number; form: string | null; upcast?: string; castBy?: string }, owner?: Character): Companion | null {
+  const castBy = opts.castBy && owner?.classes.some((k) => k.classId === opts.castBy) ? opts.castBy : undefined;
+  return companionFromBlock(block, { kind: 'spell', name: opts.spell, base: opts.base, cast: Math.max(opts.base, opts.cast), form: opts.form ?? '', upcast: opts.upcast ?? '', castBy }, owner);
 }
 
 /**
@@ -239,6 +241,29 @@ export function reshape(k: Companion, next: { cast?: number; form?: string }): C
 export function summonAgain(k: Companion, next: { cast?: number; form?: string }, owner: Character): Companion {
   const fresh = reshape(k, next);
   return { ...fresh, hp: compMaxHp(fresh, owner), tempHp: 0, conditions: [], turn: emptyTurn() };
+}
+
+/**
+ * Casting a spell that summons a creature (Summon Beast with a Ranger's 2nd-level slot): its
+ * companion summoned again at that level (full HP, cast with that spell's class), or a new one
+ * from the stat block in the spell's text. Pure: the companion and where it goes (its index, or
+ * -1 for a new one); null when the spell summons nothing the app can read.
+ */
+export function castSummon(c: Character, spell: Pick<Spell, 'name' | 'level' | 'description' | 'grantedBy' | 'abilityOverride'>, level: number): { index: number; comp: Companion } | null {
+  if (spell.level < 1) return null;
+  const castBy = spellClass(c, spell) ?? undefined;
+  const castAbility = spell.abilityOverride ?? undefined;
+  const index = c.companions.findIndex((k) => k.origin?.kind === 'spell' && same(k.origin.name, spell.name));
+  if (index >= 0) {
+    const was = c.companions[index];
+    const withCaster: Companion = { ...was, origin: readOrigin({ ...was.origin, castBy, castAbility }) };
+    return { index, comp: summonAgain(withCaster, { cast: Math.max(level, withCaster.origin!.base) }, c) };
+  }
+  const block = summonedCreature(spell.description);
+  if (!block) return null;
+  const upcast = upcastOf(spell.description.slice(0, Math.max(0, spell.description.length - block.length)));
+  const comp = companionFromBlock(block, { kind: 'spell', name: spell.name, base: spell.level, cast: Math.max(level, spell.level), upcast, castBy, castAbility }, c);
+  return comp ? { index: -1, comp } : null;
 }
 
 export interface SpellRef {

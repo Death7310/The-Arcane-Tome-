@@ -5,7 +5,7 @@
 
 import { ARMOR, type Ability } from './data';
 import { evalFormula } from './formula';
-import type { Character, Companion, CompanionAction, CompanionOrigin, Weapon } from './model';
+import type { Character, Companion, CompanionAction, CompanionOrigin, Spell, Weapon } from './model';
 import { abilityMod, incapacitatedBy, resolveTokens, totalLevel, type Breakdown } from './rules';
 
 type Part = Breakdown['parts'][number];
@@ -43,8 +43,15 @@ export const withSlot = (text: string, k?: Pick<Companion, 'origin'> | null): st
     .replace(/\{SLOT\}/gi, String(slot));
 };
 
-/** One of its numbers worked out: your tokens and its spell's level filled in. */
-export const compEval = (k: Pick<Companion, 'origin'>, text: string, owner: Character): number | null => evalFormula(withSlot(text, k), owner);
+/**
+ * The spellcasting its spell was cast with, for {SPELLATK}, {SPELLDC} and {MOD}: the class that
+ * cast it (a Ranger's Wisdom), or a feat's ability. Undefined: your usual spellcasting.
+ */
+export const castingOf = (k?: Pick<Companion, 'origin'> | null): Pick<Spell, 'abilityOverride' | 'grantedBy'> | undefined =>
+  k?.origin?.castBy || k?.origin?.castAbility ? { grantedBy: k.origin.castBy ?? '', abilityOverride: k.origin.castAbility ?? null } : undefined;
+
+/** One of its numbers worked out: your tokens (with the spellcasting that cast it) and its spell's level filled in. */
+export const compEval = (k: Pick<Companion, 'origin'>, text: string, owner: Character): number | null => evalFormula(withSlot(text, k), owner, castingOf(k));
 
 /** Its Hit Point maximum now (at least 1), from its formula. */
 export const compMaxHp = (k: Companion, owner: Character): number => Math.max(1, compEval(k, k.maxHp, owner) ?? k.hp);
@@ -192,26 +199,26 @@ export function actionDice(a: CompanionAction, owner: Character, comp?: Pick<Com
   const level = ownerLevel(owner, a.levelOf);
   const step = [...(a.levelDice ?? [])].filter((x) => x.dice.trim() && x.level <= level).sort((x, y) => x.level - y.level).at(-1);
   const base = step?.dice ?? (a.damage.trim() || boostOf(a)?.dice || '');
-  return base ? tidyDice(resolveTokens(withSlot(base, comp), owner)) : '';
+  return base ? tidyDice(resolveTokens(withSlot(base, comp), owner, castingOf(comp))) : '';
 }
 
 /** An action's extra damage at your level (a drake's Magic Fang), or '' if none applies yet. */
 export function actionExtra(a: CompanionAction, owner: Character, comp?: Pick<Companion, 'origin'> | null): string {
   const level = ownerLevel(owner, a.levelOf);
   const step = [...(a.extra ?? [])].filter((x) => x.dice.trim() && x.level <= level).sort((x, y) => x.level - y.level).at(-1);
-  return step ? tidyDice(resolveTokens(withSlot(step.dice, comp), owner)) : '';
+  return step ? tidyDice(resolveTokens(withSlot(step.dice, comp), owner, castingOf(comp))) : '';
 }
 
 /** The healing an action gives at your level and its spell's ("2d8 + {SLOT}" at 3rd → "2d8+3"), or ''. */
 export function actionHeal(a: CompanionAction, owner: Character, comp?: Pick<Companion, 'origin'> | null): string {
-  return typeof a.heal === 'string' && a.heal.trim() ? tidyDice(resolveTokens(withSlot(a.heal, comp), owner)) : '';
+  return typeof a.heal === 'string' && a.heal.trim() ? tidyDice(resolveTokens(withSlot(a.heal, comp), owner, castingOf(comp))) : '';
 }
 
 /** More damage on the same hit, each of its own type (a Poison Jab's "plus 1d4 Poison damage"). */
 export function actionMore(a: CompanionAction, owner: Character, comp?: Pick<Companion, 'origin'> | null): { dice: string; type: string }[] {
   return (Array.isArray(a.more) ? a.more : [])
     .filter((x) => x && typeof x.dice === 'string' && x.dice.trim())
-    .map((x) => ({ dice: tidyDice(resolveTokens(withSlot(x.dice, comp), owner)), type: typeof x.type === 'string' ? x.type : '' }));
+    .map((x) => ({ dice: tidyDice(resolveTokens(withSlot(x.dice, comp), owner, castingOf(comp))), type: typeof x.type === 'string' ? x.type : '' }));
 }
 
 export interface Boost {

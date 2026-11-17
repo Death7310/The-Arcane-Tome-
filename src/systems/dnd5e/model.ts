@@ -231,6 +231,13 @@ export interface CompanionOrigin {
   upcast?: string;
   /** A class feature's class ("ranger"), whose level its numbers follow; "" for your character level. */
   classId: string;
+  /**
+   * The class whose spellcasting cast its spell ("ranger"): its spell attack, save DC and
+   * spellcasting modifier are that class's (a Ranger's Wisdom, not a Warlock's Charisma).
+   */
+  castBy?: string;
+  /** The ability a feat's spell is cast with, when it sets one. */
+  castAbility?: Ability;
 }
 
 /**
@@ -891,6 +898,8 @@ export function readOrigin(raw: unknown): CompanionOrigin | null {
     block: typeof o.block === 'string' ? o.block : '',
     classId: typeof o.classId === 'string' ? o.classId : '',
     ...(typeof o.upcast === 'string' && o.upcast.trim() ? { upcast: o.upcast } : {}),
+    ...(typeof o.castBy === 'string' && o.castBy ? { castBy: o.castBy } : {}),
+    ...(typeof o.castAbility === 'string' && (ABILITIES as readonly string[]).includes(o.castAbility) ? { castAbility: o.castAbility } : {}),
   };
 }
 

@@ -414,7 +414,7 @@ function SpellEditor({ spell: s }: { spell: Spell }) {
           <CopySpellText spell={s} />
           <ConfirmButton label="Remove" onConfirm={() => update((d) => void (d.spells = d.spells.filter((x) => x.id !== s.id)))} />
         </div>
-        <SummonBox spell={s.name} level={s.level} description={s.description} />
+        <SummonBox spell={s.name} level={s.level} description={s.description} castBy={s.grantedBy} />
       </div>
     );
   }
@@ -940,7 +940,7 @@ function ConcentrationDamage() {
  * A summoning spell's creature (its stat block in the description) as a companion: pick the
  * form and the level you cast it at, and its AC, HP, speed, traits and attacks follow.
  */
-function SummonBox({ spell, level, description }: { spell: string; level: number; description: string }) {
+function SummonBox({ spell, level, description, castBy }: { spell: string; level: number; description: string; castBy?: string }) {
   const { char: c, update } = useChar();
   const block = summonedCreature(description);
   const forms = block ? summonForms(block) : [];
@@ -952,7 +952,7 @@ function SummonBox({ spell, level, description }: { spell: string; level: number
   const base = Math.max(1, level);
   // What the spell's own text adds at a higher slot (Animate Objects' Slam dice).
   const upcast = upcastOf(description.slice(0, Math.max(0, description.length - block.length)));
-  const preview = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick, upcast }, c);
+  const preview = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick, upcast, castBy }, c);
   if (!preview) return null;
   const have = c.companions.find((k) => k.name.toLowerCase() === preview.name.toLowerCase());
   return (
@@ -982,7 +982,7 @@ function SummonBox({ spell, level, description }: { spell: string; level: number
           className="btn small"
           onClick={() => {
             update((d) => {
-              const k = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick, upcast }, d);
+              const k = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick, upcast, castBy }, d);
               if (!k) return;
               const at = d.companions.findIndex((x) => x.name.toLowerCase() === k.name.toLowerCase());
               // Cast again: the same companion, its gear and element kept, at full HP for this casting.

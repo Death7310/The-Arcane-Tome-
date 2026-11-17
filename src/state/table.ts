@@ -12,7 +12,9 @@ import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/t
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type Ability, type StandardActionId } from '../systems/dnd5e/data';
 import { emptyTurn, uid, type BattleWho, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type RolledDamage, type Spell, type Weapon } from '../systems/dnd5e/model';
 import { allyWho, companionWho, damageTypeOf, enemyWho, inBattle, logEvent, retarget, saveIn, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
-import { actionDice, actionExtra, actionHeal, actionMore, actionType, compEval, compMaxHp, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionHeal, actionMore, actionType, compEval, compMaxHp, compMod, companionAc, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { castSummon } from '../systems/dnd5e/summon';
+import { summonedCreature } from '../systems/dnd5e/spellimport';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
 import type { CreatureDef } from '../systems/dnd5e/srd';
 import { useCatalog } from './catalog';
@@ -1034,8 +1036,15 @@ export function useTableState(char: Character, update: Update) {
       const ability = spellAbility(c, spell);
       const raw = spell.damage.filter((p) => p.dice.trim());
       const damage = plan.damage.map((d, i) => ({ ...d, known: tokenParts(raw[i]?.dice ?? '', c, spell) }));
+      // A spell that summons a creature (Summon Beast): it appears, or comes again, at this slot's level.
+      const summon = castSummon(c, spell, slotLevel);
 
       update((d) => {
+        const s = castSummon(d, spell, slotLevel);
+        if (s) {
+          if (s.index >= 0) d.companions[s.index] = s.comp;
+          else d.companions.push(s.comp);
+        }
         if (choice.kind === 'slot') d.spellcasting.slotsUsed[choice.level - 1] = (d.spellcasting.slotsUsed[choice.level - 1] ?? 0) + 1;
         if (choice.kind === 'pact') d.spellcasting.pactUsed += 1;
         if (choice.kind === 'points') {
@@ -1136,7 +1145,23 @@ export function useTableState(char: Character, update: Update) {
         effects.push(() => perform({ element: spell.element, shape: spell.shape, from, to: target, power, outcome: 'hit', label: `+${healed}` }));
       } else {
         effects.push(() => perform({ element: spell.element, shape: spell.shape, from, to: target, power, label: spell.name }));
-        lines.push({ label: spell.castingTimeText || 'Cast', total: 0, detail: spell.description || 'Cast.', kind: 'info' });
+        // A summoning spell's creature is on its card under Companions; the result keeps to the spell.
+        const creature = summon ? summonedCreature(spell.description) : null;
+        const text = creature ? spell.description.slice(0, spell.description.length - creature.length).trim() : spell.description;
+        lines.push({ label: spell.castingTimeText || 'Cast', total: 0, detail: text || 'Cast.', kind: 'info' });
+      }
+
+      if (summon) {
+        const k = summon.comp;
+        const cls = k.origin?.castBy ? classById(k.origin.castBy) : null;
+        const how = cls ? ` with your ${cls.id === k.origin!.castBy ? cls.name : k.origin!.castBy} spellcasting` : '';
+        lines.push({
+          label: `${k.name} ${summon.index >= 0 ? 'is summoned again' : 'appears'}`,
+          total: 0,
+          text: '✓',
+          detail: `At ${ordinal(slotLevel)} level${k.origin?.form ? `, ${k.origin.form} form` : ''}${how}: AC ${companionAc(k, c).total}, ${k.hp} HP, full. It's under Companions.`,
+          kind: 'info',
+        });
       }
 
       // A marking spell (Hunter's Mark, Hex) goes on the enemies it's at: your hits on them add its dice.

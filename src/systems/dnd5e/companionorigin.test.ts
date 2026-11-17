@@ -9,11 +9,13 @@ import { actionDice, actionHeal, actionMore, companionAc, companionMaxes, compEv
 import { EXTRA_SUBCLASSES } from './extras';
 import { describeFormula } from './formula';
 import { applyLevelUp, levelDown, planLevelUp } from './leveling';
-import { blankCharacter, blankCompanion, normalizeCharacter, readOrigin, type Character, type Companion } from './model';
+import { blankCharacter, blankCompanion, blankSpell, normalizeCharacter, readOrigin, uid, type Character, type Companion } from './model';
 import { summonedCreature } from './spellimport';
 import { parseStatBlock, tokenize } from './statblock';
 import { applyRuleSet, damageFormula, fitConstant, hpPart, ruleSetFor, splitDamage, withConstant } from './scaling';
-import { companionFromBlock, followClass, lineForForm, readCompanionPaste, slotText, summonCompanion, summonForms, upcastOf } from './summon';
+import { castSummon, companionFromBlock, followClass, lineForForm, readCompanionPaste, slotText, summonCompanion, summonForms, upcastOf } from './summon';
+import { readPastedSpells } from './spellimport';
+import { SUMMON_BEAST } from './summon-sample';
 import classes from './srd/classes.json';
 import creatures from './srd/creatures.json';
 import feats from './srd/feats.json';
@@ -302,5 +304,44 @@ Bite. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 1d6 + 2 pier
     expect(compMaxHp(k, ranger(8))).toBe(45);
     expect(ruleSetFor('Homunculus Servant')?.maxHp).toBe('1 + {INT} + {LEVEL:artificer}');
     expect(ruleSetFor('Steel Defender')?.maxHp).toBe('2 + {INT} + 5 * {LEVEL:artificer}');
+  });
+});
+
+describe('Summon Beast cast by a Ranger', () => {
+  // A Ranger 5 / Warlock 2 with Wisdom 16 and Charisma 18, whose usual spellcasting is the Warlock's.
+  const rangerWarlock = (): Character => {
+    const c = ranger(5);
+    c.abilities.cha = 18;
+    c.classes.push({ id: uid(), classId: 'warlock', subclass: '', level: 2, hitDiceUsed: 0, hpRolls: [] });
+    c.spellcasting.ability = 'cha';
+    const def = readPastedSpells(SUMMON_BEAST)[0].def;
+    c.spells.push(blankSpell({ name: def.name, level: def.level, description: def.description, grantedBy: 'ranger' }));
+    return c;
+  };
+
+  it('casting it with a Ranger slot brings the Bestial Spirit at that level, with the Ranger’s Wisdom', () => {
+    const c = rangerWarlock();
+    const s = castSummon(c, c.spells[0], 2)!;
+    expect(s.index).toBe(-1);
+    expect(s.comp.origin).toMatchObject({ kind: 'spell', name: 'Summon Beast', base: 2, cast: 2, castBy: 'ranger', form: 'Air' });
+    expect(s.comp.hp).toBe(20);
+    const maul = s.comp.actions.find((a) => a.name === 'Maul')!;
+    // Proficiency 3 (level 7) + Wisdom 3, not Charisma 4.
+    expect(compEval(s.comp, maul.toHit, c)).toBe(6);
+    expect(compEval({ origin: { ...s.comp.origin!, castBy: undefined } }, maul.toHit, c)).toBe(7);
+  });
+
+  it('casting it again at a higher slot summons the same spirit again, at full HP for that level', () => {
+    const c = rangerWarlock();
+    c.companions.push({ ...castSummon(c, c.spells[0], 2)!.comp, name: 'Bristle', hp: 4 });
+    const again = castSummon(c, c.spells[0], 3)!;
+    expect(again.index).toBe(0);
+    expect(again.comp).toMatchObject({ name: 'Bristle', hp: 25, origin: { cast: 3, castBy: 'ranger' } });
+    expect(companionAc(again.comp, c).total).toBe(14);
+  });
+
+  it('a spell with no creature in it summons nothing', () => {
+    const c = rangerWarlock();
+    expect(castSummon(c, blankSpell({ name: 'Cure Wounds', level: 1, description: 'A creature you touch regains Hit Points.' }), 1)).toBeNull();
   });
 });
