@@ -82,9 +82,10 @@ export function lineForForm(line: string, form: string, forms: string[] = [form]
       head = before + (note.rest ? ` (${note.rest})` : '');
     } else {
       // The list starts after its sentence or lead-in ("Hit: 1d8 plus the spell's level of
-      // Radiant (Celestial), Psychic (Fey)…", "equal to 1d4 + 3 (Medium or smaller), …"), so a
+      // Radiant (Celestial), Psychic (Fey)…", "equal to 1d4 + 3 (Medium or smaller), …",
+      // "increases by 1d4 (Medium or smaller), 1d6 (Large)…"), so a
       // comma before that ("…modifier, reach 5 ft.") isn't one of its separators.
-      const leads = note.bare ? ['. ', ': ', ' of ', 'equal to ', 'equals ', ' is '] : ['. ', ': '];
+      const leads = note.bare ? ['. ', ': ', ' of ', 'equal to ', 'equals ', ' is ', ' by '] : ['. ', ': '];
       const floor = Math.max(0, ...leads.map((b) => (before.lastIndexOf(b) < 0 ? 0 : before.lastIndexOf(b) + b.length)));
       const seps = note.bare ? [', ', ' or ', '; '] : ['; ', ', ', ' or ', ' + '];
       const at = Math.max(...seps.map((sep) => before.lastIndexOf(sep)));
@@ -148,6 +149,36 @@ export function classInBlock(c: Pick<Companion, 'ac' | 'maxHp' | 'actions'>): st
 export type OriginChoice = Partial<CompanionOrigin> & { kind: CompanionOrigin['kind'] };
 
 /**
+ * The sentences of a spell's own text that add dice at a higher slot to its creature, which
+ * its stat block doesn't say: "The creature's Slam damage increases by 1d4 (Medium or smaller),
+ * 1d6 (Large), or 1d12 (Huge) for each spell slot level above 5." ('' when there are none.)
+ */
+export function upcastOf(spellText: string): string {
+  const text = spellText.replace(/\*+/g, '').replace(/[’‘]/g, "'").replace(/\s+/g, ' ');
+  return [...text.matchAll(/[^.]*?\b(?:damage|healing)\s+increases\s+by\s+[^.]*?\bfor each (?:spell\s+)?(?:slot\s+)?level above (?:the\s+)?\d[^.]*\./gi)].map((m) => m[0].trim()).join(' ');
+}
+
+/**
+ * Its spell's higher-level dice, on the actions they name ("Slam damage increases by 1d6 for
+ * each spell slot level above 5" adds {ABOVE:5}d6 to the Slam; "Its damage increases…" to each
+ * of its attacks), for its form.
+ */
+function addUpcast(c: Companion, upcast: string, form: string, forms: string[]) {
+  const text = form ? lineForForm(upcast, form, forms) : upcast;
+  for (const m of text.matchAll(/(?:^|\.\s*)(?:the\s+)?(?:[\w-]+'s\s+)?([\w' -]+?)\s+(damage|healing)\s+increases\s+by\s+(\d+)d(\d+)\s+for each (?:spell\s+)?(?:slot\s+)?level above (?:the\s+)?(\d)/gi)) {
+    const [, name, what, n, size, base] = m;
+    const dice = `{ABOVE:${base}${n === '1' ? '' : `:${n}`}}d${size}`;
+    const named = c.actions.filter((a) => same(a.name.replace(/\s*\(.*\)$/, ''), name));
+    const healing = what.toLowerCase() === 'healing';
+    const targets = named.length ? named : c.actions.filter((a) => (healing ? a.heal : a.attack && a.damage));
+    for (const a of targets) {
+      if (healing && a.heal) a.heal = `${a.heal} + ${dice}`;
+      else if (!healing && a.damage) a.damage = `${a.damage} + ${dice}`;
+    }
+  }
+}
+
+/**
  * A companion from a stat block, for how it comes to you: a spell at the level you cast it (and
  * its form), a class feature following one of your classes, or a creature as it is. With your
  * character, it starts at its full Hit Points. Null if the text isn't a stat block.
@@ -171,6 +202,7 @@ export function companionFromBlock(block: string, choice: OriginChoice, owner?: 
   const size = /^(Tiny|Small|Medium|Large|Huge|Gargantuan)\b/i.exec(form)?.[1];
   if (size) c.size = size.charAt(0).toUpperCase() + size.slice(1).toLowerCase();
   if (origin.kind === 'feature') followClass(c, origin.classId);
+  if (origin.upcast) addUpcast(c, origin.upcast, form, forms);
   c.origin = origin;
   c.source = origin.name ? (origin.kind === 'spell' ? `Summoned by ${origin.name}` : origin.name) : c.source;
   if (owner) c.hp = compMaxHp(c, owner);
@@ -181,8 +213,8 @@ export function companionFromBlock(block: string, choice: OriginChoice, owner?: 
  * The creature a summoning spell brings, as a companion: its stat block (from the spell's text)
  * for a form and the level you cast it at. Null if the text isn't a stat block.
  */
-export function summonCompanion(block: string, opts: { spell: string; base: number; cast: number; form: string | null }, owner?: Character): Companion | null {
-  return companionFromBlock(block, { kind: 'spell', name: opts.spell, base: opts.base, cast: Math.max(opts.base, opts.cast), form: opts.form ?? '' }, owner);
+export function summonCompanion(block: string, opts: { spell: string; base: number; cast: number; form: string | null; upcast?: string }, owner?: Character): Companion | null {
+  return companionFromBlock(block, { kind: 'spell', name: opts.spell, base: opts.base, cast: Math.max(opts.base, opts.cast), form: opts.form ?? '', upcast: opts.upcast ?? '' }, owner);
 }
 
 /**
@@ -232,6 +264,8 @@ export interface PasteReading {
   classId: string;
   /** What its numbers follow, in words. */
   follows: string[];
+  /** What its spell's text adds at a higher slot (see upcastOf), '' for none. */
+  upcast: string;
 }
 
 /**
@@ -255,15 +289,17 @@ export function readCompanionPaste(text: string, spells: SpellRef[] = []): Paste
   if (!plain) return null;
   const numbers = [plain.ac, plain.maxHp, plain.pb, ...plain.actions.flatMap((a) => [a.toHit, a.damage, a.dc, ...(a.more ?? []).map((x) => x.dice)])].join(' ');
   const slot = /\{SLOT\}/i.test(numbers) || /\bspell'?s level|level of (?:the|this) spell\b/i.test(block.replace(/[’‘]/g, "'"));
-  if (!spell && slot) {
-    // "This corporeal form uses the Bestial Spirit stat block": find the spell by its creature.
-    const name = plain.name.toLowerCase();
-    spell = spells.find((s) => s.level > 0 && s.description.toLowerCase().includes(`${name} stat block`)) ?? spells.find((s) => s.level > 0 && (same(s.name, plain.name) || s.description.toLowerCase().includes(name))) ?? null;
+  if (!spell) {
+    // "This corporeal form uses the Bestial Spirit stat block": find the spell by its creature
+    // (by name alone only when its numbers count a spell's level).
+    const name = plain.name.toLowerCase().replace(/[’‘]/g, "'");
+    const text = (x: SpellRef) => x.description.toLowerCase().replace(/[’‘*]/g, (ch) => (ch === '*' ? '' : "'"));
+    spell = spells.find((x) => x.level > 0 && text(x).includes(`${name} stat block`)) ?? (slot ? spells.find((x) => x.level > 0 && (same(x.name, plain.name) || text(x).includes(name))) : undefined) ?? null;
   }
   const above = /for each (?:spell |slot )*level above (?:the )?(\d)/i.exec(block);
   const base = spell?.level || (above ? Number(above[1]) : 1);
   const classId = classInBlock(plain);
-  const kind: CompanionOrigin['kind'] = slot ? 'spell' : classId || /\{LEVEL\}/.test(numbers) ? 'feature' : plain.cr && /^[\d/]+$/.test(plain.cr) ? 'creature' : /\{(?:PB|SPELLATK|SPELLDC|MOD|STR|DEX|CON|INT|WIS|CHA)\}/.test(numbers) ? 'feature' : 'creature';
+  const kind: CompanionOrigin['kind'] = slot || spell ? 'spell' : classId || /\{LEVEL\}/.test(numbers) ? 'feature' : plain.cr && /^[\d/]+$/.test(plain.cr) ? 'creature' : /\{(?:PB|SPELLATK|SPELLDC|MOD|STR|DEX|CON|INT|WIS|CHA)\}/.test(numbers) ? 'feature' : 'creature';
   const follows: string[] = [];
   if (slot) follows.push('the level the spell is cast at');
   if (classId) follows.push(`your ${classId.charAt(0).toUpperCase()}${classId.slice(1)} level`);
@@ -273,5 +309,9 @@ export function readCompanionPaste(text: string, spells: SpellRef[] = []): Paste
   if (/\{SPELLDC\}/.test(numbers)) follows.push('your spell save DC');
   const mods = [...new Set([...numbers.matchAll(/\{(MOD|STR|DEX|CON|INT|WIS|CHA)\}/g)].map((m) => m[1]))];
   for (const m of mods) follows.push(m === 'MOD' ? 'your spellcasting modifier' : `your ${{ STR: 'Strength', DEX: 'Dexterity', CON: 'Constitution', INT: 'Intelligence', WIS: 'Wisdom', CHA: 'Charisma' }[m]} modifier`);
-  return { block, plain, forms: summonForms(block), spell, kind, base: Math.max(1, Math.min(9, base)), classId, follows };
+  // The spell's own text (not its creature's) for dice a higher slot adds.
+  const spellText = head || (spell ? spell.description.slice(0, Math.max(0, spell.description.length - (summonedCreature(spell.description)?.length ?? 0))) : '');
+  const upcast = upcastOf(spellText);
+  if (upcast && !follows.includes('the level the spell is cast at')) follows.unshift('the level the spell is cast at');
+  return { block, plain, forms: summonForms(block), spell, kind, base: Math.max(1, Math.min(9, base)), classId, follows, upcast };
 }

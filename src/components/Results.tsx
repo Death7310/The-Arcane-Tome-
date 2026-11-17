@@ -2,10 +2,21 @@ import { useEffect, useState } from 'react';
 import { multiplyDice } from '../engine/dice';
 import { useChar } from '../state/character';
 import { useTable, type Advantage, type RollEntry } from '../state/table';
-import { availableBoosts } from '../systems/dnd5e/companion';
+import { availableBoosts, compMaxHp } from '../systems/dnd5e/companion';
 import { ElementPicker } from './CompanionsPanel';
 
-export function EntryView({ e, onApplyHealing }: { e: RollEntry; onApplyHealing?: (n: number, el: HTMLElement) => void }) {
+export function EntryView({
+  e,
+  onApplyHealing,
+  companions = [],
+  onHealCompanion,
+}: {
+  e: RollEntry;
+  onApplyHealing?: (n: number, el: HTMLElement) => void;
+  /** Companions the healing can go to instead (not at full HP), with their HP. */
+  companions?: { id: string; name: string; hp: number; max: number }[];
+  onHealCompanion?: (id: string, n: number, el: HTMLElement) => void;
+}) {
   return (
     <div className={`entry ${e.element ? `el-${e.element}` : ''}`}>
       <div className="entry-title">
@@ -32,6 +43,14 @@ export function EntryView({ e, onApplyHealing }: { e: RollEntry; onApplyHealing?
           <button type="button" className="btn small" onClick={(ev) => onApplyHealing(e.healing!, ev.currentTarget)}>
             Heal myself {e.healing}
           </button>
+          {onHealCompanion &&
+            companions
+              .filter((k) => k.hp < k.max)
+              .map((k) => (
+                <button key={k.id} type="button" className="btn small" onClick={(ev) => onHealCompanion(k.id, e.healing!, ev.currentTarget)} title={`${k.name}: ${k.hp}/${k.max} HP`}>
+                  Heal {k.name} {Math.min(e.healing!, k.max - k.hp)}
+                </button>
+              ))}
         </div>
       )}
     </div>
@@ -222,6 +241,11 @@ export function ResultCard() {
         e={e}
         onApplyHealing={(n, el) => {
           t.healSelf(n, el);
+          t.dismissLatest();
+        }}
+        companions={c.companions.map((k) => ({ id: k.id, name: k.name, hp: k.hp, max: compMaxHp(k, c) }))}
+        onHealCompanion={(id, n, el) => {
+          t.healCompanion(id, n, el);
           t.dismissLatest();
         }}
       />

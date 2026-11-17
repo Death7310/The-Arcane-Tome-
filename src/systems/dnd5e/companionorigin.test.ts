@@ -5,14 +5,15 @@
 import { describe, expect, it } from 'vitest';
 import { buildAnaurys } from './anaurys';
 import { DRAKE, HOMUNCULUS, LAND_BEAST } from './companion-samples';
-import { actionDice, actionMore, companionAc, companionMaxes, compEval, compMaxHp, followMaxHp, originOf, tidyDice } from './companion';
+import { actionDice, actionHeal, actionMore, companionAc, companionMaxes, compEval, compMaxHp, followMaxHp, originOf, tidyDice } from './companion';
 import { EXTRA_SUBCLASSES } from './extras';
 import { describeFormula } from './formula';
 import { applyLevelUp, levelDown, planLevelUp } from './leveling';
 import { blankCharacter, blankCompanion, normalizeCharacter, readOrigin, type Character, type Companion } from './model';
 import { summonedCreature } from './spellimport';
 import { parseStatBlock, tokenize } from './statblock';
-import { companionFromBlock, followClass, lineForForm, readCompanionPaste, slotText, summonForms } from './summon';
+import { applyRuleSet, damageFormula, fitConstant, hpPart, ruleSetFor, splitDamage, withConstant } from './scaling';
+import { companionFromBlock, followClass, lineForForm, readCompanionPaste, slotText, summonCompanion, summonForms, upcastOf } from './summon';
 import classes from './srd/classes.json';
 import creatures from './srd/creatures.json';
 import feats from './srd/feats.json';
@@ -59,6 +60,9 @@ describe('reading the spell-level words', () => {
     expect(tidyDice('1d6 + 3 + 5 + 1d4')).toBe('1d6+1d4+8');
     expect(tidyDice('2d6')).toBe('2d6');
     expect(tidyDice('1d4-1+1')).toBe('1d4');
+    expect(tidyDice('2d6+3+3+2d6')).toBe('4d6+6');
+    expect(tidyDice('2d6+3+0d6')).toBe('2d6+3');
+    expect(describeFormula('2d6 + 3 + {ABOVE:5}d6')).toBe('2d6 + 3 + 1d6 for each spell level above 5');
   });
 });
 
@@ -227,5 +231,76 @@ describe('saving and older sheets', () => {
     expect(compEval(again.companions[0], again.companions[0].ac, again)).toBe(13);
     expect(readOrigin({ kind: 'ritual' })).toBeNull();
     expect(readOrigin({ kind: 'spell', base: 3, cast: 1, forms: ['A'], form: 'B' })).toMatchObject({ base: 3, cast: 3, form: 'A' });
+  });
+});
+
+describe('what the spell’s own text adds, and healing', () => {
+  const me = ranger(9);
+
+  it('Animate Objects: its Slam gains its size’s die for each slot level above 5th, from the spell’s text', () => {
+    const r = readCompanionPaste(blockOf('Animate Objects'), refs)!;
+    expect(r).toMatchObject({ spell: { name: 'Animate Objects', level: 5 }, kind: 'spell', base: 5 });
+    expect(r.upcast).toBe("The creature's Slam damage increases by 1d4 (Medium or smaller), 1d6 (Large), or 1d12 (Huge) for each spell slot level above 5.");
+    const at = (form: string, cast: number) => {
+      const k = companionFromBlock(r.block, { kind: 'spell', name: 'Animate Objects', base: 5, cast, form, upcast: r.upcast }, me)!;
+      return actionDice(k.actions.find((a) => a.name === 'Slam')!, me, k);
+    };
+    expect(at('Large', 5)).toBe('2d6+6');
+    expect(at('Large', 7)).toBe('4d6+6');
+    expect(at('Medium or smaller', 6)).toBe('2d4+3');
+    expect(at('Huge', 9)).toBe('6d12+6');
+  });
+
+  it('the spell panel’s summon reads the same dice from the spell it’s on', () => {
+    const d = spells.find((x) => x.name === 'Animate Objects')!.description;
+    const block = summonedCreature(d)!;
+    const k = summonCompanion(block, { spell: 'Animate Objects', base: 5, cast: 6, form: 'Large', upcast: upcastOf(d.slice(0, d.length - block.length)) }, me)!;
+    expect(k.actions.find((a) => a.name === 'Slam')!.damage).toBe('2d6 + 3 + {MOD} + {ABOVE:5}d6');
+    expect(actionDice(k.actions.find((a) => a.name === 'Slam')!, me, k)).toBe('3d6+6');
+  });
+
+  it('Find Steed’s Healing Touch heals 2d8 + the spell’s level; Life Bond heals nothing itself', () => {
+    const k = companionFromBlock(blockOf('Find Steed'), { kind: 'spell', name: 'Find Steed', base: 2, cast: 3, form: 'Celestial' }, me)!;
+    const touch = act(k, 'Healing Touch')!;
+    expect(touch.heal).toBe('2d8 + {SLOT}');
+    expect(actionHeal(touch, me, k)).toBe('2d8+3');
+    expect(act(k, 'Life Bond')!.heal).toBeUndefined();
+  });
+});
+
+describe('making printed numbers follow you', () => {
+  const PRINTED = `Drake
+Small Dragon, Neutral
+Armor Class 16
+Hit Points 25
+Speed 40 ft.
+STR 16 DEX 12 CON 15 INT 8 WIS 14 CHA 8
+Actions
+Bite. Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 1d6 + 2 piercing damage.`;
+
+  it('keeps today’s number when a rule is chosen: 25 HP at Ranger 4 is 5 + 5 × your Ranger level', () => {
+    const me = ranger(4);
+    const k = parseStatBlock(PRINTED)!;
+    const rest = hpPart({ kind: 'class', per: 5, classId: 'ranger', ability: '' });
+    expect(fitConstant(25, rest, k, me)).toBe(5);
+    expect(withConstant(5, rest)).toBe('5 + 5 * {LEVEL:ranger}');
+    expect(withConstant(-2, '{PB}')).toBe('{PB} - 2');
+    expect(fitConstant(16, '{PB}', k, me)).toBe(14);
+    const split = splitDamage(k.actions[0], k, me);
+    expect(split).toEqual({ dice: '1d6', flat: 2 });
+    expect(damageFormula(split.dice, fitConstant(split.flat, '{PB}', k, me), { kind: 'pb' })).toBe('1d6 + {PB}');
+  });
+
+  it('a drake printed for one level takes the Drakewarden’s rules, and grows', () => {
+    const me = ranger(4);
+    const k = parseStatBlock(PRINTED)!;
+    const rules = ruleSetFor(k.name)!;
+    expect(rules.id).toBe('drake');
+    applyRuleSet(k, rules, me);
+    expect(k).toMatchObject({ ac: '14 + {PB}', maxHp: '5 + 5 * {LEVEL:ranger}', pb: '{PB}', origin: { kind: 'feature', classId: 'ranger' } });
+    expect(k.actions[0]).toMatchObject({ toHit: '{SPELLATK}', damage: '1d6 + {PB}' });
+    expect(compMaxHp(k, ranger(8))).toBe(45);
+    expect(ruleSetFor('Homunculus Servant')?.maxHp).toBe('1 + {INT} + {LEVEL:artificer}');
+    expect(ruleSetFor('Steel Defender')?.maxHp).toBe('2 + {INT} + 5 * {LEVEL:artificer}');
   });
 });

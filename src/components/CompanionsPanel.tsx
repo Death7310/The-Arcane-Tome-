@@ -4,12 +4,14 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { ordinal, useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, CLASSES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
-import { actionDice, actionExtra, actionMore, actionType, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionHeal, actionMore, actionType, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, isFormula } from '../systems/dnd5e/formula';
 import { blankCompanion, blankCompanionAction, readOrigin, uid, type Character, type Companion, type CompanionAction, type CompanionOrigin } from '../systems/dnd5e/model';
 import { abilityMod, signed, totalLevel } from '../systems/dnd5e/rules';
 import { COMPANION_AI_PROMPT, companionFromCreature } from '../systems/dnd5e/statblock';
 import { companionFromBlock, followClass, readCompanionPaste, reshape, slotText, summonAgain, type PasteReading } from '../systems/dnd5e/summon';
+import { applyRuleSet, ruleSetFor, ruleSetLine } from '../systems/dnd5e/scaling';
+import { ScaleHelper } from './CompanionScaling';
 import { AddItemDialog } from './Items';
 import { TargetStrip } from './Enemies';
 import { RulesText } from './RulesText';
@@ -33,6 +35,8 @@ function actionSummary(a: CompanionAction, c: Character, comp: Companion): strin
   const extra = actionExtra(a, c, comp);
   const more = actionMore(a, c, comp).map((m) => ` + ${m.dice} ${m.type}`.trimEnd()).join('');
   if (dice) parts.push(`${b ? '+' : ''}${dice} ${actionType(comp, a) || (b ? 'damage' : '')}${extra ? ` + ${extra} ${comp.essence || 'essence'}` : ''}${more}`.trim());
+  const heal = dice ? '' : actionHeal(a, c, comp);
+  if (heal) parts.push(`heals ${heal}`);
   if (b) parts.push('adds to a hit');
   return parts.join(' · ');
 }
@@ -77,6 +81,7 @@ function Workings({ comp, owner }: { comp: Companion; owner: Character }) {
     if (a.attack && follows(a.toHit)) rows.push([`${a.name}: to hit`, signed(compEval(comp, a.toHit, owner) ?? 0), say(a.toHit)]);
     if (a.damage && /\{/.test(a.damage)) rows.push([`${a.name}: damage`, actionDice(a, owner, comp), say(a.damage)]);
     if (a.save && follows(a.dc)) rows.push([`${a.name}: DC`, String(compEval(comp, a.dc, owner) ?? '?'), say(a.dc)]);
+    if (a.heal && /\{/.test(a.heal)) rows.push([`${a.name}: healing`, actionHeal(a, owner, comp), say(a.heal)]);
   }
   if (!rows.length) return null;
   return (
@@ -638,6 +643,10 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
           })
         }
       />
+      <details className="scale-details">
+        <summary>Make its numbers follow you</summary>
+        <ScaleHelper comp={comp} idx={idx} />
+      </details>
       <div className="grid-2">
         <TextField label="Name" id={`ce-name-${comp.id}`} value={comp.name} onChange={(v) => set((k) => void (k.name = v))} />
         <TextField label="What it is" id={`ce-kind-${comp.id}`} value={comp.kind} placeholder="Drake companion, owl familiar…" onChange={(v) => set((k) => void (k.kind = v))} />
@@ -700,6 +709,7 @@ function CompanionEditor({ comp, idx, onDone }: { comp: Companion; idx: number; 
             )}
             {a.attack && <TextField label="Reach / range" id={`ca-reach-${a.id}`} value={a.reach} onChange={(v) => setAction(j, (x) => void (x.reach = v))} />}
             <TextField label="Damage dice" id={`ca-dmg-${a.id}`} value={a.damage} placeholder="1d8 + {PB}" onChange={(v) => setAction(j, (x) => void (x.damage = v))} />
+            {!a.attack && <TextField label="Healing dice" id={`ca-heal-${a.id}`} value={a.heal ?? ''} placeholder="2d8 + {SLOT}" onChange={(v) => setAction(j, (x) => void (x.heal = v))} />}
             {(a.damage || boostOf(a)) && (
               <SelectField
                 label="Damage type"
@@ -789,11 +799,16 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
     setReading(r ?? 'bad');
     setChoice(
       r
-        ? readOrigin({ kind: r.kind, name: r.kind === 'spell' ? (r.spell?.name ?? '') : r.kind === 'feature' ? r.plain.name : '', base: r.base, cast: r.base, forms: r.forms, form: r.forms[0] ?? '', classId: r.classId })
+        ? readOrigin({ kind: r.kind, name: r.kind === 'spell' ? (r.spell?.name ?? '') : r.kind === 'feature' ? r.plain.name : '', base: r.base, cast: r.base, forms: r.forms, form: r.forms[0] ?? '', classId: r.classId, upcast: r.upcast })
         : null,
     );
+    setUseRules(false);
   };
-  const preview = reading && reading !== 'bad' && choice ? companionFromBlock(reading.block, choice, c) : null;
+  // A known companion printed with fixed numbers (D&D Beyond's): its rules, if you take them.
+  const [useRules, setUseRules] = useState(false);
+  const known = reading && reading !== 'bad' && !reading.classId && !reading.follows.includes('the level the spell is cast at') ? ruleSetFor(reading.plain.name) : undefined;
+  const built = reading && reading !== 'bad' && choice ? companionFromBlock(reading.block, choice, c) : null;
+  const preview = built && known && useRules ? (applyRuleSet(built, known, c), built) : built;
   const [showPrompt, setShowPrompt] = useState(false);
   const types = useMemo(() => [...new Set((cat?.creatures ?? []).map((k) => k.type))].sort(), [cat]);
   const list = useMemo(() => {
@@ -901,12 +916,28 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
                 <b>{reading.plain.name}</b>
                 <span className="hint">
                   {' '}
-                  · {reading.plain.size} {reading.plain.type} · {reading.plain.actions.length} traits and actions ({plural(reading.plain.actions.filter((a) => a.attack).length, 'attack')})
+                  · {reading.plain.size} {reading.plain.type} · {reading.plain.actions.length === 1 ? '1 trait or action' : `${reading.plain.actions.length} traits and actions`} ({plural(reading.plain.actions.filter((a) => a.attack).length, 'attack')})
                   {reading.spell ? ` · from ${reading.spell.name} (a level ${reading.spell.level} spell)` : ''}
                 </span>
               </span>
-              <span className="hint">{reading.follows.length ? `Its numbers follow ${listOf(reading.follows)}.` : 'Its numbers are its own: nothing in its stat block counts your level or the spell’s.'}</span>
-              <HowItComes value={choice} owner={c} idBase="cp-o" detectedClass={reading.classId} onChange={setChoice} />
+              {!known && <span className="hint">{reading.follows.length ? `Its numbers follow ${listOf(reading.follows)}.` : 'Its numbers are its own: nothing in its stat block counts your level or the spell’s.'}</span>}
+              {known && (
+                <div className="note" style={{ display: 'grid', gap: 4 }}>
+                  <span>
+                    Its numbers are printed fixed, as D&amp;D Beyond prints them for your level. It reads as a <b>{known.name}</b>, whose rules make them grow:
+                  </span>
+                  <span className="hint">
+                    {describeFormula(ruleSetLine(known))}. From {known.source}; check them against your book.
+                  </span>
+                  <Check label={`Use the ${known.name}’s rules`} id="cp-rules" checked={useRules} onChange={setUseRules} />
+                </div>
+              )}
+              {!known && reading.follows.length === 0 && choice.kind !== 'creature' && (
+                <p className="hint" style={{ margin: 0 }}>
+                  Its numbers are printed fixed (D&amp;D Beyond prints a companion’s worked out for your level). After adding it, Edit → Make its numbers follow you turns each into a rule that grows.
+                </p>
+              )}
+              <HowItComes value={useRules && known ? { ...choice, kind: 'feature', classId: known.classId } : choice} owner={c} idBase="cp-o" detectedClass={reading.classId} onChange={setChoice} />
               {choice.kind === 'feature' && choice.classId && ownerLevel(c, choice.classId) === 0 && (
                 <p className="hint" style={{ margin: 0, color: 'var(--warn)' }}>
                   You have no {className(choice.classId)} levels, so it counts 0 for them. Choose the class it follows above, or add the class.

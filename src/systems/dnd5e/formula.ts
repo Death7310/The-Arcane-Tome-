@@ -128,6 +128,7 @@ const ABILITY_TOKEN: Record<string, string> = { STR: 'Strength', DEX: 'Dexterity
 export function describeFormula(text: string): string {
   return text
     .replace(/(\d+)\s*\*\s*max\(\s*0\s*,\s*\{SLOT\}\s*-\s*(\d+)\s*\)/gi, '$1 for each spell level above $2')
+    .replace(/\{ABOVE:(\d)(?::(\d+))?\}d(\d+)/gi, (_, b: string, n: string | undefined, m: string) => `${n ?? 1}d${m} for each spell level above ${b}`)
     .replace(/floor\(\s*\{SLOT\}\s*\/\s*2\s*\)/gi, 'half the spell’s level (round down)')
     .replace(/(\d+)\s*\*\s*\{SLOT\}/gi, '$1 per spell level')
     .replace(/\{SLOT\}/gi, 'the spell’s level')

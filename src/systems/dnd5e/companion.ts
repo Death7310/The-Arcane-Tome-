@@ -32,8 +32,16 @@ export function originOf(k: Pick<Companion, 'origin' | 'ac' | 'maxHp' | 'pb' | '
 /** The level its spell was cast at, which "{SLOT}" stands for (1 if it has no spell). */
 export const slotOf = (k: Pick<Companion, 'origin'>): number => Math.max(1, k.origin?.cast || k.origin?.base || 1);
 
-/** A formula with its spell's level filled in. */
-export const withSlot = (text: string, k?: Pick<Companion, 'origin'> | null): string => String(text ?? '').replace(/\{SLOT\}/gi, String(k ? slotOf(k) : 1));
+/**
+ * A formula with its spell's level filled in: {SLOT} is the level it was cast at, {ABOVE:5} the
+ * levels above 5th (0 at 5th or lower), {ABOVE:5:2} twice that ("2d6 for each level above 5th").
+ */
+export const withSlot = (text: string, k?: Pick<Companion, 'origin'> | null): string => {
+  const slot = k ? slotOf(k) : 1;
+  return String(text ?? '')
+    .replace(/\{ABOVE:(\d)(?::(\d+))?\}/gi, (_, b: string, n?: string) => String(Math.max(0, slot - Number(b)) * Number(n ?? 1)))
+    .replace(/\{SLOT\}/gi, String(slot));
+};
 
 /** One of its numbers worked out: your tokens and its spell's level filled in. */
 export const compEval = (k: Pick<Companion, 'origin'>, text: string, owner: Character): number | null => evalFormula(withSlot(text, k), owner);
@@ -61,15 +69,31 @@ export function followMaxHp(d: Character, before: Map<string, number>): { name: 
   return changed;
 }
 
-/** "1d8+4+3" → "1d8+7": whole numbers summed after the dice. Anything else stays as it is. */
+/**
+ * "1d8+4+3" → "1d8+7", "2d6+3+2d6" → "4d6+3": dice of a size added together, whole numbers
+ * summed after them, and none of a die ("0d6", a higher-level die not reached yet) left out.
+ * Anything else stays as it is.
+ */
 export function tidyDice(dice: string): string {
   const d = dice.replace(/\s+/g, '');
   if (!/^[+-]?(?:\d+d\d+|\d+)(?:[+-](?:\d+d\d+|\d+))*$/i.test(d)) return d;
   const terms = d.match(/[+-]?(?:\d+d\d+|\d+)/gi) ?? [];
-  const dicePart = terms.filter((x) => /d/i.test(x));
-  const n = terms.filter((x) => !/d/i.test(x)).reduce((a, x) => a + Number(x), 0);
-  if (!dicePart.length) return String(n);
-  const head = dicePart.map((x, i) => (i === 0 ? x.replace(/^\+/, '') : /^[+-]/.test(x) ? x : `+${x}`)).join('');
+  const sizes = new Map<number, number>();
+  let n = 0;
+  for (const x of terms) {
+    const m = /^([+-]?)(\d+)d(\d+)$/i.exec(x);
+    if (!m) {
+      n += Number(x);
+      continue;
+    }
+    const count = Number(m[2]) * (m[1] === '-' ? -1 : 1);
+    sizes.set(Number(m[3]), (sizes.get(Number(m[3])) ?? 0) + count);
+  }
+  const head = [...sizes]
+    .filter(([, count]) => count !== 0)
+    .map(([size, count], i) => `${count < 0 ? '-' : i === 0 ? '' : '+'}${Math.abs(count)}d${size}`)
+    .join('');
+  if (!head) return String(n);
   return n ? `${head}${n > 0 ? '+' : ''}${n}` : head;
 }
 
@@ -157,7 +181,7 @@ export const hasEssence = (comp: Companion): boolean => comp.actions.some((a) =>
 
 /** Your level that an action's level steps count: one class's, or your character level. */
 export const ownerLevel = (owner: Character, levelOf = '') =>
-  levelOf ? owner.classes.filter((k) => k.classId === levelOf).reduce((n, k) => n + k.level, 0) : totalLevel(owner);
+  levelOf ? owner.classes.filter((k) => k.classId === levelOf || k.classId.endsWith(`:${levelOf}`)).reduce((n, k) => n + k.level, 0) : totalLevel(owner);
 
 /**
  * An action's damage dice as they stand at your level, with your numbers (and its spell's level)
@@ -176,6 +200,11 @@ export function actionExtra(a: CompanionAction, owner: Character, comp?: Pick<Co
   const level = ownerLevel(owner, a.levelOf);
   const step = [...(a.extra ?? [])].filter((x) => x.dice.trim() && x.level <= level).sort((x, y) => x.level - y.level).at(-1);
   return step ? tidyDice(resolveTokens(withSlot(step.dice, comp), owner)) : '';
+}
+
+/** The healing an action gives at your level and its spell's ("2d8 + {SLOT}" at 3rd → "2d8+3"), or ''. */
+export function actionHeal(a: CompanionAction, owner: Character, comp?: Pick<Companion, 'origin'> | null): string {
+  return typeof a.heal === 'string' && a.heal.trim() ? tidyDice(resolveTokens(withSlot(a.heal, comp), owner)) : '';
 }
 
 /** More damage on the same hit, each of its own type (a Poison Jab's "plus 1d4 Poison damage"). */

@@ -98,6 +98,14 @@ export function readAction(name: string, text: string, kind: CompanionAction['ki
     a.damage = extra[1].replace(/\s+/g, '');
     a.damageType = extra[2]?.toLowerCase() ?? '';
   }
+  // Healing it gives: "regains a number of Hit Points equal to 2d8 plus the spell's level",
+  // "regains 7 (2d8 + 3) Hit Points". ("Regains the same number of Hit Points" gives none.)
+  if (!a.attack) {
+    const equal = /\bregains?\s+(?:a number of\s+)?(?:hit points|HP)\s+equal to\s+([^.;,]+)/i.exec(t);
+    const dice = /\bregains?\s+(?:\d+\s*\()?(\d+d\d+(?:\s*[+-]\s*[\w{}]+)*)\)?\s+(?:hit points|HP)\b/i.exec(t);
+    const heal = equal ? tokenize(equal[1].trim()) : dice ? tokenize(dice[1]) : '';
+    if (heal && /\d|\{/.test(heal)) a.heal = heal.replace(/\s*\+\s*/g, ' + ');
+  }
   const save24 = /(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) Saving Throw:\s*(?:DC\s*)?([^,.]+)/i.exec(t);
   const save14 = /DC\s*(\d+|equals? your spell save DC)\s+(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/i.exec(t);
   if (save24) (a.save = ABILITY_WORD[save24[1].toLowerCase()]), (a.dc = tokenize(save24[2]));

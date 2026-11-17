@@ -12,7 +12,7 @@ import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/t
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type Ability, type StandardActionId } from '../systems/dnd5e/data';
 import { emptyTurn, uid, type BattleWho, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type RolledDamage, type Spell, type Weapon } from '../systems/dnd5e/model';
 import { allyWho, companionWho, damageTypeOf, enemyWho, inBattle, logEvent, retarget, saveIn, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
-import { actionDice, actionExtra, actionMore, actionType, compEval, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionHeal, actionMore, actionType, compEval, compMaxHp, compMod, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
 import type { CreatureDef } from '../systems/dnd5e/srd';
 import { useCatalog } from './catalog';
@@ -704,6 +704,24 @@ export function useTableState(char: Character, update: Update) {
         lines.push({ label: `${ABILITY_NAMES[action.save]} save`, total: dc ?? 0, detail: dc === null ? 'Set this action’s DC to see it here.' : `DC ${dc}`, kind: 'info' });
         if (dc !== null) verdict = { text: `DC ${dc}`, tone: 'info', note: `${ABBR(action.save)} save` };
       }
+      // Healing it gives (a steed's Healing Touch): rolled, then given to you or a companion from the result.
+      const heal = damage.length ? '' : actionHeal(action, c, comp);
+      if (heal && isValid(heal)) {
+        const r = safeRoll(heal);
+        const healed = Math.max(0, r.total);
+        lines.push({ label: 'Healing', total: healed, detail: describe(r), kind: 'healing' });
+        stage(
+          [phaseOf([counted([{ r, known: [], element: 'healing', orb: true }], healed, 'healing')])],
+          from,
+          () => {
+            perform({ element: 'healing', shape: 'touch', from, power: 1, outcome: 'hit', label: `+${healed}` });
+            push({ title, subtitle: warn || undefined, lines, element: 'healing', healing: healed });
+          },
+          {},
+          { look: 'orb', element: 'healing' },
+        );
+        return;
+      }
       if (!damage.length) {
         push({ title, subtitle: warn || undefined, lines: lines.length ? lines : [{ label: action.kind === 'trait' ? 'Trait' : 'Used', total: 0, detail: action.text || action.name, kind: 'info' }] });
         return;
@@ -1301,6 +1319,20 @@ export function useTableState(char: Character, update: Update) {
     [update],
   );
 
+  /** Healing from a result given to a companion, up to its maximum. */
+  const healCompanion = useCallback(
+    (id: string, amount: number, originEl?: Element | null) => {
+      if (amount <= 0) return;
+      update((d) => {
+        const k = d.companions.find((x) => x.id === id);
+        if (k) k.hp = Math.min(compMaxHp(k, d), k.hp + amount);
+      });
+      fx.healed(centerOf(originEl), amount);
+      sound.element('healing', { power: 1 });
+    },
+    [update],
+  );
+
   const deathSave = useCallback(
     (originEl?: Element | null) => {
       const r = safeRoll('1d20');
@@ -1603,12 +1635,13 @@ export function useTableState(char: Character, update: Update) {
       newTurn,
       damageSelf,
       healSelf,
+      healCompanion,
       deathSave,
       spendHitDie,
       rest,
       preview,
     }),
-    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, settleHit, settleSave, rollInitiative, moveRoll, concentrationSave, concentrationCheck, settleSaveCheck, settleOpen, logAction, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, deathSave, spendHitDie, rest, preview],
+    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, settleHit, settleSave, rollInitiative, moveRoll, concentrationSave, concentrationCheck, settleSaveCheck, settleOpen, logAction, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, healCompanion, deathSave, spendHitDie, rest, preview],
   );
 }
 

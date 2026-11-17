@@ -17,7 +17,7 @@ import { freeCastSources, inferSources, sourceName, sourceOptions } from '../sys
 import { fillSpell, spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
 import { describeSpellDef, readPastedSpells, SCHOOLS, spellToText, summonedCreature, type SpellPart } from '../systems/dnd5e/spellimport';
 import { companionAc, compMaxHp } from '../systems/dnd5e/companion';
-import { slotText, summonCompanion, summonForms } from '../systems/dnd5e/summon';
+import { slotText, summonCompanion, summonForms, upcastOf } from '../systems/dnd5e/summon';
 import type { SpellDef } from '../systems/dnd5e/srd';
 import { addSpellsToLibrary } from '../state/library';
 import { ABILITY_NAMES as ABILITY_LONG } from '../systems/dnd5e/data';
@@ -950,7 +950,9 @@ function SummonBox({ spell, level, description }: { spell: string; level: number
   if (!block) return null;
   const pick = forms.includes(form) ? form : (forms[0] ?? null);
   const base = Math.max(1, level);
-  const preview = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick }, c);
+  // What the spell's own text adds at a higher slot (Animate Objects' Slam dice).
+  const upcast = upcastOf(description.slice(0, Math.max(0, description.length - block.length)));
+  const preview = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick, upcast }, c);
   if (!preview) return null;
   const have = c.companions.find((k) => k.name.toLowerCase() === preview.name.toLowerCase());
   return (
@@ -980,7 +982,7 @@ function SummonBox({ spell, level, description }: { spell: string; level: number
           className="btn small"
           onClick={() => {
             update((d) => {
-              const k = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick }, d);
+              const k = summonCompanion(block, { spell: spell || 'a spell', base, cast: castAt, form: pick, upcast }, d);
               if (!k) return;
               const at = d.companions.findIndex((x) => x.name.toLowerCase() === k.name.toLowerCase());
               // Cast again: the same companion, its gear and element kept, at full HP for this casting.

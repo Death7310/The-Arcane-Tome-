@@ -198,6 +198,8 @@ export interface CompanionAction {
   extra?: { level: number; dice: string }[];
   /** More damage on the same hit, of its own type: a Giant Insect's Poison Jab "plus 1d4 Poison damage". */
   more?: { dice: string; type: string }[];
+  /** Healing it gives, tokens allowed: a steed's Healing Touch, "2d8 + {SLOT}". */
+  heal?: string;
 }
 
 /**
@@ -221,6 +223,12 @@ export interface CompanionOrigin {
   form: string;
   /** Its stat block as written, read again when its form changes. */
   block: string;
+  /**
+   * What its spell's own text says a higher slot adds that the stat block doesn't ("The
+   * creature's Slam damage increases by 1d4 (Medium or smaller), 1d6 (Large)… for each spell
+   * slot level above 5"), read with the stat block.
+   */
+  upcast?: string;
   /** A class feature's class ("ranger"), whose level its numbers follow; "" for your character level. */
   classId: string;
 }
@@ -882,6 +890,7 @@ export function readOrigin(raw: unknown): CompanionOrigin | null {
     form: typeof o.form === 'string' && forms.includes(o.form) ? o.form : (forms[0] ?? ''),
     block: typeof o.block === 'string' ? o.block : '',
     classId: typeof o.classId === 'string' ? o.classId : '',
+    ...(typeof o.upcast === 'string' && o.upcast.trim() ? { upcast: o.upcast } : {}),
   };
 }
 
