@@ -440,6 +440,15 @@ export function actionAttacks(c: Character): { per: number; made: number; nick: 
   return { per, made, nick, left, state };
 }
 
+/**
+ * Your DM's ruling that the Light property's Bonus Action swing comes after Nick's too (four
+ * attacks with Extra Attack), when it's on and you have two Light weapons, one with Nick.
+ */
+export function lightAfterNick(c: Character): boolean {
+  const lights = c.weapons.filter(isLight);
+  return !!c.rulings?.lightAfterNick && lights.length >= 2 && lights.some(hasNick);
+}
+
 /** A weapon with the Light property (Dagger, Scimitar, Shortsword…), which can make the Light extra attack. */
 export const isLight = (w: Weapon) => /\blight\b/i.test(w.properties);
 

@@ -10,7 +10,7 @@ import { addItemsToLibrary } from '../state/library';
 import { useCatalog } from '../state/catalog';
 import { AddItemDialog } from './Items';
 import { TargetStrip } from './Enemies';
-import { actionAttacks, armorClass, armorWarnings, attacksPerAction, hasNick, hitDice, isLight, lightExtraDamageBonus, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
+import { actionAttacks, armorClass, armorWarnings, attacksPerAction, hasNick, hitDice, isLight, lightAfterNick, lightExtraDamageBonus, maxHp, signed, speed, weaponAttack, weaponDamageBonus } from '../systems/dnd5e/rules';
 import { Check, ConfirmButton, NumField, Panel, SelectField, TextField, mathText } from './ui';
 import { isValid } from '../engine/dice';
 
@@ -279,6 +279,8 @@ function AttackAction() {
   const lights = c.weapons.filter(isLight);
   const offHand = lights.length >= 2;
   const nick = offHand && lights.some(hasNick);
+  // Your DM's ruling: one more off-hand swing, as your Bonus Action, after the Nick swing.
+  const ruled = nick && lightAfterNick(c);
   const made = c.turn.attacks;
   const swing = (w: Weapon, light = false) => {
     const atk = weaponAttack(c, w);
@@ -304,14 +306,14 @@ function AttackAction() {
   );
   // The off-hand swing needs an attack with a Light weapon first, then the other one.
   const otherLights = lights.filter((w) => c.turn.lightWith.some((id) => id !== w.id));
-  const total = per.count + (offHand ? 1 : 0);
-  const doneCount = Math.min(made, per.count) + (c.turn.lightExtra ? 1 : 0);
+  const total = per.count + (offHand ? 1 : 0) + (ruled ? 1 : 0);
+  const doneCount = Math.min(made, per.count) + (c.turn.lightExtra ? 1 : 0) + (ruled && c.turn.lightBonus ? 1 : 0);
   // A companion you command with your Bonus Action (a Drakewarden's drake); others act without one.
   const commanded = (k: (typeof c.companions)[number]) => /bonus action/i.test(k.notes) || k.actions.some((a) => /infused strikes/i.test(a.name));
   return (
     <section className="attack-action" aria-label="Attack action">
       <h4>
-        Your Attack action: {doneCount} of {total} made
+        {ruled ? 'Your attacks' : 'Your Attack action'}: {doneCount} of {total} made
       </h4>
       <ol className="attack-steps">
         {Array.from({ length: per.count }, (_, i) =>
@@ -326,9 +328,18 @@ function AttackAction() {
             !c.turn.lightExtra && otherLights.length > 0,
             otherLights.length ? otherLights.map((w) => swing(w, true)) : <span className="hint">Attack with a Light weapon first, then swing the other one.</span>,
           )}
+        {ruled &&
+          step(
+            'light2',
+            'Off-hand swing again',
+            'Your DM’s ruling: after the Nick swing, one more with your other Light weapon as your Bonus Action (as written, Nick’s is the only one). It takes your Bonus Action, so a companion can’t be commanded this turn.',
+            !!c.turn.lightBonus,
+            c.turn.lightExtra && !c.turn.lightBonus && !c.turn.bonus,
+            c.turn.bonus && !c.turn.lightBonus ? <span className="hint">Your Bonus Action is already used.</span> : otherLights.length ? otherLights.map((w) => swing(w, true)) : <span className="hint">After the Nick swing.</span>,
+          )}
       </ol>
       <p className="hint attack-turn">
-        <b>Bonus Action:</b> {c.turn.bonus ? 'used' : nick || !offHand ? 'free' : 'free, unless the off-hand swing takes it'}
+        <b>Bonus Action:</b> {c.turn.lightBonus ? 'used by the off-hand swing (your DM’s ruling)' : c.turn.bonus ? 'used' : ruled ? 'free: the 4th attack (off-hand swing again) or a companion’s command, not both' : nick || !offHand ? 'free' : 'free, unless the off-hand swing takes it'}
         {c.companions
           .filter(commanded)
           .map((k) => (
@@ -507,7 +518,9 @@ function LightExtraButton({ weapon: w }: { weapon: Weapon }) {
   const nick = hasNick(w);
   const dmg = lightExtraDamageBonus(c, w);
   const dice = w.damage.map((d, i) => `${i === 0 && dmg.bonus ? `${d.dice}${signed(dmg.bonus)}` : d.dice} ${d.type}`).join(' + ');
-  const ready = c.turn.lightWith.some((id) => id !== w.id) && !c.turn.lightExtra;
+  // By your DM's ruling, a second off-hand swing (a Bonus Action) follows the Nick swing.
+  const again = c.turn.lightExtra && lightAfterNick(c) && !c.turn.lightBonus;
+  const ready = c.turn.lightWith.some((id) => id !== w.id) && (!c.turn.lightExtra || (again && !c.turn.bonus));
   const title = [
     `Light extra attack with the ${w.name}: ${dice}.`,
     nick ? 'Nick: part of the Attack action, so your Bonus Action stays free.' : 'Uses your Bonus Action (the Nick mastery would make it part of the Attack action).',
@@ -515,8 +528,14 @@ function LightExtraButton({ weapon: w }: { weapon: Weapon }) {
     'Once per turn, after attacking with a different Light weapon in the Attack action.',
   ].join(' ');
   return (
-    <button type="button" className={`btn small${ready ? '' : ' ghost'}`} title={title} aria-label={`${nick ? 'Nick' : 'Bonus'} attack with the ${w.name}`} onClick={(e) => t.attack(w, e.currentTarget, { light: true })}>
-      {nick ? 'Nick' : 'Bonus'} {signed(weaponAttack(c, w).total)}
+    <button
+      type="button"
+      className={`btn small${ready ? '' : ' ghost'}`}
+      title={again ? `${title} Your DM’s ruling: one more off-hand swing now, as your Bonus Action.` : title}
+      aria-label={`${nick && !again ? 'Nick' : 'Bonus'} attack with the ${w.name}`}
+      onClick={(e) => t.attack(w, e.currentTarget, { light: true })}
+    >
+      {nick && !again ? 'Nick' : 'Bonus'} {signed(weaponAttack(c, w).total)}
     </button>
   );
 }
@@ -572,6 +591,17 @@ function AttackOptions({ twoLight }: { twoLight: boolean }) {
           nickOn,
           (b) => update((d) => setNick(d, b)),
           nickOn ? 'On: the off-hand swing is part of the Attack action, so your Bonus Action stays free' : 'Off: the off-hand swing uses your Bonus Action. Nick needs Weapon Mastery with the weapon',
+        )}
+      {twoLight &&
+        nickOn &&
+        row(
+          'opt-ruling-nick',
+          'My DM’s ruling: an off-hand Bonus Action swing after Nick’s too',
+          !!c.rulings?.lightAfterNick,
+          (b) => update((d) => void (d.rulings = { ...d.rulings, lightAfterNick: b })),
+          c.rulings?.lightAfterNick
+            ? 'On (a table ruling, not the rules as written): Extra Attack, Nick and one more off-hand swing as your Bonus Action'
+            : 'Off, by the rules as written: Nick moves the one Light extra attack into the Attack action, once per turn. Turn on only if your DM rules otherwise',
         )}
       <p className="hint turn-plan">
         {plan.text}

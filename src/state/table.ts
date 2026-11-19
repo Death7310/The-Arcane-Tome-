@@ -42,6 +42,7 @@ import {
   attacksPerAction,
   hasNick,
   isLight,
+  lightAfterNick,
   lightExtraDamageBonus,
   type Breakdown,
   type TestKind,
@@ -564,15 +565,23 @@ export function useTableState(char: Character, update: Update) {
       const from = centerOf(originEl);
       const to = fx.defaultTarget(from);
       const per = attacksPerAction(c);
-      const nick = light && hasNick(w);
+      // By your DM's ruling, after the Nick swing: one more off-hand swing, as your Bonus Action.
+      const ruled = lightAfterNick(c);
+      const bonusSwing = light && ruled && c.turn.lightExtra && !c.turn.lightBonus;
+      const nick = light && hasNick(w) && !bonusSwing;
       const turnNotes: string[] = [];
       if (light) {
-        turnNotes.push(nick ? 'Light extra attack, part of the Attack action (Nick)' : 'Light extra attack: your Bonus Action');
+        turnNotes.push(bonusSwing ? 'Off-hand swing again: your Bonus Action (your DM’s ruling)' : nick ? 'Light extra attack, part of the Attack action (Nick)' : 'Light extra attack: your Bonus Action');
         if (!c.turn.lightWith.some((id) => id !== w.id)) turnNotes.push('it needs the Attack action with a different Light weapon first this turn');
-        if (c.turn.lightExtra) turnNotes.push('you’ve already made it this turn');
+        if (c.turn.lightExtra && !bonusSwing) turnNotes.push(ruled ? 'you’ve made both off-hand swings this turn' : 'you’ve already made it this turn');
         else if (!nick && c.turn.bonus) turnNotes.push('your Bonus Action is already used');
         if (extra) turnNotes.push(extra.why);
         update((d) => {
+          if (bonusSwing) {
+            d.turn.lightBonus = true;
+            d.turn.bonus = true;
+            return;
+          }
           d.turn.lightExtra = true;
           if (!nick) d.turn.bonus = true;
         });

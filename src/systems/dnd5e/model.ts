@@ -344,6 +344,22 @@ export interface Turn {
   lightWith: string[];
   /** Whether the Light property's extra attack has been made this turn. */
   lightExtra: boolean;
+  /** By your DM's ruling (Rulings.lightAfterNick): whether the Bonus Action off-hand swing after Nick's has been made. */
+  lightBonus?: boolean;
+}
+
+/**
+ * Your DM's rulings for this character, where they differ from the rules as written. Each is
+ * off unless turned on, and the sheet says when one is in use.
+ */
+export interface Rulings {
+  /**
+   * After the Nick swing (the Light extra attack made part of the Attack action), one more
+   * off-hand swing with the Light weapon as a Bonus Action: Extra Attack, Nick and "two-weapon
+   * fighting" as four attacks. As written, Nick moves the one Light extra attack into the
+   * Attack action instead of the Bonus Action, once per turn.
+   */
+  lightAfterNick?: boolean;
 }
 
 export interface Character {
@@ -356,6 +372,8 @@ export interface Character {
   species: string;
   /** How the species was taken from the Species library (null: typed in, or from before). */
   speciesPick: SpeciesPick | null;
+  /** Your DM's rulings that change the rules as written (see Rulings). */
+  rulings?: Rulings;
   background: string;
   alignment: string;
   xp: number;
@@ -825,6 +843,7 @@ export function normalizeCharacter(raw: unknown): Character {
     party: Array.isArray(c.party) ? c.party.filter((n): n is string => typeof n === 'string' && !!n.trim()) : [],
     fight: normalizeFight(c.fight),
     speciesPick: readSpeciesPick(c.speciesPick),
+    rulings: c.rulings && typeof c.rulings === 'object' ? { ...(c.rulings.lightAfterNick === true ? { lightAfterNick: true } : {}) } : {},
     battle: readBattle(c.battle),
     battles: Array.isArray(c.battles) ? c.battles.map(readBattle).filter((b): b is Battle => !!b).slice(0, MAX_BATTLES) : [],
     counters: Array.isArray(c.counters) ? c.counters.filter((k) => k && typeof k === 'object').map((k) => blankCounter(k)) : [],

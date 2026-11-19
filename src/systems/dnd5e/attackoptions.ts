@@ -10,7 +10,7 @@
 
 import { WEAPONS } from './data';
 import { blankFeature, type Character, type Weapon } from './model';
-import { attacksPerAction, hasFightingStyle, hasNick, isLight } from './rules';
+import { attacksPerAction, hasFightingStyle, hasNick, isLight, lightAfterNick } from './rules';
 
 /** Where a feature turned on from the Attacks panel says it came from. */
 export const SWITCHED_ON = 'Turned on in Attacks';
@@ -51,7 +51,7 @@ export function setNick(d: Character, on: boolean) {
 }
 
 /** Your turn's attacks, in words, and how many: what the switches add up to. */
-export function turnPlan(c: Character): { attacks: number; light: 'none' | 'bonus' | 'nick'; twf: boolean; text: string } {
+export function turnPlan(c: Character): { attacks: number; light: 'none' | 'bonus' | 'nick'; twf: boolean; ruling: boolean; text: string } {
   const per = attacksPerAction(c);
   const lights = c.weapons.filter(isLight);
   const light = lights.length < 2 ? 'none' : lights.some(hasNick) ? 'nick' : 'bonus';
@@ -60,10 +60,14 @@ export function turnPlan(c: Character): { attacks: number; light: 'none' | 'bonu
   // weapon. Only with Nick is the Bonus Action still free for it.
   const dual = c.features.some((f) => /^(?:feat\s*:\s*)?dual wielder$/i.test(f.name.trim()));
   const dualSwing = dual && light === 'nick';
-  const attacks = per.count + (light === 'none' ? 0 : 1) + (dualSwing ? 1 : 0);
+  // Your DM's ruling: one more off-hand swing as a Bonus Action after Nick's (not the rules as written).
+  const ruling = light === 'nick' && lightAfterNick(c);
+  const attacks = per.count + (light === 'none' ? 0 : 1) + (dualSwing || ruling ? 1 : 0);
   const action = per.count === 1 ? 'Your Attack action is one attack' : `Your Attack action is ${per.count} attacks (${per.from})`;
   const extra =
-    light === 'nick'
+    light === 'nick' && ruling
+      ? `, plus the Nick swing with your other Light weapon in the same action, plus one more off-hand swing as your Bonus Action by your DM’s ruling: ${attacks} attacks, with no Bonus Action left for anything else (commanding a companion, Dual Wielder)`
+      : light === 'nick'
       ? `, plus the Nick swing with your other Light weapon in the same action: ${attacks} attacks, and your Bonus Action stays free`
       : light === 'bonus'
         ? `, plus one off-hand swing with your other Light weapon as your Bonus Action: ${attacks} attacks`
@@ -71,10 +75,18 @@ export function turnPlan(c: Character): { attacks: number; light: 'none' | 'bonu
   const damage = light === 'none' ? '' : twf ? ' The off-hand swing adds your modifier to its damage (Two-Weapon Fighting).' : ' The off-hand swing deals its dice without your modifier (Two-Weapon Fighting would add it).';
   const dw = !dual
     ? ''
-    : dualSwing
+    : ruling
+      ? ' Dual Wielder’s Bonus Action swing and your DM’s off-hand swing both need your one Bonus Action: one or the other.'
+      : dualSwing
       ? ` Dual Wielder: one more swing as your Bonus Action with a different one-handed melee weapon, ${attacks} attacks in all (and no Bonus Action left for anything else).`
       : light === 'bonus'
         ? ' Dual Wielder’s Bonus Action swing and the off-hand swing both need your one Bonus Action: one or the other.'
         : '';
-  return { attacks, light, twf, text: `${action}${dualSwing ? extra.replace(', and your Bonus Action stays free', '') : extra}.${damage}${dw}` };
+  const damageText = !ruling
+    ? damage
+    : twf
+      ? ' The off-hand swings add your modifier to their damage (Two-Weapon Fighting).'
+      : ' The off-hand swings deal their dice without your modifier (Two-Weapon Fighting would add it).';
+  const note = ruling ? ' (As written, Nick moves the one Light extra attack into the Attack action instead of the Bonus Action; this is your table’s ruling.)' : '';
+  return { attacks, light, twf, ruling, text: `${action}${dualSwing && !ruling ? extra.replace(', and your Bonus Action stays free', '') : extra}.${damageText}${dw}${note}` };
 }

@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { buildAnaurys } from './anaurys';
 import { extraAttackFeature, hasTwoWeaponFighting, nickWeapons, setExtraAttack, setNick, setTwoWeaponFighting, SWITCHED_ON, turnPlan } from './attackoptions';
 import { applyLevelUp, planLevelUp } from './leveling';
-import { attacksPerAction, lightExtraDamageBonus } from './rules';
+import { attacksPerAction, lightAfterNick, lightExtraDamageBonus } from './rules';
+import { blankFeature, normalizeCharacter } from './model';
 import classes from './srd/classes.json';
 import creatures from './srd/creatures.json';
 import feats from './srd/feats.json';
@@ -91,5 +92,53 @@ describe('the Dual Wielder feat, if a character takes it', () => {
     setNick(c, false);
     expect(turnPlan(c).attacks).toBe(3);
     expect(turnPlan(c).text).toContain('one or the other');
+  });
+});
+
+describe('your DM’s ruling: an off-hand Bonus Action swing after Nick’s', () => {
+  const ranger5 = () => {
+    const c = buildAnaurys(cat);
+    applyLevelUp(c, cat, planLevelUp(c, cat, 'ranger')!, { hpRoll: null, spells: [] });
+    return c;
+  };
+
+  it('is off by the rules as written: 3 attacks at Ranger 5', () => {
+    const c = ranger5();
+    expect(lightAfterNick(c)).toBe(false);
+    expect(turnPlan(c)).toMatchObject({ attacks: 3, ruling: false });
+  });
+
+  it('on: Extra Attack, the Nick swing and one more off-hand swing as the Bonus Action, 4 attacks', () => {
+    const c = ranger5();
+    c.rulings = { lightAfterNick: true };
+    expect(lightAfterNick(c)).toBe(true);
+    const plan = turnPlan(c);
+    expect(plan).toMatchObject({ attacks: 4, light: 'nick', ruling: true });
+    expect(plan.text).toContain('one more off-hand swing as your Bonus Action by your DM’s ruling: 4 attacks');
+    expect(plan.text).toContain('no Bonus Action left');
+    expect(plan.text).toContain('this is your table’s ruling');
+  });
+
+  it('needs Nick: without it the off-hand swing is the Bonus Action already, so nothing changes', () => {
+    const c = ranger5();
+    c.rulings = { lightAfterNick: true };
+    setNick(c, false);
+    expect(lightAfterNick(c)).toBe(false);
+    expect(turnPlan(c)).toMatchObject({ attacks: 3, light: 'bonus', ruling: false });
+  });
+
+  it('with Dual Wielder too, the two Bonus Action swings are one or the other', () => {
+    const c = ranger5();
+    c.rulings = { lightAfterNick: true };
+    c.features.push(blankFeature({ name: 'Dual Wielder', source: 'Feat', description: '', usesMax: null, recharge: 'none' }));
+    expect(turnPlan(c).attacks).toBe(4);
+    expect(turnPlan(c).text).toContain('one or the other');
+  });
+
+  it('is kept through a save, and reads anything else as off', () => {
+    const c = ranger5();
+    c.rulings = { lightAfterNick: true };
+    expect(normalizeCharacter(JSON.parse(JSON.stringify(c))).rulings).toEqual({ lightAfterNick: true });
+    expect(normalizeCharacter({ ...JSON.parse(JSON.stringify(c)), rulings: { lightAfterNick: 'yes' } }).rulings).toEqual({});
   });
 });
