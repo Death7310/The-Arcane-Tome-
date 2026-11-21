@@ -5,7 +5,9 @@
 import { describe, expect, it } from 'vitest';
 import { buildAnaurys } from './anaurys';
 import { DRAKE, HOMUNCULUS, LAND_BEAST } from './companion-samples';
-import { actionDice, actionHeal, actionMore, companionAc, companionMaxes, compEval, compMaxHp, followMaxHp, originOf, tidyDice } from './companion';
+import { actionDice, actionHeal, actionMore, availableBoosts, companionAc, companionMaxes, compEval, compMaxHp, depart, followMaxHp, goneAtZero, isHere, originOf, roundsOf, roundsText, tickSummons, tidyDice } from './companion';
+import { endConcentration, startFight } from './enemies';
+import { presentWho } from './battle';
 import { EXTRA_SUBCLASSES } from './extras';
 import { describeFormula } from './formula';
 import { applyLevelUp, levelDown, planLevelUp } from './leveling';
@@ -343,5 +345,94 @@ describe('Summon Beast cast by a Ranger', () => {
   it('a spell with no creature in it summons nothing', () => {
     const c = rangerWarlock();
     expect(castSummon(c, blankSpell({ name: 'Cure Wounds', level: 1, description: 'A creature you touch regains Hit Points.' }), 1)).toBeNull();
+  });
+});
+
+describe('a summoned creature is here for its spell’s duration', () => {
+  const summoner = (): Character => {
+    const c = ranger(5);
+    const def = readPastedSpells(SUMMON_BEAST)[0].def;
+    c.spells.push(blankSpell({ name: def.name, level: def.level, description: def.description, grantedBy: 'ranger', duration: def.duration, concentration: def.concentration }));
+    return c;
+  };
+  const cast = (c: Character, level = 2) => {
+    // As casting does: the old concentration ends first, then the creature comes.
+    endConcentration(c);
+    c.spellcasting.concentratingOn = 'Summon Beast';
+    const s = castSummon(c, c.spells[0], level)!;
+    if (s.index >= 0) c.companions[s.index] = s.comp;
+    else c.companions.push(s.comp);
+    return c.companions.find((k) => k.origin?.name === 'Summon Beast')!;
+  };
+
+  it('reads a duration in rounds', () => {
+    expect(roundsOf('Concentration, up to 1 hour')).toBe(600);
+    expect(roundsOf('1 minute')).toBe(10);
+    expect(roundsOf('8 hours')).toBe(4800);
+    expect(roundsOf('Instantaneous')).toBeNull();
+    expect(roundsText(600)).toBe('600 rounds (1 hour)');
+    expect(roundsText(10)).toBe('10 rounds (1 minute)');
+    expect(roundsText(15)).toBe('15 rounds (about 2 minutes)');
+    expect(roundsText(599)).toBe('599 rounds (about 1 hour)');
+  });
+
+  it('comes when cast, with an hour (600 rounds) on its clock and your concentration', () => {
+    const k = cast(summoner());
+    expect(k.origin).toMatchObject({ duration: 'Concentration, up to 1 hour', concentration: true });
+    expect(k.up).toMatchObject({ active: true, rounds: 600, why: '' });
+    expect(isHere(k)).toBe(true);
+  });
+
+  it('goes when your concentration on its spell ends, and drops out of the fight and your hits', () => {
+    const c = summoner();
+    const k = cast(c);
+    k.actions.push({ ...k.actions[0], id: 'boost', name: 'Help', kind: 'reaction', boost: true, damage: '1d4' });
+    expect(availableBoosts(c).some((b) => b.comp.id === k.id)).toBe(true);
+    endConcentration(c);
+    const gone = c.companions.find((x) => x.id === k.id)!;
+    expect(gone.up).toMatchObject({ active: false, why: 'Concentration on Summon Beast ended' });
+    expect(availableBoosts(c).some((b) => b.comp.id === k.id)).toBe(false);
+    expect(presentWho(c).some((w) => w.name === k.name)).toBe(false);
+    expect(startFight(c, 15, { enemies: {}, allies: [] }).order.some((x) => x.ref === k.id)).toBe(false);
+  });
+
+  it('casting it again brings it back, even when the new casting ends the old concentration', () => {
+    const c = summoner();
+    cast(c);
+    const again = cast(c, 3);
+    expect(again.up).toMatchObject({ active: true, rounds: 600 });
+    expect(again.origin?.cast).toBe(3);
+    expect(c.companions).toHaveLength(1);
+  });
+
+  it('goes at 0 Hit Points; a class companion (a drake) doesn’t', () => {
+    const c = summoner();
+    const k = cast(c);
+    k.hp = 0;
+    expect(goneAtZero(k)).toBe(true);
+    expect(k.up).toMatchObject({ active: false, why: 'Dropped to 0 Hit Points' });
+    const artex = buildAnaurys(cat).companions[0];
+    artex.hp = 0;
+    expect(goneAtZero(artex)).toBe(false);
+    expect(isHere(artex)).toBe(true);
+  });
+
+  it('counts its rounds down each New turn, and goes when they run out', () => {
+    const c = summoner();
+    const k = cast(c);
+    k.up!.rounds = 2;
+    expect(tickSummons(c)).toEqual([]);
+    expect(k.up!.rounds).toBe(1);
+    expect(tickSummons(c)).toEqual(['Bestial Spirit']);
+    expect(k.up).toMatchObject({ active: false, why: 'Its duration ran out' });
+  });
+
+  it('keeps here-or-gone through a save', () => {
+    const c = summoner();
+    const k = cast(c);
+    depart(k, 'Dismissed');
+    const again = normalizeCharacter(JSON.parse(JSON.stringify(c)));
+    expect(again.companions[0].up).toMatchObject({ active: false, rounds: 600, why: 'Dismissed' });
+    expect(normalizeCharacter({ ...JSON.parse(JSON.stringify(c)), companions: [{ ...JSON.parse(JSON.stringify(k)), up: { active: 'no' } }] }).companions[0].up).toBeNull();
   });
 });

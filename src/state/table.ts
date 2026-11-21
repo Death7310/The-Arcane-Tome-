@@ -12,7 +12,7 @@ import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/t
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type Ability, type StandardActionId } from '../systems/dnd5e/data';
 import { emptyTurn, uid, type BattleWho, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type RolledDamage, type Spell, type Weapon } from '../systems/dnd5e/model';
 import { allyWho, companionWho, damageTypeOf, enemyWho, inBattle, logEvent, retarget, saveIn, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
-import { actionDice, actionExtra, actionHeal, actionMore, actionType, compEval, compMaxHp, compMod, companionAc, companionWeaponAttack, compWeaponAbility } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionHeal, actionMore, actionType, compEval, compMaxHp, compMod, companionAc, companionWeaponAttack, compWeaponAbility, goneAtZero, isHere, summonsOf, tickSummons } from '../systems/dnd5e/companion';
 import { castSummon } from '../systems/dnd5e/summon';
 import { summonedCreature } from '../systems/dnd5e/spellimport';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
@@ -955,12 +955,15 @@ export function useTableState(char: Character, update: Update) {
       const mode = modeFor({ type: 'save', ability: 'con' });
       const noteSave = (kept: boolean) => (d: Character) =>
         void logEvent(d, { kind: 'save', by: null, target: youWho(d), what: k.spell, ability: 'con', dc: k.dc, saved: kept, concentration: true, low: 0, high: 0, type: '', roll: uid() });
+      // A summoning spell's creature goes with it.
+      const going = summonsOf(c, k.spell).map((x) => x.name);
+      const goes = going.length ? ` ${going.join(' and ')} disappear${going.length === 1 ? 's' : ''}.` : '';
       if (mode.autoFail) {
         update((d) => {
           endConcentration(d);
           noteSave(false)(d);
         });
-        return finish({ label: `Concentration save (DC ${k.dc})`, total: 0, detail: `${mode.autoFail}: concentration on ${k.spell} ends.`, kind: 'info', outcome: 'miss' });
+        return finish({ label: `Concentration save (DC ${k.dc})`, total: 0, detail: `${mode.autoFail}: concentration on ${k.spell} ends.${goes}`, kind: 'info', outcome: 'miss' });
       }
       const r = safeRoll(d20Expr(savingThrow(c, 'con').total, mode.adv) + mode.extra);
       const kept = r.total >= k.dc;
@@ -973,7 +976,7 @@ export function useTableState(char: Character, update: Update) {
         finish({
           label: `Concentration save (DC ${k.dc})`,
           total: r.total,
-          detail: [describe(r), mode.note, kept ? `You keep ${k.spell}.` : `Failed: ${k.spell} ends${marked.length ? `, and its mark comes off ${marked.join(', ')}` : ''}.`].filter(Boolean).join(' · '),
+          detail: [describe(r), mode.note, kept ? `You keep ${k.spell}.` : `Failed: ${k.spell} ends${marked.length ? `, and its mark comes off ${marked.join(', ')}` : ''}.${goes}`].filter(Boolean).join(' · '),
           kind: 'd20',
           nat: natOf(r),
           outcome: kept ? 'hit' : 'miss',
@@ -1049,11 +1052,6 @@ export function useTableState(char: Character, update: Update) {
       const summon = castSummon(c, spell, slotLevel);
 
       update((d) => {
-        const s = castSummon(d, spell, slotLevel);
-        if (s) {
-          if (s.index >= 0) d.companions[s.index] = s.comp;
-          else d.companions.push(s.comp);
-        }
         if (choice.kind === 'slot') d.spellcasting.slotsUsed[choice.level - 1] = (d.spellcasting.slotsUsed[choice.level - 1] ?? 0) + 1;
         if (choice.kind === 'pact') d.spellcasting.pactUsed += 1;
         if (choice.kind === 'points') {
@@ -1064,6 +1062,12 @@ export function useTableState(char: Character, update: Update) {
           // A new concentration spell (even the same one again) ends the old casting, and the marks it put on enemies.
           endConcentration(d);
           d.spellcasting.concentratingOn = spell.name;
+        }
+        // Its creature comes after the old casting has ended (so recasting it doesn't send the new one away).
+        const s = castSummon(d, spell, slotLevel);
+        if (s) {
+          if (s.index >= 0) d.companions[s.index] = s.comp;
+          else d.companions.push(s.comp);
         }
       });
       spendTime(spell.castingTime);
@@ -1289,14 +1293,20 @@ export function useTableState(char: Character, update: Update) {
 
   const newTurn = useCallback(() => {
     const ended = charRef.current.effects.filter((e) => e.rounds !== null && e.rounds <= 1).map((e) => e.name);
+    // A summon whose spell runs out this round goes.
+    const leaving = charRef.current.companions.filter((k) => isHere(k) && k.up?.rounds === 1).map((k) => k.name);
     update((d) => {
       d.turn = emptyTurn();
       // Companions act on your turn (or right after it), so theirs starts over too.
       d.companions.forEach((k) => void (k.turn = emptyTurn()));
       d.effects = d.effects.flatMap((e) => (e.rounds === null ? [e] : e.rounds <= 1 ? [] : [{ ...e, rounds: e.rounds - 1 }]));
+      tickSummons(d);
     });
     sound.click();
-    if (ended.length) push({ title: 'New turn', lines: [{ label: 'Ended', total: 0, detail: `${ended.join(', ')} ${ended.length === 1 ? 'has' : 'have'} worn off.`, kind: 'info' }] });
+    const lines: RollLine[] = [];
+    if (ended.length) lines.push({ label: 'Ended', total: 0, detail: `${ended.join(', ')} ${ended.length === 1 ? 'has' : 'have'} worn off.`, kind: 'info' });
+    if (leaving.length) lines.push({ label: 'Gone', total: 0, detail: `${leaving.join(' and ')}: ${leaving.length === 1 ? 'its' : 'their'} spell’s duration ran out.`, kind: 'info' });
+    if (lines.length) push({ title: 'New turn', lines });
   }, [push, update]);
 
   const damageSelf = useCallback(
@@ -1526,6 +1536,7 @@ export function useTableState(char: Character, update: Update) {
           const fromTemp = Math.min(k.tempHp, amount);
           k.tempHp -= fromTemp;
           k.hp = Math.max(0, k.hp - (amount - fromTemp));
+          goneAtZero(k);
         });
     },
     [settleHit, settleSave, update, damageSelf],
@@ -1559,6 +1570,7 @@ export function useTableState(char: Character, update: Update) {
               const fromTemp = Math.min(x.tempHp, amount);
               x.tempHp -= fromTemp;
               x.hp = Math.max(0, x.hp - (amount - fromTemp));
+              goneAtZero(x);
             });
             return `${k.name} takes ${amount}`;
           }

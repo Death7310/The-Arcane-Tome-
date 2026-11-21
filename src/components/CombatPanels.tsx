@@ -1,3 +1,4 @@
+import { isHere } from '../systems/dnd5e/companion';
 import { useRef, useState } from 'react';
 import { InspirationSlot } from './Inspiration';
 import { useChar } from '../state/character';
@@ -309,7 +310,7 @@ function AttackAction() {
   const total = per.count + (offHand ? 1 : 0) + (ruled ? 1 : 0);
   const doneCount = Math.min(made, per.count) + (c.turn.lightExtra ? 1 : 0) + (ruled && c.turn.lightBonus ? 1 : 0);
   // A companion you command with your Bonus Action (a Drakewarden's drake); others act without one.
-  const commanded = (k: (typeof c.companions)[number]) => /bonus action/i.test(k.notes) || k.actions.some((a) => /infused strikes/i.test(a.name));
+  const commanded = (k: (typeof c.companions)[number]) => isHere(k) && (/bonus action/i.test(k.notes) || k.actions.some((a) => /infused strikes/i.test(a.name)));
   return (
     <section className="attack-action" aria-label="Attack action">
       <h4>
@@ -363,7 +364,7 @@ function AttackAction() {
                 ))}
             </span>
           ))}
-        {c.companions.some((k) => k.actions.some((a) => a.boost)) && <span style={{ display: 'block', marginTop: 4 }}>Reaction: {c.companions.find((k) => k.actions.some((a) => a.boost))!.name}’s Infused Strikes is offered on your hits.</span>}
+        {c.companions.some((k) => isHere(k) && k.actions.some((a) => a.boost)) && <span style={{ display: 'block', marginTop: 4 }}>Reaction: {c.companions.find((k) => isHere(k) && k.actions.some((a) => a.boost))!.name}’s Infused Strikes is offered on your hits.</span>}
       </p>
     </section>
   );

@@ -7,6 +7,7 @@
 // against a Prone one from within 5 feet (Disadvantage from farther), Disadvantage against an
 // Invisible one, and hits from within 5 feet on a Paralyzed or Unconscious foe are critical.
 
+import { endSummons, isHere } from './companion';
 import { CONDITIONS, type Ability, type ConditionId } from './data';
 import { blankEnemy, uid, type Character, type Enemy, type EnemyHit, type EnemyMark, type EnemyStatus, type Fight, type FightEntry, type Spell } from './model';
 import type { CreatureDef } from './srd';
@@ -167,6 +168,8 @@ export function endConcentration(d: Character): string | null {
   if (!spell) return null;
   d.spellcasting.concentratingOn = null;
   for (const e of d.enemies) e.marks = e.marks.filter((m) => m.spell !== spell);
+  // A summoning spell's creature goes with it (Summon Beast's Bestial Spirit).
+  endSummons(d, spell);
   return spell;
 }
 
@@ -192,7 +195,7 @@ export function startFight(c: Pick<Character, 'name' | 'companions' | 'enemies'>
   ];
   const sorted = [you, ...rest].map((x, i) => ({ x, i })).sort((a, b) => b.x.initiative - a.x.initiative || a.i - b.i).map(({ x }) => x);
   const at = sorted.indexOf(you);
-  const companions = c.companions.map((k) => ({ id: uid(), kind: 'companion' as const, ref: k.id, name: k.name, initiative: mine }));
+  const companions = c.companions.filter(isHere).map((k) => ({ id: uid(), kind: 'companion' as const, ref: k.id, name: k.name, initiative: mine }));
   sorted.splice(at + 1, 0, ...companions);
   return { round: 1, turn: 0, order: sorted };
 }

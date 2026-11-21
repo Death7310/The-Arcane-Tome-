@@ -4,7 +4,7 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { choiceLabel, ordinal, useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, CLASSES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
-import { actionDice, actionExtra, actionHeal, actionMore, actionType, boostOf, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionHeal, actionMore, actionType, arrive, boostOf, depart, goneAtZero, isHere, isSummon, roundsOf, roundsText, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, isFormula } from '../systems/dnd5e/formula';
 import { blankCompanion, blankCompanionAction, readOrigin, uid, type Character, type Companion, type CompanionAction, type CompanionOrigin } from '../systems/dnd5e/model';
 import { abilityMod, casterType, pactSlots, signed, spellAbility, spellAttack, spellSaveDc, spellSlots, totalLevel, usesSpellPoints } from '../systems/dnd5e/rules';
@@ -176,6 +176,8 @@ function HowItComes({ value, owner, onChange, idBase, detectedClass = '' }: { va
           <SelectField label="Cast at" id={`${idBase}-cast`} value={String(value.cast)} options={LEVELS.filter((n) => n >= value.base).map((n) => ({ id: String(n), name: `${ordinal(n)} level` }))} onChange={(v) => set({ cast: Number(v) })} />
           {value.forms.length > 0 && <SelectField label="Form" id={`${idBase}-form`} value={value.form} options={value.forms.map((f) => ({ id: f, name: f }))} onChange={(v) => set({ form: v })} />}
           <SelectField label="Cast with" id={`${idBase}-castby`} value={value.castBy ?? ''} options={castWithOptions(owner, value.castBy)} onChange={(v) => set({ castBy: v || undefined })} />
+          <TextField label="Duration" id={`${idBase}-dur`} value={value.duration ?? ''} placeholder="Concentration, up to 1 hour" onChange={(v) => set({ duration: v, concentration: /concentration/i.test(v) || undefined })} />
+          <Check label="Needs your concentration" id={`${idBase}-conc`} checked={!!value.concentration} onChange={(b) => set({ concentration: b })} />
         </div>
       )}
       {value.kind === 'feature' && (
@@ -191,6 +193,56 @@ function HowItComes({ value, owner, onChange, idBase, detectedClass = '' }: { va
             ? 'Wherever its stat block counts your level in a class (“five times your Ranger level”), that class is used, so it grows when you level up, and gains the Hit Points as you do.'
             : 'Its own numbers, with a Proficiency Bonus from its CR. Anything that uses yours (your Proficiency Bonus, spell attack or save DC) still follows you.'}
       </p>
+    </div>
+  );
+}
+
+/**
+ * A spell's creature: here (with its spell's duration and the rounds it has left) or gone (and
+ * why), as a switch. Tapping Here sends it away; tapping Gone brings it back as it was (a slip,
+ * or the DM says it stayed). Casting its spell again brings it back new.
+ */
+function SummonState({ comp, idx }: { comp: Companion; idx: number }) {
+  const { char: c, update } = useChar();
+  const o = originOf(comp);
+  const here = isHere(comp);
+  const up = comp.up;
+  const duration = o.duration ? (/^instantaneous$/i.test(o.duration) ? 'Stays until dismissed or at 0 HP' : o.duration) : 'Duration not set (Edit → How it comes to you)';
+  const left = here && up && up.rounds !== null ? `${roundsText(up.rounds)} left` : '';
+  const since = here && up ? `since ${new Date(up.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
+  return (
+    <div className={`summon-state${here ? ' here' : ' gone'}`}>
+      <button
+        type="button"
+        className="summon-toggle"
+        aria-pressed={here}
+        title={here ? `${comp.name} is here. Tap if it's gone (dismissed, or the DM says so).` : `${comp.name} is gone. Tap to bring it back as it was.`}
+        onClick={() =>
+          update((d) => {
+            const k = d.companions[idx];
+            if (isHere(k)) depart(k, 'Dismissed');
+            else k.up = { ...(k.up ?? { since: Date.now(), rounds: roundsOf(k.origin?.duration ?? '') }), active: true, why: '' };
+          })
+        }
+      >
+        <span className="dot" aria-hidden="true" />
+        {here ? 'Here' : 'Gone'}
+      </button>
+      <span className="hint">
+        {here
+          ? [
+              !o.concentration
+                ? duration
+                : c.spellcasting.concentratingOn?.trim().toLowerCase() === o.name.trim().toLowerCase()
+                  ? `${duration} (you're concentrating on it)`
+                  : `${duration} (it needs your concentration, and you're not concentrating on ${o.name || 'its spell'})`,
+              left,
+              since,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : `${up?.why || 'Gone'}. Cast ${o.name || 'its spell'} again to summon it, or tap Gone to bring it back as it was.`}
+      </span>
     </div>
   );
 }
@@ -332,7 +384,12 @@ export function CompanionsPanel() {
         <AddCompanion
           onClose={() => setAdding(false)}
           onAdd={(comp) => {
-            update((d) => void d.companions.push({ ...comp, hp: compMaxHp(comp, d) }));
+            update((d) => {
+              const k = { ...comp, hp: compMaxHp(comp, d) };
+              // A spell's creature arrives with its duration starting.
+              if (isSummon(k) && !k.up) arrive(k);
+              d.companions.push(k);
+            });
             setOpen(comp.id);
             setAdding(false);
           }}
@@ -365,7 +422,10 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
       const fromTemp = Math.min(k.tempHp, n);
       k.tempHp -= fromTemp;
       k.hp = Math.max(0, k.hp - (n - fromTemp));
+      // A spell's creature at 0 Hit Points disappears.
+      goneAtZero(k);
     });
+  const here = isHere(comp);
   const toggleTurn = (part: 'action' | 'bonus' | 'reaction') => set((k) => void (k.turn[part] = !k.turn[part]));
   // Its conditions play their themed effect as they take hold or end, like yours.
   const toggleCondition = (id: ConditionId, el: HTMLElement) => {
@@ -375,7 +435,7 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
   };
 
   return (
-    <div className={`companion${down ? ' down' : ''}`}>
+    <div className={`companion${down ? ' down' : ''}${here ? '' : ' gone'}`}>
       <div className="comp-head">
         <button type="button" className="comp-title" onClick={onToggle} aria-expanded={expanded}>
           <b>{comp.name}</b>
@@ -397,6 +457,9 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
       <div className="comp-hpbar" aria-hidden="true">
         <span style={{ width: `${hpPct}%` }} />
       </div>
+      {isSummon(comp) && <SummonState comp={comp} idx={idx} />}
+      {here && (
+        <>
       <div className="row comp-hp">
         <NumField value={amount} min={0} ariaLabel={`Amount for ${comp.name}`} id={`comp-amt-${comp.id}`} onChange={setAmount} />
         <button type="button" className="btn small" style={{ color: 'var(--bad)' }} onClick={() => hurt(amount)}>
@@ -466,6 +529,8 @@ function CompanionCard({ comp, idx, expanded, onToggle }: { comp: Companion; idx
         </div>
       )}
       {hasEssence(comp) && <ElementPicker companionId={comp.id} />}
+        </>
+      )}
 
       {expanded && !editing && (
         <div className="comp-sheet">
@@ -868,7 +933,10 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
   const [choice, setChoice] = useState<CompanionOrigin | null>(null);
   // Your spells and the rules', to find the spell a creature comes from ("…uses the Bestial Spirit stat block").
   const spellRefs = useMemo(
-    () => [...c.spells.map((x) => ({ name: x.name, level: x.level, description: x.description })), ...(cat?.spells ?? []).map((x) => ({ name: x.name, level: x.level, description: x.description }))],
+    () => [
+      ...c.spells.map((x) => ({ name: x.name, level: x.level, description: x.description, duration: x.duration, concentration: x.concentration })),
+      ...(cat?.spells ?? []).map((x) => ({ name: x.name, level: x.level, description: x.description, duration: x.duration, concentration: x.concentration })),
+    ],
     [c.spells, cat],
   );
   const read = () => {
@@ -885,6 +953,8 @@ function AddCompanion({ onClose, onAdd }: { onClose: () => void; onAdd: (c: Comp
             form: r.forms[0] ?? '',
             classId: r.classId,
             upcast: r.upcast,
+            duration: r.spell?.duration,
+            concentration: r.spell?.concentration,
             // Cast with the class you have the spell from (your Ranger's Summon Beast).
             castBy: c.spells.find((x) => r.spell && x.name.trim().toLowerCase() === r.spell.name.trim().toLowerCase())?.grantedBy || undefined,
           })

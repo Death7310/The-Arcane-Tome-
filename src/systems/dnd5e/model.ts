@@ -238,6 +238,9 @@ export interface CompanionOrigin {
   castBy?: string;
   /** The ability a feat's spell is cast with, when it sets one. */
   castAbility?: Ability;
+  /** Its spell's duration as written ("Concentration, up to 1 hour"), and whether it needs your concentration. */
+  duration?: string;
+  concentration?: boolean;
 }
 
 /**
@@ -287,6 +290,8 @@ export interface Companion {
   essence: string;
   /** How it comes to you (a spell, a class feature, a creature); unset on older sheets. */
   origin?: CompanionOrigin | null;
+  /** A spell's creature: whether it's here now, for how long, or why it's gone. Unset: here. */
+  up?: Summoned | null;
 }
 
 export interface Item {
@@ -804,6 +809,7 @@ export function blankCompanion(partial: Partial<Companion> = {}): Companion {
     inventory: Array.isArray(partial.inventory) ? partial.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
     weapons: Array.isArray(partial.weapons) ? partial.weapons.map((w) => blankWeapon(w)) : [],
     origin: readOrigin(partial.origin),
+    up: readSummoned(partial.up),
     armor: partial.armor && typeof partial.armor.armorId === 'string' ? { ...{ shield: false, magicBonus: 0 }, ...(partial.armor as Partial<NonNullable<Companion['armor']>>), armorId: partial.armor.armorId } : null,
   };
 }
@@ -919,6 +925,32 @@ export function readOrigin(raw: unknown): CompanionOrigin | null {
     ...(typeof o.upcast === 'string' && o.upcast.trim() ? { upcast: o.upcast } : {}),
     ...(typeof o.castBy === 'string' && o.castBy ? { castBy: o.castBy } : {}),
     ...(typeof o.castAbility === 'string' && (ABILITIES as readonly string[]).includes(o.castAbility) ? { castAbility: o.castAbility } : {}),
+    ...(typeof o.duration === 'string' && o.duration.trim() ? { duration: o.duration.trim() } : {}),
+    ...(typeof o.concentration === 'boolean' ? { concentration: o.concentration } : {}),
+  };
+}
+
+/** A summoned creature's stay: here (with the rounds its spell has left) or gone, and why. */
+export interface Summoned {
+  active: boolean;
+  /** When it came (real time), shown beside its duration. */
+  since: number;
+  /** Rounds its spell has left, counted down each New turn; null when its duration isn't counted ("Instantaneous", untimed). */
+  rounds: number | null;
+  /** Why it's gone: "Dismissed", "Concentration on Summon Beast ended", "Dropped to 0 Hit Points", "Its duration ran out". */
+  why: string;
+}
+
+/** A summon's stay from a save, or null. */
+export function readSummoned(raw: unknown): Summoned | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const u = raw as Partial<Summoned>;
+  if (typeof u.active !== 'boolean') return null;
+  return {
+    active: u.active,
+    since: typeof u.since === 'number' && Number.isFinite(u.since) ? u.since : Date.now(),
+    rounds: typeof u.rounds === 'number' && Number.isFinite(u.rounds) ? Math.max(0, Math.round(u.rounds)) : null,
+    why: typeof u.why === 'string' ? u.why : '',
   };
 }
 

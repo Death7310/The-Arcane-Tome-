@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { multiplyDice } from '../engine/dice';
 import { useChar } from '../state/character';
 import { useTable, type Advantage, type RollEntry } from '../state/table';
-import { availableBoosts, compMaxHp } from '../systems/dnd5e/companion';
+import { availableBoosts, compMaxHp, isHere } from '../systems/dnd5e/companion';
 import { ElementPicker } from './CompanionsPanel';
 
 export function EntryView({
@@ -243,7 +243,7 @@ export function ResultCard() {
           t.healSelf(n, el);
           t.dismissLatest();
         }}
-        companions={c.companions.map((k) => ({ id: k.id, name: k.name, hp: k.hp, max: compMaxHp(k, c) }))}
+        companions={c.companions.filter(isHere).map((k) => ({ id: k.id, name: k.name, hp: k.hp, max: compMaxHp(k, c) }))}
         onHealCompanion={(id, n, el) => {
           t.healCompanion(id, n, el);
           t.dismissLatest();

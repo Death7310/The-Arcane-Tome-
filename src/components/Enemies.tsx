@@ -8,7 +8,7 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { choiceLabel, ordinal, useTable, type SlotChoice } from '../state/table';
 import { CONDITIONS, DAMAGE_TYPES, type ConditionId } from '../systems/dnd5e/data';
-import { actionDice, actionType } from '../systems/dnd5e/companion';
+import { actionDice, actionType, isHere } from '../systems/dnd5e/companion';
 import {
   acText,
   attackAgainst,
@@ -344,7 +344,7 @@ function AttackButtons({ c }: { c: Character }) {
   const t = useTable();
   const [casting, setCasting] = useState(false);
   const aimed = c.spells.filter((s) => s.level === 0 || s.prepared).filter((s) => s.resolution === 'attack' || s.resolution === 'save' || s.resolution === 'auto' || markFromSpell(s));
-  const companionAttacks: { key: string; label: string; sub?: string; run: (el: HTMLElement) => void }[] = c.companions.flatMap((k) => [
+  const companionAttacks: { key: string; label: string; sub?: string; run: (el: HTMLElement) => void }[] = c.companions.filter(isHere).flatMap((k) => [
     ...k.weapons.map((w) => ({ key: `${k.id}-${w.id}`, label: `${k.name}: ${w.name}`, run: (el: HTMLElement) => t.companionWeapon(k, w, el) })),
     ...k.actions.filter((a) => a.attack).map((a) => ({ key: `${k.id}-${a.id}`, label: `${k.name}: ${a.name}`, sub: `${actionDice(a, c, k)} ${actionType(k, a)}`.trim(), run: (el: HTMLElement) => t.companionAct(k, a, el) })),
   ]);

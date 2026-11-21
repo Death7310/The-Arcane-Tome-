@@ -3,6 +3,7 @@
 // rounds, and starts your turn over (Action, Bonus Action, Reaction, movement, and your
 // companions' turns) when it comes back to you.
 
+import { isHere } from '../systems/dnd5e/companion';
 import { useState } from 'react';
 import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
@@ -44,7 +45,7 @@ export function InitiativePanel() {
                 Roll
               </button>
             </div>
-            {c.companions.length > 0 && <p className="hint" style={{ margin: 0 }}>{c.companions.map((k) => k.name).join(', ')} go right after you.</p>}
+            {c.companions.some(isHere) && <p className="hint" style={{ margin: 0 }}>{c.companions.filter(isHere).map((k) => k.name).join(', ')} go right after you.</p>}
             {c.enemies.map((e) => (
               <div className="fight-row" key={e.id}>
                 <span>{e.name}</span>

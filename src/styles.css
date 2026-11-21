@@ -946,3 +946,12 @@ button.stat:hover { border-color: var(--gilt); }
 .attack-step-head small { color: var(--muted); font-size: 12.5px; }
 .attack-step-buttons { flex-wrap: wrap; gap: 6px; }
 .attack-turn { margin: 0; }
+
+/* A summoned companion: here (with its spell's duration) or gone. */
+.summon-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px; }
+.summon-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.summon-toggle .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.summon-state.here .summon-toggle { border-color: color-mix(in srgb, var(--good) 70%, transparent); color: var(--good); }
+.summon-state.here .summon-toggle .dot { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+.companion.gone > .comp-head, .companion.gone > .comp-hpbar { opacity: 0.55; }
+.companion.gone .summon-toggle { color: var(--muted); }

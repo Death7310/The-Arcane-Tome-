@@ -235,12 +235,86 @@ export function availableBoosts(owner: Character, attackerId = ''): Boost[] {
   const out: Boost[] = [];
   for (const comp of owner.companions) {
     if (comp.id === attackerId) continue;
+    // A summon that's gone can't react.
+    if (!isHere(comp)) continue;
     for (const action of comp.actions) {
       const b = boostOf(action);
       if (!b) continue;
       const by = incapacitatedBy(comp);
       const blocked = comp.hp <= 0 ? 'at 0 HP' : by ? by : comp.turn.reaction ? 'reaction used' : '';
       out.push({ comp, action, dice: actionDice(action, owner, comp), type: b.type || comp.essence, blocked });
+    }
+  }
+  return out;
+}
+
+// ── A summoned creature's stay ──────────────────────────────────────────────
+// A spell's creature is here for its spell's duration: until you dismiss it, your concentration
+// on its spell ends, it drops to 0 Hit Points (Summon Beast: "The creature disappears when it
+// drops to 0 hit points or when the spell ends"), or the duration runs out. A gone creature's
+// attacks, reactions and commands drop out of the sheet until it's summoned again.
+
+/** Whether it's here: a spell's creature that's gone isn't; every other companion is. */
+export const isHere = (k: Pick<Companion, 'up'>): boolean => k.up?.active !== false;
+
+/** Whether it comes and goes by a spell (and has a here-or-gone switch). */
+export const isSummon = (k: Pick<Companion, 'origin' | 'ac' | 'maxHp' | 'pb' | 'actions' | 'kind' | 'source'>): boolean => originOf(k).kind === 'spell';
+
+/** Rounds in a duration: "1 minute" is 10, "Concentration, up to 1 hour" 600; null for "Instantaneous" or "Until dispelled". */
+export function roundsOf(duration: string): number | null {
+  const m = /(\d+)\s*(round|minute|hour|day)s?\b/i.exec(duration);
+  if (!m) return null;
+  const per = { round: 1, minute: 10, hour: 600, day: 14400 }[m[2].toLowerCase() as 'round' | 'minute' | 'hour' | 'day'];
+  return Number(m[1]) * per;
+}
+
+/** "600 rounds (1 hour)", "9 rounds (about 1 minute)": rounds left, with the time they come to. */
+export function roundsText(rounds: number): string {
+  const minutes = rounds / 10;
+  const exact = Number.isInteger(minutes) || minutes < 1;
+  const whole = Math.round(minutes);
+  const hours = Math.round((minutes / 60) * 10) / 10;
+  const time = whole >= 60 ? `${hours} hour${hours === 1 ? '' : 's'}` : minutes >= 1 ? `${whole} minute${whole === 1 ? '' : 's'}` : `${rounds * 6} seconds`;
+  return `${rounds} round${rounds === 1 ? '' : 's'} (${exact ? '' : 'about '}${time})`;
+}
+
+/** It comes (a casting): here now, its duration starting. */
+export function arrive(k: Companion) {
+  k.up = { active: true, since: Date.now(), rounds: roundsOf(k.origin?.duration ?? ''), why: '' };
+}
+
+/** It goes, and why. */
+export function depart(k: Companion, why: string) {
+  k.up = { active: false, since: k.up?.since ?? Date.now(), rounds: k.up?.rounds ?? null, why };
+}
+
+/** A spell's creature at 0 Hit Points disappears. Call after its HP changes; true if it went. */
+export function goneAtZero(k: Companion): boolean {
+  if (k.hp > 0 || !isHere(k) || !isSummon(k)) return false;
+  depart(k, 'Dropped to 0 Hit Points');
+  return true;
+}
+
+/** Your spell's creatures that are here (Summon Beast's Bestial Spirit while you concentrate on it). */
+export const summonsOf = (c: Pick<Character, 'companions'>, spell: string): Companion[] =>
+  c.companions.filter((k) => isHere(k) && k.origin?.kind === 'spell' && k.origin.name.trim().toLowerCase() === spell.trim().toLowerCase());
+
+/** Your concentration on a spell ended: its creatures go. Returns their names. */
+export function endSummons(d: Character, spell: string): string[] {
+  const gone = summonsOf(d, spell);
+  for (const k of gone) depart(k, `Concentration on ${spell} ended`);
+  return gone.map((k) => k.name);
+}
+
+/** A New turn: each summon's duration counts down a round, and one that runs out goes. Returns their names. */
+export function tickSummons(d: Character): string[] {
+  const out: string[] = [];
+  for (const k of d.companions) {
+    if (!isHere(k) || !k.up || k.up.rounds === null) continue;
+    k.up.rounds = Math.max(0, k.up.rounds - 1);
+    if (k.up.rounds === 0) {
+      depart(k, 'Its duration ran out');
+      out.push(k.name);
     }
   }
   return out;

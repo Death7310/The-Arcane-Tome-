@@ -11,6 +11,7 @@
 // The battle starts by itself with the first thing that happens while there are enemies on the
 // field or a fight in initiative, and is kept when you end it.
 
+import { isHere } from './companion';
 import type { CreatureDef } from './srd';
 import { acText, damageTo, hurt, knownMaxHp, STATUS_NAMES, statusOf, tally } from './enemies';
 import { conditionName } from './rules';
@@ -31,7 +32,7 @@ export const inBattle = (c: Pick<Character, 'fight' | 'enemies' | 'battle'>): bo
 
 /** Everyone on the field now: you, your companions, your party in the fight, and the enemies. */
 export function presentWho(c: Character): BattleWho[] {
-  const out: BattleWho[] = [youWho(c), ...c.companions.map(companionWho)];
+  const out: BattleWho[] = [youWho(c), ...c.companions.filter(isHere).map(companionWho)];
   for (const x of c.fight?.order ?? []) if (x.kind === 'ally') out.push(allyWho(x.name));
   out.push(...c.enemies.map(enemyWho));
   return out;
