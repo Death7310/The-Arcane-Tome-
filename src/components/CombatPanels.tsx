@@ -259,10 +259,38 @@ export function TurnPanel() {
       </div>
       {attacking && c.weapons.length > 0 && <AttackAction />}
       {attacking && !c.weapons.length && <p className="hint">No weapons yet: add them in Attacks.</p>}
+      <TimePasses />
       <p className="hint" style={{ marginBottom: 0 }}>
         Attacks, spells and features mark the Action, Bonus Action or Reaction they use. Hover an action for its rule.
       </p>
     </Panel>
+  );
+}
+
+/**
+ * Time passing outside a fight, for what counts it (a summon's hour, Bless's minute): a minute,
+ * ten or an hour. In a fight, New turn counts a round; a Short Rest is an hour, a Long Rest 8.
+ */
+function TimePasses() {
+  const { char: c } = useChar();
+  const t = useTable();
+  const counting = c.effects.some((e) => e.rounds !== null) || c.companions.some((k) => isHere(k) && k.up?.rounds != null);
+  if (!counting) return null;
+  return (
+    <div className="row time-passes" role="group" aria-label="Time passes">
+      <span className="hint">Time passes:</span>
+      {(
+        [
+          [10, '1 minute'],
+          [100, '10 minutes'],
+          [600, '1 hour'],
+        ] as const
+      ).map(([rounds, label]) => (
+        <button key={label} type="button" className="btn small ghost" onClick={() => t.passTimeBy(rounds)} title={`${label} goes by: your timed effects and summons count it down`}>
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

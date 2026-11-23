@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildAnaurys } from './anaurys';
 import { DRAKE, HOMUNCULUS, LAND_BEAST } from './companion-samples';
-import { actionDice, actionHeal, actionMore, availableBoosts, companionAc, companionMaxes, compEval, compMaxHp, depart, followMaxHp, goneAtZero, isHere, originOf, roundsOf, roundsText, tickSummons, tidyDice } from './companion';
+import { actionDice, actionHeal, actionMore, availableBoosts, companionAc, companionMaxes, compEval, compMaxHp, depart, durationFor, followMaxHp, goneAtZero, isHere, originOf, passTime, roundsOf, roundsText, tickSummons, tidyDice, timeText } from './companion';
 import { endConcentration, startFight } from './enemies';
 import { presentWho } from './battle';
 import { EXTRA_SUBCLASSES } from './extras';
@@ -434,5 +434,45 @@ describe('a summoned creature is here for its spell’s duration', () => {
     const again = normalizeCharacter(JSON.parse(JSON.stringify(c)));
     expect(again.companions[0].up).toMatchObject({ active: false, rounds: 600, why: 'Dismissed' });
     expect(normalizeCharacter({ ...JSON.parse(JSON.stringify(c)), companions: [{ ...JSON.parse(JSON.stringify(k)), up: { active: 'no' } }] }).companions[0].up).toBeNull();
+  });
+});
+
+describe('time passing for summons and effects', () => {
+  const withSpirit = (): Character => {
+    const c = ranger(5);
+    const def = readPastedSpells(SUMMON_BEAST)[0].def;
+    c.spells.push(blankSpell({ name: def.name, level: def.level, description: def.description, grantedBy: 'ranger', duration: def.duration, concentration: def.concentration }));
+    const s = castSummon(c, c.spells[0], 2)!;
+    c.companions.push(s.comp);
+    c.effects.push({ id: 'bless', name: 'Bless', rounds: 10, bonus: '1d4', attacks: true, saves: true, checks: false, ac: 0, note: '' });
+    return c;
+  };
+
+  it('ten minutes: Bless (a minute) wears off; the spirit has 50 minutes left', () => {
+    const c = withSpirit();
+    expect(passTime(c, 100)).toEqual({ effects: ['Bless'], summons: [] });
+    expect(c.effects).toEqual([]);
+    expect(c.companions[0].up?.rounds).toBe(500);
+  });
+
+  it('an hour (a Short Rest) and the 1-hour spirit is gone', () => {
+    const c = withSpirit();
+    expect(passTime(c, 600).summons).toEqual(['Bestial Spirit']);
+    expect(c.companions[0].up).toMatchObject({ active: false, why: 'Its duration ran out' });
+  });
+
+  it('says time plainly', () => {
+    expect([10, 100, 600, 4800, 3].map(timeText)).toEqual(['1 minute', '10 minutes', '1 hour', '8 hours', '3 rounds']);
+  });
+
+  it('a spirit from before durations were kept takes its spell’s, from your spells, when the sheet loads', () => {
+    const c = withSpirit();
+    const k = c.companions[0];
+    k.origin = { ...k.origin!, duration: undefined, concentration: undefined };
+    k.up = undefined;
+    expect(durationFor(k, c.spells)).toEqual({ duration: 'Concentration, up to 1 hour', concentration: true });
+    const again = normalizeCharacter(JSON.parse(JSON.stringify(c)));
+    expect(again.companions[0].origin).toMatchObject({ duration: 'Concentration, up to 1 hour', concentration: true });
+    expect(isHere(again.companions[0])).toBe(true);
   });
 });

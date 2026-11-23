@@ -860,6 +860,13 @@ export function normalizeCharacter(raw: unknown): Character {
     inventory: Array.isArray(c.inventory) ? c.inventory.map((i): Item => ({ ...{ id: uid(), name: '', qty: 1, weight: 0, notes: '' }, ...(i as Partial<Item>) })) : [],
   };
   while (merged.spellcasting.slotsUsed.length < 9) merged.spellcasting.slotsUsed.push(0);
+  // A spell's creature from before durations were kept takes its spell's, from your spells.
+  for (const k of merged.companions) {
+    if (k.origin?.kind !== 'spell' || k.origin.duration) continue;
+    const name = k.origin.name.trim().toLowerCase();
+    const sp = merged.spells.find((x) => x.name.trim().toLowerCase() === name && x.duration.trim());
+    if (sp) k.origin = { ...k.origin, duration: sp.duration.trim(), concentration: sp.concentration };
+  }
   const sc = merged.spellcasting;
   sc.system = sc.system === 'points' ? 'points' : 'slots';
   sc.pointsUsed = Number.isFinite(sc.pointsUsed) ? Math.max(0, sc.pointsUsed) : 0;

@@ -4,7 +4,7 @@ import { useCatalog } from '../state/catalog';
 import { useChar } from '../state/character';
 import { choiceLabel, ordinal, useTable } from '../state/table';
 import { ABILITIES, ABILITY_NAMES, CLASSES, CONDITIONS, DAMAGE_TYPES, INCAPACITATING, classById, type Ability, type ConditionId } from '../systems/dnd5e/data';
-import { actionDice, actionExtra, actionHeal, actionMore, actionType, arrive, boostOf, depart, goneAtZero, isHere, isSummon, roundsOf, roundsText, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionHeal, actionMore, actionType, arrive, boostOf, depart, durationFor, goneAtZero, isHere, isSummon, roundsOf, roundsText, carriedWeight, carryingCapacity, companionAc, companionWeaponAttack, compEval, compMaxHp, compMod, compPb, compWeaponAbility, hasEssence, originOf, ownerLevel, slotOf, walkSpeed } from '../systems/dnd5e/companion';
 import { describeFormula, isFormula } from '../systems/dnd5e/formula';
 import { blankCompanion, blankCompanionAction, readOrigin, uid, type Character, type Companion, type CompanionAction, type CompanionOrigin } from '../systems/dnd5e/model';
 import { abilityMod, casterType, pactSlots, signed, spellAbility, spellAttack, spellSaveDc, spellSlots, totalLevel, usesSpellPoints } from '../systems/dnd5e/rules';
@@ -204,11 +204,16 @@ function HowItComes({ value, owner, onChange, idBase, detectedClass = '' }: { va
  */
 function SummonState({ comp, idx }: { comp: Companion; idx: number }) {
   const { char: c, update } = useChar();
+  const cat = useCatalog();
   const o = originOf(comp);
   const here = isHere(comp);
   const up = comp.up;
-  const duration = o.duration ? (/^instantaneous$/i.test(o.duration) ? 'Stays until dismissed or at 0 HP' : o.duration) : 'Duration not set (Edit → How it comes to you)';
+  // Its duration, or (from before durations were kept) its spell's, from your spells or the rules.
+  const found = durationFor(comp, [...c.spells, ...(cat?.spells ?? [])]);
+  const duration = found ? (/^instantaneous$/i.test(found.duration) ? 'Stays until dismissed or at 0 HP' : found.duration) : 'Duration not set (Edit → How it comes to you)';
   const left = here && up && up.rounds !== null ? `${roundsText(up.rounds)} left` : '';
+  // A summon whose time isn't counted yet (from before this): start its clock now, at its full duration.
+  const startable = here && !!found && roundsOf(found.duration) !== null && (up?.rounds ?? null) === null;
   const since = here && up ? `since ${new Date(up.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
   return (
     <div className={`summon-state${here ? ' here' : ' gone'}`}>
@@ -228,10 +233,26 @@ function SummonState({ comp, idx }: { comp: Companion; idx: number }) {
         <span className="dot" aria-hidden="true" />
         {here ? 'Here' : 'Gone'}
       </button>
+      {startable && (
+        <button
+          type="button"
+          className="btn small"
+          title="Counts its full duration from now; New turn, Time passes and rests count it down"
+          onClick={() =>
+            update((d) => {
+              const k = d.companions[idx];
+              if (!k.origin?.duration && found) k.origin = { ...k.origin!, duration: found.duration, concentration: found.concentration };
+              k.up = { active: true, since: Date.now(), rounds: roundsOf(found!.duration), why: '' };
+            })
+          }
+        >
+          Start its clock
+        </button>
+      )}
       <span className="hint">
         {here
           ? [
-              !o.concentration
+              !(o.concentration ?? found?.concentration)
                 ? duration
                 : c.spellcasting.concentratingOn?.trim().toLowerCase() === o.name.trim().toLowerCase()
                   ? `${duration} (you're concentrating on it)`

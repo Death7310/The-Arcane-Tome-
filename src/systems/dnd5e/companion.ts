@@ -306,16 +306,51 @@ export function endSummons(d: Character, spell: string): string[] {
   return gone.map((k) => k.name);
 }
 
-/** A New turn: each summon's duration counts down a round, and one that runs out goes. Returns their names. */
-export function tickSummons(d: Character): string[] {
+/**
+ * Time passes (a New turn is a round; a Short Rest an hour, a Long Rest 8): each summon's
+ * duration counts down that many rounds, and one that runs out goes. Returns their names.
+ */
+export function passSummons(d: Character, rounds: number): string[] {
   const out: string[] = [];
   for (const k of d.companions) {
     if (!isHere(k) || !k.up || k.up.rounds === null) continue;
-    k.up.rounds = Math.max(0, k.up.rounds - 1);
+    k.up.rounds = Math.max(0, k.up.rounds - rounds);
     if (k.up.rounds === 0) {
       depart(k, 'Its duration ran out');
       out.push(k.name);
     }
   }
   return out;
+}
+
+/** A New turn: one round for each summon's duration. */
+export const tickSummons = (d: Character): string[] => passSummons(d, 1);
+
+/** "10 minutes", "1 hour", "8 hours": rounds as time. */
+export function timeText(rounds: number): string {
+  const minutes = rounds / 10;
+  if (minutes >= 60 && minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`;
+  if (minutes >= 1 && Number.isInteger(minutes)) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  return `${rounds} round${rounds === 1 ? '' : 's'}`;
+}
+
+/**
+ * Time passes for everything that counts it: your timed effects (Bless) and your summons'
+ * durations. Returns what ended, by name. Effects whose rounds aren't counted stay.
+ */
+export function passTime(d: Character, rounds: number): { effects: string[]; summons: string[] } {
+  const effects = d.effects.filter((e) => e.rounds !== null && e.rounds <= rounds).map((e) => e.name);
+  d.effects = d.effects.flatMap((e) => (e.rounds === null ? [e] : e.rounds <= rounds ? [] : [{ ...e, rounds: e.rounds - rounds }]));
+  return { effects, summons: passSummons(d, rounds) };
+}
+
+/**
+ * The duration a spell's creature lasts: its own, else its spell's in your spells or the rules
+ * (a summon from before durations were kept), with whether it needs concentration.
+ */
+export function durationFor(k: Pick<Companion, 'origin'>, spells: { name: string; duration?: string; concentration?: boolean }[]): { duration: string; concentration: boolean } | null {
+  if (k.origin?.duration) return { duration: k.origin.duration, concentration: !!k.origin.concentration };
+  const name = k.origin?.kind === 'spell' ? k.origin.name.trim().toLowerCase() : '';
+  const sp = name ? spells.find((x) => x.name.trim().toLowerCase() === name && x.duration) : undefined;
+  return sp?.duration ? { duration: sp.duration, concentration: !!sp.concentration } : null;
 }

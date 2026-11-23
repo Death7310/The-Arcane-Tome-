@@ -12,7 +12,7 @@ import type { ActionMotion, Element as FxElement, Outcome, Point } from '../fx/t
 import { ABILITY_NAMES, classById, STANDARD_ACTIONS, type Ability, type StandardActionId } from '../systems/dnd5e/data';
 import { emptyTurn, uid, type BattleWho, type CastingTime, type Enemy, type Character, type Companion, type CompanionAction, type CustomDie, type Feature, type RolledDamage, type Spell, type Weapon } from '../systems/dnd5e/model';
 import { allyWho, companionWho, damageTypeOf, enemyWho, inBattle, logEvent, retarget, saveIn, settlePlan, settleRoll, withDamage, youWho, type Answer } from '../systems/dnd5e/battle';
-import { actionDice, actionExtra, actionHeal, actionMore, actionType, compEval, compMaxHp, compMod, companionAc, companionWeaponAttack, compWeaponAbility, goneAtZero, isHere, summonsOf, tickSummons } from '../systems/dnd5e/companion';
+import { actionDice, actionExtra, actionHeal, actionMore, actionType, compEval, compMaxHp, compMod, companionAc, companionWeaponAttack, compWeaponAbility, goneAtZero, isHere, passTime, roundsText, summonsOf, timeText } from '../systems/dnd5e/companion';
 import { castSummon } from '../systems/dnd5e/summon';
 import { summonedCreature } from '../systems/dnd5e/spellimport';
 import { attackAgainst, autoFailsSave, concentrationDc, damageTo, endConcentration, hurt, knownAc, learnAc, markDamage, markFromSpell, targetOf } from '../systems/dnd5e/enemies';
@@ -1291,23 +1291,46 @@ export function useTableState(char: Character, update: Update) {
     [push, update],
   );
 
+  /** What ran out as time passed, as result lines. */
+  const endedLines = (ended: { effects: string[]; summons: string[] }): RollLine[] => {
+    const lines: RollLine[] = [];
+    if (ended.effects.length) lines.push({ label: 'Ended', total: 0, detail: `${ended.effects.join(', ')} ${ended.effects.length === 1 ? 'has' : 'have'} worn off.`, kind: 'info' });
+    if (ended.summons.length) lines.push({ label: 'Gone', total: 0, detail: `${ended.summons.join(' and ')}: ${ended.summons.length === 1 ? 'its' : 'their'} spell’s duration ran out.`, kind: 'info' });
+    return lines;
+  };
+
   const newTurn = useCallback(() => {
-    const ended = charRef.current.effects.filter((e) => e.rounds !== null && e.rounds <= 1).map((e) => e.name);
-    // A summon whose spell runs out this round goes.
-    const leaving = charRef.current.companions.filter((k) => isHere(k) && k.up?.rounds === 1).map((k) => k.name);
+    // Worked out from now (pure), applied inside the update.
+    const ended = passTime(structuredClone(charRef.current), 1);
     update((d) => {
       d.turn = emptyTurn();
       // Companions act on your turn (or right after it), so theirs starts over too.
       d.companions.forEach((k) => void (k.turn = emptyTurn()));
-      d.effects = d.effects.flatMap((e) => (e.rounds === null ? [e] : e.rounds <= 1 ? [] : [{ ...e, rounds: e.rounds - 1 }]));
-      tickSummons(d);
+      passTime(d, 1);
     });
     sound.click();
-    const lines: RollLine[] = [];
-    if (ended.length) lines.push({ label: 'Ended', total: 0, detail: `${ended.join(', ')} ${ended.length === 1 ? 'has' : 'have'} worn off.`, kind: 'info' });
-    if (leaving.length) lines.push({ label: 'Gone', total: 0, detail: `${leaving.join(' and ')}: ${leaving.length === 1 ? 'its' : 'their'} spell’s duration ran out.`, kind: 'info' });
+    const lines = endedLines(ended);
     if (lines.length) push({ title: 'New turn', lines });
   }, [push, update]);
+
+  /**
+   * Time passes outside a fight (a walk, a search, waiting): your timed effects and summons count
+   * it down, a round being 6 seconds, and anything that runs out ends. Your turn starts over.
+   */
+  const passTimeBy = useCallback(
+    (rounds: number) => {
+      const ended = passTime(structuredClone(charRef.current), rounds);
+      update((d) => {
+        d.turn = emptyTurn();
+        d.companions.forEach((k) => void (k.turn = emptyTurn()));
+        passTime(d, rounds);
+      });
+      const lines = endedLines(ended);
+      const left = charRef.current.companions.filter((k) => isHere(k) && k.up?.rounds != null && k.up.rounds > rounds).map((k) => `${k.name}: ${roundsText(k.up!.rounds! - rounds)} left`);
+      push({ title: `${timeText(rounds)} ${/^1 /.test(timeText(rounds)) ? 'passes' : 'pass'}`, lines: lines.length || left.length ? [...lines, ...(left.length ? [{ label: 'Still here', total: 0, detail: left.join(' · '), kind: 'info' as const }] : [])] : [{ label: 'Time', total: 0, detail: 'Nothing that counts time ran out.', kind: 'info' }] });
+    },
+    [push, update],
+  );
 
   const damageSelf = useCallback(
     /** opts.from: who did it (default: whoever's turn it is); opts.log false when the battle already has it. */
@@ -1435,7 +1458,12 @@ export function useTableState(char: Character, update: Update) {
   const rest = useCallback(
     (kind: 'short' | 'long') => {
       const c = charRef.current;
+      // A Short Rest is an hour, a Long Rest 8: durations count them down (a 1-hour summon is gone after either).
+      const restRounds = kind === 'long' ? 4800 : 600;
+      const longGone = kind === 'long' ? c.companions.filter((k) => isHere(k) && c.spellcasting.concentratingOn && k.origin?.kind === 'spell' && k.origin.name.trim().toLowerCase() === c.spellcasting.concentratingOn.trim().toLowerCase()).map((k) => k.name) : [];
+      const ended = passTime(structuredClone(c), restRounds);
       update((d) => {
+        passTime(d, restRounds);
         d.spellcasting.pactUsed = 0;
         d.features.forEach((f) => {
           if (f.recharge === 'short' || (kind === 'long' && f.recharge === 'long')) f.usesSpent = 0;
@@ -1469,6 +1497,7 @@ export function useTableState(char: Character, update: Update) {
                 : 'Pact slots and Short Rest features restored. Spend Hit Point Dice to heal.',
             kind: 'info',
           },
+          ...endedLines({ effects: ended.effects, summons: [...new Set([...ended.summons, ...longGone])] }),
         ],
       });
     },
@@ -1679,6 +1708,7 @@ export function useTableState(char: Character, update: Update) {
       standardAction,
       move,
       newTurn,
+      passTimeBy,
       damageSelf,
       healSelf,
       healCompanion,
@@ -1687,7 +1717,7 @@ export function useTableState(char: Character, update: Update) {
       rest,
       preview,
     }),
-    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, settleHit, settleSave, rollInitiative, moveRoll, concentrationSave, concentrationCheck, settleSaveCheck, settleOpen, logAction, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, damageSelf, healSelf, healCompanion, deathSave, spendHitDie, rest, preview],
+    [log, note, companionAct, companionTest, companionWeapon, companionNewTurn, boostHit, settleHit, settleSave, rollInitiative, moveRoll, concentrationSave, concentrationCheck, settleSaveCheck, settleOpen, logAction, latest, adv, targetAc, test, freeRoll, rollCustom, attack, cast, slotChoices, useFeature, standardAction, move, newTurn, passTimeBy, damageSelf, healSelf, healCompanion, deathSave, spendHitDie, rest, preview],
   );
 }
 
