@@ -13,7 +13,7 @@ import { Check, ConfirmButton, CopyTextButton, Dialog, NumField, Panel, Pips, Se
 import { SpellBrowser, SpellImport } from './SpellBrowser';
 import { TargetStrip } from './Enemies';
 import { endConcentration, markFromSpell } from '../systems/dnd5e/enemies';
-import { freeCastSources, inferSources, sourceName, sourceOptions } from '../systems/dnd5e/spellsource';
+import { casterClasses, customSources, freeCastSources, inferSources, moveSource, sourceName, sourceOptions, typedSource } from '../systems/dnd5e/spellsource';
 import { fillSpell, spellDefFromSpell, spellFromDef, tunedSpells } from '../systems/dnd5e/spells';
 import { describeSpellDef, readPastedSpells, SCHOOLS, spellToText, summonedCreature, type SpellPart } from '../systems/dnd5e/spellimport';
 import { companionAc, compMaxHp } from '../systems/dnd5e/companion';
@@ -30,6 +30,9 @@ export function SpellsPanel() {
   const [libOpen, setLibOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [view, setView] = useState('all');
+  // A spell open for editing stays in view when you change where it comes from (it would leave a filtered view).
+  const [pinned, setPinned] = useState<string[]>([]);
+  const pin = (id: string, open: boolean) => setPinned((p) => (open ? [...new Set([...p, id])] : p.filter((x) => x !== id)));
   // Spells that don't say where they come from are filed under the one class of yours whose list has them.
   useEffect(() => {
     if (!cat || !c.spells.some((s) => !s.grantedBy)) return;
@@ -39,10 +42,11 @@ export function SpellsPanel() {
   }, [cat, c.spells.length, c.classes.map((k) => k.classId).join()]);
   // The sources to look at the list by: your spellcasting classes and spell-giving feats, plus any set on a spell.
   const sources = sourceOptions(c);
-  for (const sp of c.spells) if (sp.grantedBy && !sources.some((x) => x.id === sp.grantedBy)) sources.push({ id: sp.grantedBy, name: sourceName(c, sp.grantedBy) });
+  for (const sp of c.spells) if (sp.grantedBy && !sources.some((x) => x.id === sp.grantedBy)) sources.push({ id: sp.grantedBy, name: `“${sourceName(c, sp.grantedBy)}”` });
   const unset = c.spells.some((sp) => !sp.grantedBy);
   const several = sources.filter((x) => c.spells.some((sp) => sp.grantedBy === x.id)).length + (unset ? 1 : 0) > 1;
-  const shown = view === 'all' ? c.spells : c.spells.filter((sp) => sp.grantedBy === (view === 'unset' ? '' : view));
+  const inView = (sp: Spell) => view === 'all' || sp.grantedBy === (view === 'unset' ? '' : view);
+  const shown = c.spells.filter((sp) => inView(sp) || pinned.includes(sp.id));
   const slots = spellSlots(c);
   const pact = pactSlots(c);
   const maxLevel = Math.max(0, ...shown.map((s) => s.level));
@@ -151,6 +155,7 @@ export function SpellsPanel() {
               </button>
             ))}
           </div>
+          <SourcesTidy />
           <p className="hint spell-source-math" style={{ margin: '6px 0 0' }}>
             {sources
               .filter((x) => c.spells.some((sp) => sp.grantedBy === x.id) && (view === 'all' || view === x.id))
@@ -171,7 +176,15 @@ export function SpellsPanel() {
             {shown
               .filter((s) => s.level === lvl)
               .map((s) => (
-                <SpellRow key={s.id} spell={s} slots={slots} pact={pact} removing={removing} tag={several && view === 'all' ? sourceName(c, s.grantedBy) : ''} />
+                <SpellRow
+                  key={s.id}
+                  spell={s}
+                  slots={slots}
+                  pact={pact}
+                  removing={removing}
+                  tag={(several && view === 'all') || !inView(s) ? sourceName(c, s.grantedBy) : ''}
+                  onOpenChange={(o) => pin(s.id, o)}
+                />
               ))}
           </div>
         </div>
@@ -253,10 +266,29 @@ function spellSummary(s: Spell, plan: ReturnType<typeof planSpell>, dc: number, 
   return bits.join(' · ');
 }
 
-function SpellRow({ spell: s, slots, pact, removing, tag }: { spell: Spell; slots: number[]; pact: { count: number; level: number }; removing: boolean; tag: string }) {
+function SpellRow({
+  spell: s,
+  slots,
+  pact,
+  removing,
+  tag,
+  onOpenChange,
+}: {
+  spell: Spell;
+  slots: number[];
+  pact: { count: number; level: number };
+  removing: boolean;
+  tag: string;
+  onOpenChange?: (open: boolean) => void;
+}) {
   const { char: c, update } = useChar();
   const t = useTable();
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
+  const setOpen = (next: boolean | ((o: boolean) => boolean)) => {
+    const value = typeof next === 'function' ? next(open) : next;
+    setOpenState(value);
+    onOpenChange?.(value);
+  };
   const [choosing, setChoosing] = useState(false);
   const plan = planSpell(c, s, s.level);
   const choices = t.slotChoices(s, slots, pact);
@@ -516,6 +548,14 @@ function GrantedBy({ spell: s, set }: { spell: Spell; set: (fn: (sp: Spell) => v
   const options = sourceOptions(c);
   const known = !s.grantedBy || options.some((o) => o.id === s.grantedBy);
   const [custom, setCustom] = useState(!known);
+  // The name is typed in full first and set when you're done (Enter, Set, or leaving the field), so
+  // each letter doesn't become a source of its own.
+  const [draft, setDraft] = useState(s.grantedBy.startsWith('feat:') ? s.grantedBy.slice(5) : '');
+  const commit = () => {
+    const to = typedSource(draft);
+    if (to && to !== s.grantedBy) set((x) => void (x.grantedBy = to));
+  };
+  const nameId = `sp-from-name-${s.id}`;
   return (
     <>
       <SelectField
@@ -524,21 +564,119 @@ function GrantedBy({ spell: s, set }: { spell: Spell; set: (fn: (sp: Spell) => v
         value={custom ? '__other' : s.grantedBy}
         options={[...options, { id: '', name: 'Not set' }, { id: '__other', name: 'A feat or something else…' }]}
         onChange={(v) => {
-          if (v === '__other') return setCustom(true);
+          if (v === '__other') {
+            setDraft(s.grantedBy.startsWith('feat:') ? s.grantedBy.slice(5) : '');
+            return setCustom(true);
+          }
           setCustom(false);
           set((x) => void (x.grantedBy = v));
         }}
       />
       {custom && (
-        <TextField
-          label="Its name (a feat, item or species trait)"
-          id={`sp-from-name-${s.id}`}
-          value={s.grantedBy.startsWith('feat:') ? s.grantedBy.slice(5) : ''}
-          placeholder="Shadow-Touched"
-          onChange={(v) => set((x) => void (x.grantedBy = v.trim() ? `feat:${v}` : ''))}
-        />
+        <label className="field" htmlFor={nameId}>
+          <span>Its name (a feat, item or species trait)</span>
+          <span className="row" style={{ flexWrap: 'nowrap' }}>
+            <input
+              id={nameId}
+              className="input"
+              style={{ flex: 1, minWidth: 0 }}
+              value={draft}
+              placeholder="Shadow-Touched"
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commit();
+                }
+              }}
+            />
+            <button type="button" className="btn small" disabled={!draft.trim()} onMouseDown={(e) => e.preventDefault()} onClick={commit}>
+              Set
+            </button>
+          </span>
+        </label>
       )}
+      <SourcesTidy />
     </>
+  );
+}
+
+/**
+ * Sources set on your spells that aren't your classes (feats, and anything typed by mistake, a
+ * stray "W"): move a source's spells to the right class (or Not set), or rename it. A source no
+ * spell has leaves the lists.
+ */
+function SourcesTidy() {
+  const { char: c } = useChar();
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState(false);
+  const list = customSources(c);
+  const typed = list.filter((x) => !x.feature);
+  if (!list.length) return null;
+  const shown = all ? list : typed;
+  return (
+    <div className="sources-tidy">
+      <button type="button" className="btn small ghost" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {open ? 'Done tidying' : typed.length ? `Tidy sources (${typed.length} typed in)` : 'Tidy sources'}
+      </button>
+      {open && (
+        <div className="list" style={{ marginTop: 6 }}>
+          <p className="hint" style={{ margin: 0 }}>
+            {typed.length
+              ? 'Sources typed in by hand (nothing on your sheet has these names). Move a mistaken one’s spells to where they belong (or Not set) and it’s gone; rename one to fix its spelling.'
+              : 'No sources typed in by hand. Your spells’ other sources are features on your sheet.'}
+          </p>
+          {shown.map((x) => (
+            <SourceRow key={x.id} source={x} />
+          ))}
+          {list.length > typed.length && (
+            <Check label={`Also show the ${list.length - typed.length} from features on your sheet`} id="tidy-all" checked={all} onChange={setAll} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourceRow({ source: x }: { source: { id: string; name: string; count: number; feature: boolean } }) {
+  const { char: c, update } = useChar();
+  const [to, setTo] = useState('');
+  const [name, setName] = useState(x.name);
+  const id = useId();
+  const targets = [...casterClasses(c), ...customSources(c).filter((y) => y.id !== x.id).map((y) => ({ id: y.id, name: y.name }))];
+  return (
+    <div className="item" style={{ padding: '8px 10px', display: 'grid', gap: 6 }}>
+      <span>
+        <b>{x.feature ? x.name : `“${x.name}”`}</b>{' '}
+        <span className="hint">
+          · {x.count} spell{x.count === 1 ? '' : 's'}
+          {x.feature ? ' · a feature on your sheet' : ' · typed in (nothing on your sheet has this name)'}
+        </span>
+      </span>
+      <span className="row">
+        <select className="input" style={{ width: 'auto', minWidth: 0 }} value={to} onChange={(e) => setTo(e.target.value)} aria-label={`Move the spells from ${x.name} to`}>
+          <option value="">Not set</option>
+          {targets.map((y) => (
+            <option key={y.id} value={y.id}>
+              {y.name}
+            </option>
+          ))}
+        </select>
+        <ConfirmButton
+          label={`Move ${x.count === 1 ? 'its spell' : `its ${x.count} spells`}`}
+          confirmLabel="Tap to move them"
+          className="btn small"
+          onConfirm={() => update((d) => void moveSource(d, x.id, to))}
+        />
+      </span>
+      <span className="row" style={{ flexWrap: 'nowrap' }}>
+        <input className="input" style={{ flex: 1, minWidth: 0 }} id={id} value={name} onChange={(e) => setName(e.target.value)} aria-label={`Rename ${x.name}`} />
+        <button type="button" className="btn small ghost" disabled={!name.trim() || name.trim() === x.name} onClick={() => update((d) => void moveSource(d, x.id, typedSource(name)))}>
+          Rename
+        </button>
+      </span>
+    </div>
   );
 }
 
